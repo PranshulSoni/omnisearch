@@ -40,7 +40,7 @@ const WM_ENGINE_READY: u32 = WM_USER + 2;
 const ANIM_TICK_MS: u32 = 16;
 const APPEAR_FRAMES: f32 = 9.0;  // ~144ms
 const HIDE_FRAMES: f32 = 6.0;   // ~96ms
-const MAX_ALPHA: u8 = 215;       // 84% opacity for Acrylic backdrop
+const MAX_ALPHA: u8 = 255;       // 100% opacity for solid backdrop
 const SLIDE_PX: i32 = 14;
 
 // ── Colors (COLORREF = 0x00BBGGRR) ───────────────────────────────────────────
@@ -186,8 +186,8 @@ unsafe fn run() {
         &corner as *const _ as _, 4,
     );
 
-    // DWM Acrylic backdrop (Windows 11)
-    let backdrop = 3i32; // DWMSBT_TRANSIENTWINDOW (Acrylic)
+    // Disable DWM Acrylic backdrop (make it solid)
+    let backdrop = 1i32; // DWMSBT_NONE (None)
     let _ = DwmSetWindowAttribute(
         hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
         &backdrop as *const _ as _, 4,
