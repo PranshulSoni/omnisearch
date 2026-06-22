@@ -72,6 +72,8 @@ struct State {
     icon_control_panel: HICON,
     icon_search: HICON,
     icon_web: HICON,
+    icon_bookmark: HICON,
+    icon_folder: HICON,
     text_selected: bool,
     scroll_offset: usize,
     last_mouse_x: i32,
@@ -132,6 +134,8 @@ unsafe fn run() {
     let icon_control_panel = load_icon_from_memory(CONTROL_PANEL_ICO, 32);
     let icon_search = load_icon_from_memory(SEARCH_ICO, 24);
     let icon_web = load_icon_from_memory(WEB_ICO, 32);
+    let icon_bookmark = load_icon_from_dll("shell32.dll", 43, 32);
+    let icon_folder = load_icon_from_dll("shell32.dll", 3, 32);
 
     let state = Box::new(State {
         engine: None,
@@ -149,6 +153,8 @@ unsafe fn run() {
         icon_control_panel,
         icon_search,
         icon_web,
+        icon_bookmark,
+        icon_folder,
         text_selected: false,
         scroll_offset: 0,
         last_mouse_x: -1,
@@ -437,12 +443,27 @@ unsafe extern "system" fn wnd_proc(
                         do_hide(hwnd, s);
                     } else if let Some(r) = s.results.get(s.selected) {
                         let cmd = r.entry.launch_command.clone();
-                        if let Some(text) = cmd.strip_prefix("copy:") {
-                            copy_to_clipboard(hwnd, text);
+                        if r.entry.source == "FOLDER" {
+                            s.query = cmd;
+                            s.selected = 0;
+                            s.scroll_offset = 0;
+                            s.text_selected = false;
+                            s.results = if let Some(ref mut engine) = s.engine {
+                                engine.search(&s.query, MAX_RESULTS)
+                            } else {
+                                vec![]
+                            };
+                            trigger_icon_loading(hwnd, s);
+                            reposition(hwnd, s, 0);
+                            InvalidateRect(hwnd, None, FALSE);
                         } else {
-                            launcher::launch(&cmd);
+                            if let Some(text) = cmd.strip_prefix("copy:") {
+                                copy_to_clipboard(hwnd, text);
+                            } else {
+                                launcher::launch(&cmd);
+                            }
+                            do_hide(hwnd, s);
                         }
-                        do_hide(hwnd, s);
                     }
                 }
                 VK_DOWN => {
@@ -506,12 +527,27 @@ unsafe extern "system" fn wnd_proc(
                 if my >= r.top && my < r.bottom {
                     let actual_idx = s.scroll_offset + i;
                     let cmd = s.results[actual_idx].entry.launch_command.clone();
-                    if let Some(text) = cmd.strip_prefix("copy:") {
-                        copy_to_clipboard(hwnd, text);
+                    if s.results[actual_idx].entry.source == "FOLDER" {
+                        s.query = cmd;
+                        s.selected = 0;
+                        s.scroll_offset = 0;
+                        s.text_selected = false;
+                        s.results = if let Some(ref mut engine) = s.engine {
+                            engine.search(&s.query, MAX_RESULTS)
+                        } else {
+                            vec![]
+                        };
+                        trigger_icon_loading(hwnd, s);
+                        reposition(hwnd, s, 0);
+                        InvalidateRect(hwnd, None, FALSE);
                     } else {
-                        launcher::launch(&cmd);
+                        if let Some(text) = cmd.strip_prefix("copy:") {
+                            copy_to_clipboard(hwnd, text);
+                        } else {
+                            launcher::launch(&cmd);
+                        }
+                        do_hide(hwnd, s);
                     }
-                    do_hide(hwnd, s);
                     break;
                 }
             }
@@ -566,6 +602,8 @@ unsafe extern "system" fn wnd_proc(
                 if !s.icon_control_panel.0.is_null() { let _ = DestroyIcon(s.icon_control_panel); }
                 if !s.icon_search.0.is_null() { let _ = DestroyIcon(s.icon_search); }
                 if !s.icon_web.0.is_null() { let _ = DestroyIcon(s.icon_web); }
+                if !s.icon_bookmark.0.is_null() { let _ = DestroyIcon(s.icon_bookmark); }
+                if !s.icon_folder.0.is_null() { let _ = DestroyIcon(s.icon_folder); }
                 for &hicon in s.app_icons.values() {
                     if !hicon.0.is_null() {
                         let _ = DestroyIcon(hicon);
@@ -969,8 +1007,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     .unwrap_or(s.icon_control_panel)
             } else if res.entry.launch_command.starts_with("ms-settings:") {
                 s.icon_settings
-            } else if res.entry.source == "web" || res.entry.source == "BROWSER" {
+            } else if res.entry.source == "web" || res.entry.source == "HISTORY" {
                 s.icon_web
+            } else if res.entry.source == "BOOKMARK" {
+                s.icon_bookmark
+            } else if res.entry.source == "FOLDER" {
+                s.icon_folder
             } else {
                 s.icon_control_panel
             };
@@ -1056,6 +1098,12 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
         ("RECENT", COLORREF(0x00_7A_1F_7A), CLR_WHITE)
     } else if src_lc == "file" {
         ("FILE", COLORREF(0x00_90_40_00), CLR_WHITE)
+    } else if src_lc == "bookmark" {
+        ("BOOKMARK", COLORREF(0x00_00_A5_D6), CLR_WHITE)
+    } else if src_lc == "history" {
+        ("HISTORY", COLORREF(0x00_90_60_20), CLR_WHITE)
+    } else if src_lc == "folder" {
+        ("FOLDER", COLORREF(0x00_13_45_8B), CLR_WHITE)
     } else if src_lc == "browser" {
         ("BROWSER", COLORREF(0x00_2A_8F_C6), CLR_WHITE)
     } else if src_lc.contains("legacy") {
@@ -1072,6 +1120,32 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
     let mut t: Vec<u16> = label.encode_utf16().collect();
     let mut r = RECT { left: x, top: y, right: x + 64, bottom: y + 20 };
     DrawTextW(hdc, &mut t, &mut r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+}
+
+unsafe fn load_icon_from_dll(dll_name: &str, index: i32, size: i32) -> HICON {
+    let mut filename_buf = [0u16; 260];
+    let dll_wide: Vec<u16> = dll_name.encode_utf16().collect();
+    for (dest, src) in filename_buf.iter_mut().zip(dll_wide.iter()) {
+        *dest = *src;
+    }
+    
+    let mut phicon = [HICON(std::ptr::null_mut())];
+    let mut piconid_val = 0u32;
+    
+    let num = PrivateExtractIconsW(
+        &filename_buf,
+        index,
+        size,
+        size,
+        Some(&mut phicon),
+        Some(&mut piconid_val as *mut u32),
+        1,
+    );
+    if num > 0 && !phicon[0].0.is_null() {
+        phicon[0]
+    } else {
+        HICON(std::ptr::null_mut())
+    }
 }
 
 unsafe fn load_icon_from_memory(bytes: &[u8], size: i32) -> HICON {

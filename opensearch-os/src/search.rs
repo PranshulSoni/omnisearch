@@ -339,19 +339,31 @@ impl SearchEngine {
                 }
 
                 // Boost bookmarks
-                if source.contains("bookmark") {
+                let is_bookmark = source.contains("bookmark");
+                if is_bookmark {
                     score += 0.4;
                 }
 
                 if score > 0.0 {
+                    let browser_name = if source.contains("chrome") {
+                        "Chrome"
+                    } else if source.contains("edge") {
+                        "Edge"
+                    } else if source.contains("brave") {
+                        "Brave"
+                    } else if source.contains("firefox") {
+                        "Firefox"
+                    } else {
+                        "Browser"
+                    };
                     results.push(SearchResult {
                         entry: CatalogEntry {
                             id: format!("browser.{}", url),
                             control_name: title.clone(),
                             breadcrumb_path: format!("Browser > {}", url),
                             launch_command: url.clone(),
-                            source: "BROWSER".to_string(),
-                            description: format!("Bookmark/History from {}", if source.contains("chrome") { "Chrome" } else { "Edge" }),
+                            source: if is_bookmark { "BOOKMARK".to_string() } else { "HISTORY".to_string() },
+                            description: format!("{} from {}", if is_bookmark { "Bookmark" } else { "History" }, browser_name),
                             synonyms: title.to_lowercase(),
                         },
                         score,
@@ -363,9 +375,278 @@ impl SearchEngine {
         results
     }
 
+    pub fn search_bookmarks_only(&self, sub_query: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        let conn = match Connection::open(&self.db_path) {
+            Ok(c) => c,
+            Err(_) => return results,
+        };
+
+        let q_lower = sub_query.trim().to_lowercase();
+        let q_words: Vec<&str> = q_lower.split_whitespace().collect();
+
+        let rows = if q_lower.is_empty() {
+            let mut stmt = match conn.prepare(
+                "SELECT url, title, source, visit_count FROM browser_items 
+                 WHERE source LIKE '%bookmark%' 
+                 ORDER BY visit_count DESC LIMIT 100"
+            ) {
+                Ok(s) => s,
+                Err(_) => return results,
+            };
+            let mapped = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            });
+            match mapped {
+                Ok(r) => r.collect::<Vec<_>>(),
+                Err(_) => return results,
+            }
+        } else {
+            let name_query = format!("%{}%", q_lower);
+            let mut stmt = match conn.prepare(
+                "SELECT url, title, source, visit_count FROM browser_items 
+                 WHERE source LIKE '%bookmark%' AND (title LIKE ?1 OR url LIKE ?1)
+                 ORDER BY visit_count DESC LIMIT 100"
+            ) {
+                Ok(s) => s,
+                Err(_) => return results,
+            };
+            let mapped = stmt.query_map([&name_query], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            });
+            match mapped {
+                Ok(r) => r.collect::<Vec<_>>(),
+                Err(_) => return results,
+            }
+        };
+
+        for row in rows.into_iter().filter_map(|r| r.ok()) {
+            let (url, title, source, visit_count) = row;
+            let title_lower = title.to_lowercase();
+            let url_lower = url.to_lowercase();
+
+            let mut score = 1.0f32;
+            if !q_lower.is_empty() {
+                if title_lower == q_lower || url_lower == q_lower {
+                    score = 2.0;
+                } else if title_lower.starts_with(&q_lower) || url_lower.starts_with(&q_lower) {
+                    score = 1.6;
+                } else if title_lower.contains(&q_lower) || url_lower.contains(&q_lower) {
+                    score = 1.2;
+                } else {
+                    let matched = q_words.iter().filter(|w| title_lower.contains(*w) || url_lower.contains(*w)).count();
+                    if matched > 0 {
+                        score = 0.5 + 0.5 * (matched as f32 / q_words.len() as f32);
+                    } else {
+                        score = 0.0;
+                    }
+                }
+            } else {
+                score = 1.0 + (visit_count as f32).min(100.0) / 100.0;
+            }
+
+            if score > 0.0 {
+                let browser_name = if source.contains("chrome") {
+                    "Chrome"
+                } else if source.contains("edge") {
+                    "Edge"
+                } else if source.contains("brave") {
+                    "Brave"
+                } else if source.contains("firefox") {
+                    "Firefox"
+                } else {
+                    "Browser"
+                };
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("browser.{}", url),
+                        control_name: title.clone(),
+                        breadcrumb_path: format!("Browser > {}", url),
+                        launch_command: url.clone(),
+                        source: "BOOKMARK".to_string(),
+                        description: format!("Bookmark from {}", browser_name),
+                        synonyms: title.to_lowercase(),
+                    },
+                    score,
+                });
+            }
+        }
+
+        results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results
+    }
+
+    pub fn search_history_only(&self, sub_query: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        let conn = match Connection::open(&self.db_path) {
+            Ok(c) => c,
+            Err(_) => return results,
+        };
+
+        let q_lower = sub_query.trim().to_lowercase();
+        let q_words: Vec<&str> = q_lower.split_whitespace().collect();
+
+        let rows = if q_lower.is_empty() {
+            let mut stmt = match conn.prepare(
+                "SELECT url, title, source, last_visit_time FROM browser_items 
+                 WHERE source LIKE '%history%' 
+                 ORDER BY last_visit_time DESC LIMIT 100"
+            ) {
+                Ok(s) => s,
+                Err(_) => return results,
+            };
+            let mapped = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            });
+            match mapped {
+                Ok(r) => r.collect::<Vec<_>>(),
+                Err(_) => return results,
+            }
+        } else {
+            let name_query = format!("%{}%", q_lower);
+            let mut stmt = match conn.prepare(
+                "SELECT url, title, source, last_visit_time FROM browser_items 
+                 WHERE source LIKE '%history%' AND (title LIKE ?1 OR url LIKE ?1)
+                 ORDER BY last_visit_time DESC LIMIT 100"
+            ) {
+                Ok(s) => s,
+                Err(_) => return results,
+            };
+            let mapped = stmt.query_map([&name_query], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            });
+            match mapped {
+                Ok(r) => r.collect::<Vec<_>>(),
+                Err(_) => return results,
+            }
+        };
+
+        for row in rows.into_iter().filter_map(|r| r.ok()) {
+            let (url, title, source, _last_visit_time) = row;
+            let title_lower = title.to_lowercase();
+            let url_lower = url.to_lowercase();
+
+            let mut score = 1.0f32;
+            if !q_lower.is_empty() {
+                if title_lower == q_lower || url_lower == q_lower {
+                    score = 2.0;
+                } else if title_lower.starts_with(&q_lower) || url_lower.starts_with(&q_lower) {
+                    score = 1.6;
+                } else if title_lower.contains(&q_lower) || url_lower.contains(&q_lower) {
+                    score = 1.2;
+                } else {
+                    let matched = q_words.iter().filter(|w| title_lower.contains(*w) || url_lower.contains(*w)).count();
+                    if matched > 0 {
+                        score = 0.5 + 0.5 * (matched as f32 / q_words.len() as f32);
+                    } else {
+                        score = 0.0;
+                    }
+                }
+            } else {
+                score = 1.0;
+            }
+
+            if score > 0.0 {
+                let browser_name = if source.contains("chrome") {
+                    "Chrome"
+                } else if source.contains("edge") {
+                    "Edge"
+                } else if source.contains("brave") {
+                    "Brave"
+                } else if source.contains("firefox") {
+                    "Firefox"
+                } else {
+                    "Browser"
+                };
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("browser.{}", url),
+                        control_name: title.clone(),
+                        breadcrumb_path: format!("Browser > {}", url),
+                        launch_command: url.clone(),
+                        source: "HISTORY".to_string(),
+                        description: format!("History from {}", browser_name),
+                        synonyms: title.to_lowercase(),
+                    },
+                    score,
+                });
+            }
+        }
+
+        if !q_lower.is_empty() {
+            results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        }
+        results
+    }
+
     pub fn search(&mut self, query: &str, top_k: usize) -> Vec<SearchResult> {
         let q = query.trim();
-        if q.is_empty() || q.to_lowercase() == "recent" || q.to_lowercase() == "recents" {
+        let q_lower_trimmed = q.to_lowercase();
+        if q.is_empty() {
+            let mut results = Vec::new();
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: "folder.bookmarks".to_string(),
+                    control_name: "Browser Bookmarks".to_string(),
+                    breadcrumb_path: "Browser > Bookmarks".to_string(),
+                    launch_command: "bookmarks:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Folder containing all browser bookmarks".to_string(),
+                    synonyms: "bookmarks folders browser favs favorites stars".to_string(),
+                },
+                score: 5.0,
+            });
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: "folder.history".to_string(),
+                    control_name: "Browser History".to_string(),
+                    breadcrumb_path: "Browser > History".to_string(),
+                    launch_command: "history:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Folder containing all browser history".to_string(),
+                    synonyms: "history folders browser recent urls websites web".to_string(),
+                },
+                score: 4.5,
+            });
+            for rf in self.recent_files.iter().take(top_k.min(20)) {
+                let ext = rf.name.rsplit('.').next().unwrap_or("").to_uppercase();
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("recent.{}", rf.path),
+                        control_name: rf.name.clone(),
+                        breadcrumb_path: format!("Recent > {}", rf.path),
+                        launch_command: rf.path.clone(),
+                        source: "RECENT".to_string(),
+                        description: format!("Recently opened {} file", ext),
+                        synonyms: rf.name.to_lowercase(),
+                    },
+                    score: 3.0,
+                });
+            }
+            return results;
+        }
+
+        if q_lower_trimmed == "recent" || q_lower_trimmed == "recents" {
             let mut results = Vec::new();
             for rf in self.recent_files.iter().take(top_k.min(20)) {
                 let ext = rf.name.rsplit('.').next().unwrap_or("").to_uppercase();
@@ -383,6 +664,16 @@ impl SearchEngine {
                 });
             }
             return results;
+        }
+
+        if q_lower_trimmed.starts_with("bookmarks:") {
+            let sub_query = q_lower_trimmed.strip_prefix("bookmarks:").unwrap().trim();
+            return self.search_bookmarks_only(sub_query);
+        }
+
+        if q_lower_trimmed.starts_with("history:") {
+            let sub_query = q_lower_trimmed.strip_prefix("history:").unwrap().trim();
+            return self.search_history_only(sub_query);
         }
 
         // ── Calculator: inject instantly if query is a math expression ──────
