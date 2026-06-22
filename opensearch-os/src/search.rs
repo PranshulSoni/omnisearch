@@ -2,13 +2,16 @@ use anyhow::{bail, Result};
 use ort::{session::{Session, builder::GraphOptimizationLevel}, value::TensorRef};
 use serde::Deserialize;
 use tokenizers::Tokenizer;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+pub static DISABLE_LIVE_RESULTS: AtomicBool = AtomicBool::new(false);
 
 const CATALOG: &[u8] = include_bytes!("../../assets/catalog.bin");
-const MODEL: &[u8] = include_bytes!("../../assets/model/model_int8.onnx");
 const TOKENIZER: &[u8] = include_bytes!("../../assets/model/tokenizer.json");
 
 #[derive(Clone)]
 pub struct CatalogEntry {
+    pub id: String,
     pub control_name: String,
     pub breadcrumb_path: String,
     pub launch_command: String,
@@ -29,10 +32,24 @@ struct MetaJson {
     breadcrumb_path: String,
     launch_command: String,
     source: String,
-    #[allow(dead_code)]
     id: String,
     description: String,
     synonyms: String,
+}
+
+#[derive(Clone)]
+pub struct AnchorCategory {
+    pub name: &'static str,
+    pub target_id: &'static str,
+    pub translation_tip: &'static str,
+    pub phrases: &'static [&'static str],
+    pub vecs: Vec<Vec<f32>>,
+}
+
+#[derive(Clone)]
+pub struct AppInfo {
+    pub name: String,
+    pub path: String,
 }
 
 pub struct SearchEngine {
@@ -42,10 +59,12 @@ pub struct SearchEngine {
     dim: usize,
     session: Session,
     tokenizer: Tokenizer,
+    anchor_categories: Vec<AnchorCategory>,
+    apps: Vec<AppInfo>,
 }
 
 impl SearchEngine {
-    pub fn new() -> Result<Self> {
+    pub fn new(model_path: &std::path::Path) -> Result<Self> {
         if CATALOG.len() < 8 {
             bail!("catalog.bin too small");
         }
@@ -67,6 +86,7 @@ impl SearchEngine {
             let m: MetaJson = serde_json::from_slice(&CATALOG[off..off + ml])?;
             off += ml;
             meta.push(CatalogEntry {
+                id: m.id,
                 control_name: m.control_name,
                 breadcrumb_path: m.breadcrumb_path,
                 launch_command: m.launch_command,
@@ -80,15 +100,63 @@ impl SearchEngine {
             .map_err(|e| anyhow::anyhow!("{e}"))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| anyhow::anyhow!("{e}"))?
-            .with_intra_threads(2)
+            .with_intra_threads(1)
             .map_err(|e| anyhow::anyhow!("{e}"))?
-            .commit_from_memory(MODEL)
+            .commit_from_file(model_path)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let tokenizer = Tokenizer::from_bytes(TOKENIZER)
             .map_err(|e| anyhow::anyhow!("tokenizer: {e}"))?;
 
-        let mut engine = Self { vecs, meta, n, dim, session, tokenizer };
+        let mut anchor_categories = vec![
+            AnchorCategory {
+                name: "eyes_hurt",
+                target_id: "system.night_light",
+                translation_tip: "Translation Tip: Eye strain? Filter blue light or adjust display brightness. | System > Display > Brightness & color > Night light",
+                phrases: &["my eyes hurt", "eye strain", "screen too bright", "reduce blue light", "eyes hurt", "blue light filter"],
+                vecs: vec![],
+            },
+            AnchorCategory {
+                name: "internet_slow",
+                target_id: "system.troubleshoot.network-internet-troubleshooter",
+                translation_tip: "Translation Tip: Slow connection? Diagnose network adapter and DNS. | System > Troubleshoot > Other troubleshooters > Network and Internet",
+                phrases: &["internet is slow", "wi-fi is slow", "wifi is slow", "slow network", "connection speed", "slow internet", "slow wifi"],
+                vecs: vec![],
+            },
+            AnchorCategory {
+                name: "mouse_flying",
+                target_id: "bluetooth-devices.mouse.enhance-pointer-precision",
+                translation_tip: "Translation Tip: Erratic mouse? Adjust cursor speed and pointer precision. | Bluetooth & devices > Mouse > Enhance pointer precision",
+                phrases: &["mouse is flying", "cursor moving too fast", "erratic mouse speed", "mouse speed too high", "pointer speed is fast"],
+                vecs: vec![],
+            },
+            AnchorCategory {
+                name: "battery_dying",
+                target_id: "system.power.energy_saver",
+                translation_tip: "Translation Tip: Battery low? Enable Energy Saver to extend power. | System > Power & battery > Energy saver",
+                phrases: &["battery is dying", "battery low", "running out of power", "extend battery life", "battery saver", "laptop dying"],
+                vecs: vec![],
+            },
+            AnchorCategory {
+                name: "cant_see_text",
+                target_id: "text_size.text_size",
+                translation_tip: "Translation Tip: Text too small? Adjust scale or make text bigger. | Text size > Text size",
+                phrases: &["can't see text", "text is too small", "make font size bigger", "increase UI scale", "font is tiny", "screen is too small"],
+                vecs: vec![],
+            },
+        ];
+
+        let mut engine = Self { vecs, meta, n, dim, session, tokenizer, anchor_categories: vec![], apps: vec![] };
+        for cat in &mut anchor_categories {
+            for phrase in cat.phrases {
+                let phrase_with_prefix = format!("query: {}", phrase);
+                if let Ok(v) = engine.embed(&phrase_with_prefix) {
+                    cat.vecs.push(v);
+                }
+            }
+        }
+        engine.anchor_categories = anchor_categories;
+        engine.apps = scan_apps();
         let _ = engine.search("settings", 1);
         Ok(engine)
     }
@@ -98,9 +166,14 @@ impl SearchEngine {
         if q.is_empty() { return vec![]; }
 
         let q_lower = q.to_lowercase();
-        let q_words: Vec<&str> = q_lower.split_whitespace().collect();
+        let stop_words = ["what", "is", "a", "the", "to", "for", "in", "of", "and", "or", "with", "on", "at", "by", "from", "about", "how", "this", "it", "my", "your"];
+        let q_words: Vec<&str> = q_lower.split_whitespace()
+            .filter(|w| !stop_words.contains(w))
+            .collect();
 
-        let qvec = match self.embed(q) {
+        // BAAI models require queries to be prefixed with "query: "
+        let query_with_prefix = format!("query: {}", q);
+        let qvec = match self.embed(&query_with_prefix) {
             Ok(v) => v,
             Err(_) => return vec![],
         };
@@ -209,16 +282,112 @@ impl SearchEngine {
                     lex_score += 0.25;
                 }
 
-                (i, sem_score + lex_score)
+                (i, sem_score + lex_score * 0.25)
             })
             .collect();
 
         scores.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        scores.into_iter().take(top_k)
-            .filter(|(_, s)| *s > 0.3)
+        let mut conv_results = self.get_conversational_results(&qvec);
+
+        let mut final_results = get_live_results(q);
+        let mut vec_results: Vec<SearchResult> = scores.into_iter()
+            .filter(|(_, s)| *s > 0.62)
             .map(|(i, score)| SearchResult { entry: self.meta[i].clone(), score })
-            .collect()
+            .collect();
+            
+        if !conv_results.is_empty() {
+            vec_results.retain(|vr| {
+                !conv_results.iter().any(|cr| cr.entry.id == vr.entry.id)
+            });
+        }
+
+        if !final_results.is_empty() {
+            vec_results.retain(|vr| {
+                !final_results.iter().any(|fr| {
+                    // Check if control_name has substantial overlap or exact match
+                    let fr_name = fr.entry.control_name.to_lowercase();
+                    let vr_name = vr.entry.control_name.to_lowercase();
+                    fr_name == vr_name || (fr_name.contains("battery") && vr_name.contains("battery"))
+                })
+            });
+        }
+        
+        let mut app_matches = Vec::new();
+        for app in &self.apps {
+            let app_lower = app.name.to_lowercase();
+            let mut score = 0.0f32;
+            
+            if app_lower == q_lower {
+                score = 3.0; // Exact match
+            } else if app_lower.starts_with(&q_lower) {
+                score = 2.5; // Prefix match
+            } else if q_lower.starts_with(&app_lower) {
+                score = 2.2; // App name is a prefix of the query
+            } else if app_lower.contains(&q_lower) {
+                score = 1.8; // Substring match
+            } else if q_lower.contains(&app_lower) {
+                score = 1.5; // Query contains app name
+            } else {
+                let app_words: Vec<&str> = app_lower.split_whitespace().collect();
+                let mut matched = 0;
+                for qw in &q_words {
+                    if app_words.contains(qw) {
+                        matched += 1;
+                    }
+                }
+                if matched > 0 && !q_words.is_empty() {
+                    let ratio = matched as f32 / q_words.len() as f32;
+                    if ratio >= 0.5 {
+                        score = 0.8 + 0.4 * ratio;
+                    }
+                }
+            }
+
+            if score > 0.0 {
+                app_matches.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("app.{}", app.name),
+                        control_name: app.name.clone(),
+                        breadcrumb_path: format!("Applications > {}", app.name),
+                        launch_command: format!("shell:AppsFolder\\{}", app.path),
+                        source: "app".to_string(),
+                        description: format!("Launch {}", app.name),
+                        synonyms: app.name.to_lowercase(),
+                    },
+                    score,
+                });
+            }
+        }
+        
+        app_matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut merged = Vec::new();
+        merged.append(&mut app_matches);
+        merged.append(&mut vec_results);
+        merged.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+        conv_results.append(&mut final_results);
+        final_results = conv_results;
+        final_results.append(&mut merged);
+        
+        final_results.truncate(top_k.saturating_sub(1));
+
+        let encoded_query = url_encode(q);
+        final_results.push(SearchResult {
+            entry: CatalogEntry {
+                id: "web_search".to_string(),
+                control_name: format!("Search Google for \"{}\"", q),
+                breadcrumb_path: "Web > Google Search > Open in default browser".to_string(),
+                launch_command: format!("https://www.google.com/search?q={}", encoded_query),
+                source: "web".to_string(),
+                description: format!("Opens default browser and searches Google for '{}'.", q),
+                synonyms: "google search web internet online".to_string(),
+            },
+            score: 0.0,
+        });
+
+        final_results
     }
 
     fn embed(&mut self, text: &str) -> Result<Vec<f32>> {
@@ -247,6 +416,61 @@ impl SearchEngine {
 
         Ok(mean_pool_norm(hidden, &mask, seq, self.dim))
     }
+
+    fn get_conversational_results(&self, qvec: &[f32]) -> Vec<SearchResult> {
+        if DISABLE_LIVE_RESULTS.load(Ordering::Relaxed) {
+            return vec![];
+        }
+        let mut best_category: Option<&AnchorCategory> = None;
+        let mut best_similarity = 0.0f32;
+
+        for cat in &self.anchor_categories {
+            let mut max_similarity = 0.0f32;
+            for v in &cat.vecs {
+                let sim: f32 = v.iter().zip(qvec).map(|(a, b)| a * b).sum();
+                if sim > max_similarity {
+                    max_similarity = sim;
+                }
+            }
+            if max_similarity > best_similarity {
+                best_similarity = max_similarity;
+                best_category = Some(cat);
+            }
+        }
+
+        if let Some(cat) = best_category {
+            if best_similarity >= 0.80 {
+                if let Some(entry) = self.meta.iter().find(|e| e.id == cat.target_id) {
+                    let mut modified_entry = entry.clone();
+                    modified_entry.breadcrumb_path = cat.translation_tip.to_string();
+                    modified_entry.source = "translated".to_string();
+                    return vec![SearchResult {
+                        entry: modified_entry,
+                        score: 5.0,
+                    }];
+                }
+            }
+        }
+        vec![]
+    }
+}
+
+pub fn url_encode(input: &str) -> String {
+    let mut encoded = String::new();
+    for byte in input.as_bytes() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(*byte as char);
+            }
+            b' ' => {
+                encoded.push('+');
+            }
+            _ => {
+                encoded.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    encoded
 }
 
 fn mean_pool_norm(hidden: &[f32], mask: &[i64], seq: usize, dim: usize) -> Vec<f32> {
@@ -270,6 +494,7 @@ mod tests {
 
     #[test]
     fn test_hybrid_search_accuracy() {
+        DISABLE_LIVE_RESULTS.store(true, Ordering::Relaxed);
         let mut engine = SearchEngine::new().expect("Failed to initialize engine");
         
         let queries = vec![
@@ -365,4 +590,276 @@ mod tests {
 
         assert!(hit_rate >= 70.0, "Hit rate was only {:.1}% (target: >= 70.0%)", hit_rate);
     }
+
+    #[test]
+    fn test_enumerate_apps_folder() {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
+        use windows::Win32::UI::Shell::{SHGetKnownFolderItem, FOLDERID_AppsFolder, KF_FLAG_DEFAULT, IShellItem, IEnumShellItems, BHID_EnumItems, SIGDN_NORMALDISPLAY, SIGDN_DESKTOPABSOLUTEPARSING};
+        use windows::Win32::Foundation::HANDLE;
+
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            let apps_folder: IShellItem = SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, HANDLE::default()).unwrap();
+            let enum_items: IEnumShellItems = apps_folder.BindToHandler(None, &BHID_EnumItems).unwrap();
+            let mut items = [None];
+            let mut fetched = 0;
+            let mut count = 0;
+            while enum_items.Next(&mut items, Some(&mut fetched)).is_ok() && fetched == 1 {
+                if let Some(item) = &items[0] {
+                    let display_name_ptr = item.GetDisplayName(SIGDN_NORMALDISPLAY).unwrap();
+                    let parsing_name_ptr = item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING).unwrap();
+                    
+                    let mut len = 0;
+                    while *display_name_ptr.0.add(len) != 0 { len += 1; }
+                    let display_name = String::from_utf16_lossy(std::slice::from_raw_parts(display_name_ptr.0, len));
+                    
+                    let mut len = 0;
+                    while *parsing_name_ptr.0.add(len) != 0 { len += 1; }
+                    let parsing_name = String::from_utf16_lossy(std::slice::from_raw_parts(parsing_name_ptr.0, len));
+                    
+                    println!("App: {} -> {}", display_name, parsing_name);
+                    windows::Win32::System::Com::CoTaskMemFree(Some(display_name_ptr.0 as *const _));
+                    windows::Win32::System::Com::CoTaskMemFree(Some(parsing_name_ptr.0 as *const _));
+                    count += 1;
+                    if count >= 10 {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[repr(C)]
+struct SYSTEM_POWER_STATUS {
+    ac_line_status: u8,
+    battery_flag: u8,
+    battery_life_percent: u8,
+    system_status_flag: u8,
+    battery_life_time: u32,
+    battery_full_life_time: u32,
+}
+
+#[repr(C)]
+struct MEMORYSTATUSEX {
+    dw_length: u32,
+    dw_memory_load: u32,
+    ull_total_phys: u64,
+    ull_avail_phys: u64,
+    ull_total_page_file: u64,
+    ull_avail_page_file: u64,
+    ull_total_virtual: u64,
+    ull_avail_virtual: u64,
+    ull_avail_extended_virtual: u64,
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetSystemPowerStatus(lpSystemPowerStatus: *mut SYSTEM_POWER_STATUS) -> i32;
+    fn GetDiskFreeSpaceExW(
+        lpDirectoryName: *const u16,
+        lpFreeBytesAvailableToCaller: *mut u64,
+        lpTotalNumberOfBytes: *mut u64,
+        lpTotalNumberOfFreeBytes: *mut u64,
+    ) -> i32;
+    fn GlobalMemoryStatusEx(lpBuffer: *mut MEMORYSTATUSEX) -> i32;
+}
+
+fn get_local_ip() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    socket.local_addr().ok().map(|addr| addr.ip().to_string())
+}
+
+fn get_live_results(query: &str) -> Vec<SearchResult> {
+    if DISABLE_LIVE_RESULTS.load(Ordering::Relaxed) {
+        return vec![];
+    }
+    let q = query.to_lowercase();
+    let mut results = vec![];
+
+    // 1. Battery Status
+    if q.contains("battery") || q.contains("power") || q.contains("charge") {
+        let mut status = SYSTEM_POWER_STATUS {
+            ac_line_status: 0,
+            battery_flag: 0,
+            battery_life_percent: 0,
+            system_status_flag: 0,
+            battery_life_time: 0,
+            battery_full_life_time: 0,
+        };
+        unsafe {
+            if GetSystemPowerStatus(&mut status) != 0 {
+                let percent = status.battery_life_percent;
+                if percent != 255 {
+                    let state = if status.ac_line_status == 1 {
+                        "Charging"
+                    } else if status.ac_line_status == 0 {
+                        "Discharging"
+                    } else {
+                        "Unknown State"
+                    };
+                    
+                    results.push(SearchResult {
+                        entry: CatalogEntry {
+                            id: "live.battery".to_string(),
+                            control_name: "Battery Status".to_string(),
+                            breadcrumb_path: format!("System > Power & battery > Currently {}% ({})", percent, state),
+                            launch_command: "ms-settings:powersleep".to_string(),
+                            source: "LIVE".to_string(),
+                            description: "Shows the current battery level and power state.".to_string(),
+                            synonyms: "battery percentage power life status".to_string(),
+                        },
+                        score: 2.0,
+                    });
+                }
+            }
+        }
+    }
+
+    // 2. Local IP Address
+    if q.contains("ip") || q.contains("network") || q.contains("address") || q.contains("wifi") || q.contains("ethernet") {
+        if let Some(ip) = get_local_ip() {
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: "live.ip".to_string(),
+                    control_name: "Copy Local IP Address".to_string(),
+                    breadcrumb_path: format!("Network > Connection > {} (Press Enter to copy)", ip),
+                    launch_command: format!("copy:{}", ip),
+                    source: "ACTION".to_string(),
+                    description: "Copies your current local IP address to the clipboard.".to_string(),
+                    synonyms: "ip address local network connection".to_string(),
+                },
+                score: 2.0,
+            });
+        }
+    }
+
+    // 3. System RAM Usage
+    if q.contains("ram") || q.contains("memory") || q.contains("perf") || q.contains("speed") {
+        let mut mem = MEMORYSTATUSEX {
+            dw_length: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+            dw_memory_load: 0,
+            ull_total_phys: 0,
+            ull_avail_phys: 0,
+            ull_total_page_file: 0,
+            ull_avail_page_file: 0,
+            ull_total_virtual: 0,
+            ull_avail_virtual: 0,
+            ull_avail_extended_virtual: 0,
+        };
+        unsafe {
+            if GlobalMemoryStatusEx(&mut mem) != 0 {
+                let avail_gb = mem.ull_avail_phys as f64 / 1024.0 / 1024.0 / 1024.0;
+                let total_gb = mem.ull_total_phys as f64 / 1024.0 / 1024.0 / 1024.0;
+                let load = mem.dw_memory_load;
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: "live.ram".to_string(),
+                        control_name: "System Memory".to_string(),
+                        breadcrumb_path: format!("System > Performance > {:.1} GB free / {:.1} GB total ({}% used)", avail_gb, total_gb, load),
+                        launch_command: "taskmgr.exe".to_string(),
+                        source: "LIVE".to_string(),
+                        description: "Shows currently free physical RAM and memory load percentage.".to_string(),
+                        synonyms: "ram memory physical usage performance".to_string(),
+                    },
+                    score: 2.0,
+                });
+            }
+        }
+    }
+
+    // 4. Disk Space
+    if q.contains("disk") || q.contains("storage") || q.contains("space") || q.contains("drive") || q.contains("free") {
+        let mut free = 0u64;
+        let mut total = 0u64;
+        unsafe {
+            if GetDiskFreeSpaceExW(std::ptr::null(), &mut free, &mut total, std::ptr::null_mut()) != 0 {
+                let free_gb = free as f64 / 1024.0 / 1024.0 / 1024.0;
+                let total_gb = total as f64 / 1024.0 / 1024.0 / 1024.0;
+                let free_percent = if total > 0 { (free as f64 / total as f64) * 100.0 } else { 0.0 };
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: "live.disk".to_string(),
+                        control_name: "Disk Space (C:)".to_string(),
+                        breadcrumb_path: format!("System > Storage > {:.1} GB free of {:.1} GB ({:.1}% free)", free_gb, total_gb, free_percent),
+                        launch_command: "ms-settings:storagesense".to_string(),
+                        source: "LIVE".to_string(),
+                        description: "Shows free space on your system partition (C: drive).".to_string(),
+                        synonyms: "disk storage space free hard drive c".to_string(),
+                    },
+                    score: 2.0,
+                });
+            }
+        }
+    }
+
+    results
+}
+
+fn scan_apps() -> Vec<AppInfo> {
+    let mut apps = Vec::new();
+    unsafe {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
+        use windows::Win32::UI::Shell::{
+            SHGetKnownFolderItem, FOLDERID_AppsFolder, KF_FLAG_DEFAULT, IShellItem, IEnumShellItems,
+            BHID_EnumItems, SIGDN_NORMALDISPLAY, SIGDN_DESKTOPABSOLUTEPARSING
+        };
+        use windows::Win32::Foundation::HANDLE;
+
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        
+        let apps_folder: IShellItem = match SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, HANDLE::default()) {
+            Ok(folder) => folder,
+            Err(_) => return apps,
+        };
+        
+        let enum_items: IEnumShellItems = match apps_folder.BindToHandler(None, &BHID_EnumItems) {
+            Ok(e) => e,
+            Err(_) => return apps,
+        };
+        
+        let mut items = [None];
+        let mut fetched = 0;
+        while enum_items.Next(&mut items, Some(&mut fetched)).is_ok() && fetched == 1 {
+            if let Some(item) = &items[0] {
+                let display_name_ptr = match item.GetDisplayName(SIGDN_NORMALDISPLAY) {
+                    Ok(ptr) => ptr,
+                    Err(_) => continue,
+                };
+                let parsing_name_ptr = match item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING) {
+                    Ok(ptr) => ptr,
+                    Err(_) => {
+                        windows::Win32::System::Com::CoTaskMemFree(Some(display_name_ptr.0 as *const _));
+                        continue;
+                    }
+                };
+                
+                let mut len = 0;
+                while *display_name_ptr.0.add(len) != 0 { len += 1; }
+                let display_name = String::from_utf16_lossy(std::slice::from_raw_parts(display_name_ptr.0, len));
+                
+                let mut len = 0;
+                while *parsing_name_ptr.0.add(len) != 0 { len += 1; }
+                let parsing_name = String::from_utf16_lossy(std::slice::from_raw_parts(parsing_name_ptr.0, len));
+                
+                windows::Win32::System::Com::CoTaskMemFree(Some(display_name_ptr.0 as *const _));
+                windows::Win32::System::Com::CoTaskMemFree(Some(parsing_name_ptr.0 as *const _));
+                
+                let display_name_lower = display_name.to_lowercase();
+                if display_name_lower.contains("uninstall") || display_name_lower.contains("help") || display_name_lower.contains("documentation") {
+                    continue;
+                }
+                
+                apps.push(AppInfo {
+                    name: display_name,
+                    path: parsing_name,
+                });
+            }
+        }
+    }
+    
+    apps.sort_by(|a, b| a.name.cmp(&b.name));
+    apps.dedup_by(|a, b| a.name == b.name);
+    apps
 }

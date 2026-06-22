@@ -1,7 +1,28 @@
 fn main() {
     if cfg!(target_os = "windows") {
         copy_directml();
+        copy_model();
     }
+}
+
+fn copy_model() {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let src = std::path::Path::new(&manifest)
+        .join("..").join("assets").join("model").join("model_int8.onnx");
+    if !src.exists() {
+        println!("cargo:warning=model_int8.onnx not found at {}", src.display());
+        return;
+    }
+
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let target_dir = std::path::Path::new(&out_dir).ancestors().nth(3).unwrap().to_path_buf();
+    let dst = target_dir.join("model_int8.onnx");
+    if !dst.exists() {
+        if let Err(e) = std::fs::copy(&src, &dst) {
+            println!("cargo:warning=Failed to copy model_int8.onnx: {e}");
+        }
+    }
+    println!("cargo:rerun-if-changed=../assets/model/model_int8.onnx");
 }
 
 #[cfg(target_os = "windows")]
