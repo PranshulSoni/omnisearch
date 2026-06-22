@@ -1,4 +1,6 @@
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use windows::{
     core::{w, PCWSTR},
     Win32::{
@@ -11,6 +13,12 @@ use windows::{
 pub fn launch(cmd: &str) {
     let cmd = cmd.trim();
     if cmd.is_empty() { return; }
+
+    // ── Action commands ────────────────────────────────────────────────────
+    if let Some(action) = cmd.strip_prefix("action:") {
+        handle_action(action);
+        return;
+    }
 
     let cmd_lower = cmd.to_lowercase();
     if cmd.starts_with("http://") || cmd.starts_with("https://") || cmd_lower.ends_with(".lnk") {
@@ -50,4 +58,89 @@ pub fn launch(cmd: &str) {
             return;
         }
     };
+}
+
+fn handle_action(action: &str) {
+    match action {
+        "lock" => {
+            unsafe {
+                let _ = windows::Win32::System::Shutdown::LockWorkStation();
+            }
+        }
+        "shutdown" => {
+            let _ = Command::new("shutdown").args(["/s", "/t", "0"]).spawn();
+        }
+        "restart" => {
+            let _ = Command::new("shutdown").args(["/r", "/t", "0"]).spawn();
+        }
+        "sleep" => {
+            unsafe {
+                let _ = windows::Win32::System::Power::SetSuspendState(false, false, false);
+            }
+        }
+        "recycle" => {
+            unsafe {
+                use windows::Win32::UI::Shell::{SHEmptyRecycleBinW, SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI};
+                let _ = SHEmptyRecycleBinW(
+                    HWND::default(),
+                    PCWSTR::null(),
+                    SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI,
+                );
+            }
+        }
+        "flushdns" => {
+            let _ = Command::new("cmd")
+                .args(["/c", "ipconfig /flushdns"])
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .spawn();
+        }
+        "envvars" => {
+            let _ = Command::new("rundll32.exe")
+                .args(["sysdm.cpl,EditEnvironmentVariables"])
+                .spawn();
+        }
+        "clearclip" => {
+            unsafe {
+                use windows::Win32::System::DataExchange::{OpenClipboard, EmptyClipboard, CloseClipboard};
+                if OpenClipboard(HWND::default()).is_ok() {
+                    let _ = EmptyClipboard();
+                    let _ = CloseClipboard();
+                }
+            }
+        }
+        "hosts" => {
+            let hosts = r"C:\Windows\System32\drivers\etc\hosts";
+            let _ = Command::new("notepad.exe").arg(hosts).spawn();
+        }
+        folder if folder.starts_with("folder:") => {
+            let which = &folder[7..];
+            let path = match which {
+                "downloads" => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Downloads),
+                "desktop"   => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop),
+                "documents" => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Documents),
+                "pictures"  => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Pictures),
+                "music"     => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Music),
+                "videos"    => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Videos),
+                "temp"      => std::env::var("TEMP").ok(),
+                _ => None,
+            };
+            if let Some(p) = path {
+                let _ = Command::new("explorer.exe").arg(p).spawn();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn get_known_folder_path(folder_id: &windows::core::GUID) -> Option<String> {
+    unsafe {
+        use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+        use windows::Win32::Foundation::HANDLE;
+        let result = SHGetKnownFolderPath(folder_id, KF_FLAG_DEFAULT, HANDLE::default()).ok()?;
+        let mut len = 0;
+        while *result.0.add(len) != 0 { len += 1; }
+        let s = String::from_utf16_lossy(std::slice::from_raw_parts(result.0, len));
+        windows::Win32::System::Com::CoTaskMemFree(Some(result.0 as *const _));
+        Some(s)
+    }
 }

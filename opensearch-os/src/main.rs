@@ -323,37 +323,40 @@ unsafe extern "system" fn wnd_proc(
                         vec![]
                     };
                     for res in &s.results {
-                        if res.entry.source == "app" {
-                            let cmd = res.entry.launch_command.clone();
-                            if !s.app_icons.contains_key(&cmd) {
-                                // Put a placeholder (null handle) so we don't spawn multiple threads for same app
-                                s.app_icons.insert(cmd.clone(), HICON(std::ptr::null_mut()));
-                                
-                                // Spawn background thread to load icon
-                                let hwnd_clone = SendHwnd(hwnd);
-                                std::thread::spawn(move || {
-                                    let hwnd_raw = hwnd_clone;
-                                    unsafe {
-                                        let _ = windows::Win32::System::Com::CoInitializeEx(
-                                            None,
-                                            windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE
-                                        );
-                                        let hicon = get_app_icon(&cmd);
-                                        if !hicon.0.is_null() {
-                                            let key_ptr = Box::into_raw(Box::new(cmd));
-                                            if PostMessageW(
-                                                hwnd_raw.0,
-                                                WM_ICON_LOADED,
-                                                WPARAM(hicon.0 as usize),
-                                                LPARAM(key_ptr as isize),
-                                            ).is_err() {
-                                                let _ = Box::from_raw(key_ptr);
-                                                let _ = DestroyIcon(hicon);
-                                            }
+                        let (source, key) = (res.entry.source.as_str(), res.entry.launch_command.clone());
+                        let needs_icon = (source == "app" || source == "RECENT")
+                            && !s.app_icons.contains_key(&key);
+                        if needs_icon {
+                            // Placeholder so we don't spawn multiple threads for same path
+                            s.app_icons.insert(key.clone(), HICON(std::ptr::null_mut()));
+                            let is_recent = source == "RECENT";
+                            let hwnd_clone = SendHwnd(hwnd);
+                            std::thread::spawn(move || {
+                                let hwnd_raw = hwnd_clone;
+                                unsafe {
+                                    let _ = windows::Win32::System::Com::CoInitializeEx(
+                                        None,
+                                        windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE
+                                    );
+                                    let hicon = if is_recent {
+                                        get_file_icon(&key)
+                                    } else {
+                                        get_app_icon(&key)
+                                    };
+                                    if !hicon.0.is_null() {
+                                        let key_ptr = Box::into_raw(Box::new(key));
+                                        if PostMessageW(
+                                            hwnd_raw.0,
+                                            WM_ICON_LOADED,
+                                            WPARAM(hicon.0 as usize),
+                                            LPARAM(key_ptr as isize),
+                                        ).is_err() {
+                                            let _ = Box::from_raw(key_ptr);
+                                            let _ = DestroyIcon(hicon);
                                         }
                                     }
-                                });
-                            }
+                                }
+                            });
                         }
                     }
                     s.selected = 0;
@@ -823,6 +826,20 @@ unsafe fn get_app_icon(path: &str) -> HICON {
     hicon
 }
 
+unsafe fn get_file_icon(path: &str) -> HICON {
+    let mut shfi = windows::Win32::UI::Shell::SHFILEINFOW::default();
+    let path_wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    let flags = windows::Win32::UI::Shell::SHGFI_ICON | windows::Win32::UI::Shell::SHGFI_LARGEICON;
+    let res = windows::Win32::UI::Shell::SHGetFileInfoW(
+        PCWSTR(path_wide.as_ptr()),
+        windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(0),
+        Some(&mut shfi),
+        std::mem::size_of::<windows::Win32::UI::Shell::SHFILEINFOW>() as u32,
+        flags,
+    );
+    if res != 0 { shfi.hIcon } else { HICON(null_mut()) }
+}
+
 unsafe fn paint(hwnd: HWND, s: &State) {
     let mut ps = PAINTSTRUCT::default();
     let hdc = BeginPaint(hwnd, &mut ps);
@@ -923,7 +940,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let cy = ry + (RESULT_H - 40) / 2;
 
             // Draw Icon
-            let icon_to_draw = if res.entry.source == "app" {
+            let icon_to_draw = if res.entry.source == "app" || res.entry.source == "RECENT" {
                 s.app_icons.get(&res.entry.launch_command)
                     .copied()
                     .filter(|h| !h.0.is_null())
@@ -1011,6 +1028,10 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
         ("WEB", COLORREF(0x00_C5_6A_00), CLR_WHITE)
     } else if src_lc == "app" {
         ("APP", COLORREF(0x00_A6_8F_0A), CLR_WHITE)
+    } else if src_lc == "calc" {
+        ("CALC", COLORREF(0x00_9B_4D_00), CLR_WHITE)
+    } else if src_lc == "recent" {
+        ("RECENT", COLORREF(0x00_7A_1F_7A), CLR_WHITE)
     } else if src_lc.contains("legacy") {
         ("LEGACY", CLR_BDGBG, CLR_BDGTX)
     } else if src_lc.contains("native") {

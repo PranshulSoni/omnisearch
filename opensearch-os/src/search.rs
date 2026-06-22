@@ -52,6 +52,12 @@ pub struct AppInfo {
     pub path: String,
 }
 
+#[derive(Clone)]
+pub struct RecentFileInfo {
+    pub name: String,
+    pub path: String,  // resolved target path
+}
+
 pub struct SearchEngine {
     vecs: Vec<f32>,
     meta: Vec<CatalogEntry>,
@@ -61,6 +67,7 @@ pub struct SearchEngine {
     tokenizer: Tokenizer,
     anchor_categories: Vec<AnchorCategory>,
     apps: Vec<AppInfo>,
+    recent_files: Vec<RecentFileInfo>,
 }
 
 impl SearchEngine {
@@ -146,7 +153,7 @@ impl SearchEngine {
             },
         ];
 
-        let mut engine = Self { vecs, meta, n, dim, session, tokenizer, anchor_categories: vec![], apps: vec![] };
+        let mut engine = Self { vecs, meta, n, dim, session, tokenizer, anchor_categories: vec![], apps: vec![], recent_files: vec![] };
         for cat in &mut anchor_categories {
             for phrase in cat.phrases {
                 let phrase_with_prefix = format!("query: {}", phrase);
@@ -157,6 +164,7 @@ impl SearchEngine {
         }
         engine.anchor_categories = anchor_categories;
         engine.apps = scan_apps();
+        engine.recent_files = scan_recent_files();
         let _ = engine.search("settings", 1);
         Ok(engine)
     }
@@ -164,6 +172,29 @@ impl SearchEngine {
     pub fn search(&mut self, query: &str, top_k: usize) -> Vec<SearchResult> {
         let q = query.trim();
         if q.is_empty() { return vec![]; }
+
+        // ── Calculator: inject instantly if query is a math expression ──────
+        let calc_result: Option<SearchResult> = try_calc(q).map(|val| {
+            let display = if val.fract() == 0.0 && val.abs() < 1e15 {
+                format!("{}", val as i64)
+            } else {
+                // Up to 10 significant digits, strip trailing zeros
+                let s = format!("{:.10}", val);
+                s.trim_end_matches('0').trim_end_matches('.').to_string()
+            };
+            SearchResult {
+                entry: CatalogEntry {
+                    id: "calc".to_string(),
+                    control_name: format!("{} = {}", q, display),
+                    breadcrumb_path: format!("Calculator > Press Enter to copy  {}", display),
+                    launch_command: format!("copy:{}", display),
+                    source: "CALC".to_string(),
+                    description: format!("Math result: {}", display),
+                    synonyms: String::new(),
+                },
+                score: 10.0,
+            }
+        });
 
         let q_lower = q.to_lowercase();
         let stop_words = ["what", "is", "a", "the", "to", "for", "in", "of", "and", "or", "with", "on", "at", "by", "from", "about", "how", "this", "it", "my", "your"];
@@ -362,16 +393,79 @@ impl SearchEngine {
         
         app_matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
 
+        // Recent files matching
+        let mut recent_matches = Vec::new();
+        for rf in &self.recent_files {
+            let name_lower = rf.name.to_lowercase();
+            // Strip extension for matching (e.g. "report.pdf" → "report")
+            let name_no_ext = if let Some(dot) = name_lower.rfind('.') {
+                &name_lower[..dot]
+            } else {
+                &name_lower
+            };
+            let mut score = 0.0f32;
+            if name_lower == q_lower || name_no_ext == q_lower {
+                score = 2.8;
+            } else if name_lower.starts_with(&q_lower) || name_no_ext.starts_with(&q_lower) {
+                score = 2.3;
+            } else if name_lower.contains(&q_lower) {
+                score = 1.7;
+            } else {
+                let name_words: Vec<&str> = name_no_ext.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+                let mut matched = 0;
+                for qw in &q_words {
+                    if name_words.contains(qw) { matched += 1; }
+                }
+                if matched > 0 && !q_words.is_empty() {
+                    let ratio = matched as f32 / q_words.len() as f32;
+                    if ratio >= 0.5 { score = 0.6 + 0.4 * ratio; }
+                }
+            }
+            if score > 0.0 {
+                let ext = rf.name.rsplit('.').next().unwrap_or("").to_uppercase();
+                recent_matches.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("recent.{}", rf.path),
+                        control_name: rf.name.clone(),
+                        breadcrumb_path: format!("Recent > {}", rf.path),
+                        launch_command: rf.path.clone(),
+                        source: "RECENT".to_string(),
+                        description: format!("Recently opened {} file", ext),
+                        synonyms: rf.name.to_lowercase(),
+                    },
+                    score,
+                });
+            }
+        }
+        recent_matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        recent_matches.truncate(5); // Cap at 5 recent file results
+
         let mut merged = Vec::new();
         merged.append(&mut app_matches);
+        merged.append(&mut recent_matches);
         merged.append(&mut vec_results);
         merged.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
 
         conv_results.append(&mut final_results);
         final_results = conv_results;
         final_results.append(&mut merged);
         
         final_results.truncate(top_k.saturating_sub(1));
+
+        // Quick system actions: match against query
+        let mut action_matches = get_quick_actions(q);
+        for am in &action_matches {
+            final_results.retain(|r| r.entry.control_name.to_lowercase() != am.entry.control_name.to_lowercase());
+        }
+        action_matches.append(&mut final_results);
+        final_results = action_matches;
+
+        // Prepend calc result if we got one
+        if let Some(calc) = calc_result {
+            final_results.insert(0, calc);
+            // Don't count it against top_k since it's always useful context
+        }
 
         let encoded_query = url_encode(q);
         final_results.push(SearchResult {
@@ -803,7 +897,106 @@ fn get_live_results(query: &str) -> Vec<SearchResult> {
     results
 }
 
+// ── Recent Files ────────────────────────────────────────────────────────────
+fn scan_recent_files() -> Vec<RecentFileInfo> {
+    let mut results = Vec::new();
+
+    // %APPDATA%\Microsoft\Windows\Recent
+    let recent_dir = match std::env::var("APPDATA") {
+        Ok(d) => std::path::PathBuf::from(d).join("Microsoft\\Windows\\Recent"),
+        Err(_) => return results,
+    };
+
+    let entries = match std::fs::read_dir(&recent_dir) {
+        Ok(e) => e,
+        Err(_) => return results,
+    };
+
+    let mut file_entries: Vec<(std::path::PathBuf, std::time::SystemTime)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path().extension()
+                .and_then(|x| x.to_str())
+                .map(|x| x.eq_ignore_ascii_case("lnk"))
+                .unwrap_or(false)
+        })
+        .filter_map(|e| {
+            let path = e.path();
+            let modified = e.metadata().ok()?.modified().ok()?;
+            Some((path, modified))
+        })
+        .collect();
+
+    // Sort by modification time, newest first
+    file_entries.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // Take at most 200 recent items (the list can be large)
+    file_entries.truncate(200);
+
+    for (lnk_path, _) in file_entries {
+        // Resolve the .lnk target
+        if let Some(target) = resolve_lnk_path(&lnk_path) {
+            // Skip system folders, executables, etc. — keep documents
+            let path_lower = target.to_lowercase();
+            let is_useful = path_lower.ends_with(".pdf")
+                || path_lower.ends_with(".docx")
+                || path_lower.ends_with(".doc")
+                || path_lower.ends_with(".xlsx")
+                || path_lower.ends_with(".xls")
+                || path_lower.ends_with(".pptx")
+                || path_lower.ends_with(".ppt")
+                || path_lower.ends_with(".txt")
+                || path_lower.ends_with(".md")
+                || path_lower.ends_with(".png")
+                || path_lower.ends_with(".jpg")
+                || path_lower.ends_with(".jpeg")
+                || path_lower.ends_with(".mp4")
+                || path_lower.ends_with(".mp3")
+                || path_lower.ends_with(".zip")
+                || path_lower.ends_with(".rs")
+                || path_lower.ends_with(".py")
+                || path_lower.ends_with(".js")
+                || path_lower.ends_with(".ts")
+                || path_lower.ends_with(".json")
+                || path_lower.ends_with(".html")
+                || path_lower.ends_with(".css");
+
+            if !is_useful { continue; }
+
+            // Get the file name from the target path
+            let name = std::path::Path::new(&target)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&target)
+                .to_string();
+
+            results.push(RecentFileInfo { name, path: target });
+        }
+    }
+
+    results
+}
+
+fn resolve_lnk_path(lnk_path: &std::path::Path) -> Option<String> {
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, IPersistFile, STGM_READ};
+    use windows::Win32::UI::Shell::{ShellLink, IShellLinkW, SLGP_UNCPRIORITY};
+    use windows::core::{PCWSTR, Interface};
+
+    unsafe {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let persist: IPersistFile = link.cast().ok()?;
+        let path_wide: Vec<u16> = lnk_path.to_str()?.encode_utf16().chain(std::iter::once(0)).collect();
+        persist.Load(PCWSTR(path_wide.as_ptr()), STGM_READ).ok()?;
+        let mut buffer = [0u16; 260];
+        link.GetPath(&mut buffer, std::ptr::null_mut(), SLGP_UNCPRIORITY.0 as u32).ok()?;
+        let target = String::from_utf16_lossy(&buffer);
+        let trimmed = target.trim_matches('\0').trim().to_string();
+        if trimmed.is_empty() { None } else { Some(trimmed) }
+    }
+}
+
 fn scan_apps() -> Vec<AppInfo> {
+
     let mut apps = Vec::new();
     unsafe {
         use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
@@ -916,4 +1109,392 @@ fn scan_apps() -> Vec<AppInfo> {
     apps.sort_by(|a, b| a.name.cmp(&b.name));
     apps.dedup_by(|a, b| a.name == b.name);
     apps
+}
+
+// ── Quick System Actions ────────────────────────────────────────────────────
+// Each entry: (trigger_phrases, name, breadcrumb, launch_command, description)
+struct QuickAction {
+    triggers: &'static [&'static str],
+    name: &'static str,
+    breadcrumb: &'static str,
+    launch_command: &'static str,
+    description: &'static str,
+}
+
+static QUICK_ACTIONS: &[QuickAction] = &[
+    QuickAction {
+        triggers: &["lock", "lock screen", "lock pc", "lock computer"],
+        name: "Lock Screen",
+        breadcrumb: "System > Security > Lock this PC immediately",
+        launch_command: "action:lock",
+        description: "Lock the screen immediately.",
+    },
+    QuickAction {
+        triggers: &["shutdown", "shut down", "power off", "turn off computer", "turn off pc"],
+        name: "Shut Down",
+        breadcrumb: "System > Power > Shut down this computer",
+        launch_command: "action:shutdown",
+        description: "Shut down the computer.",
+    },
+    QuickAction {
+        triggers: &["restart", "reboot", "restart computer", "restart pc"],
+        name: "Restart",
+        breadcrumb: "System > Power > Restart this computer",
+        launch_command: "action:restart",
+        description: "Restart the computer.",
+    },
+    QuickAction {
+        triggers: &["sleep", "hibernate", "sleep computer", "sleep pc"],
+        name: "Sleep",
+        breadcrumb: "System > Power > Put computer to sleep",
+        launch_command: "action:sleep",
+        description: "Put the computer to sleep.",
+    },
+    QuickAction {
+        triggers: &["empty recycle bin", "clear recycle bin", "empty trash", "recycle bin"],
+        name: "Empty Recycle Bin",
+        breadcrumb: "System > Storage > Empty the Recycle Bin",
+        launch_command: "action:recycle",
+        description: "Permanently delete all items in the Recycle Bin.",
+    },
+    QuickAction {
+        triggers: &["open downloads", "downloads folder", "my downloads"],
+        name: "Open Downloads",
+        breadcrumb: "File System > User > Downloads",
+        launch_command: "action:folder:downloads",
+        description: "Open the Downloads folder.",
+    },
+    QuickAction {
+        triggers: &["open desktop", "desktop folder", "go to desktop"],
+        name: "Open Desktop",
+        breadcrumb: "File System > User > Desktop",
+        launch_command: "action:folder:desktop",
+        description: "Open the Desktop folder.",
+    },
+    QuickAction {
+        triggers: &["open documents", "documents folder", "my documents"],
+        name: "Open Documents",
+        breadcrumb: "File System > User > Documents",
+        launch_command: "action:folder:documents",
+        description: "Open the Documents folder.",
+    },
+    QuickAction {
+        triggers: &["open pictures", "pictures folder", "my pictures", "photos folder"],
+        name: "Open Pictures",
+        breadcrumb: "File System > User > Pictures",
+        launch_command: "action:folder:pictures",
+        description: "Open the Pictures folder.",
+    },
+    QuickAction {
+        triggers: &["open music", "music folder", "my music"],
+        name: "Open Music",
+        breadcrumb: "File System > User > Music",
+        launch_command: "action:folder:music",
+        description: "Open the Music folder.",
+    },
+    QuickAction {
+        triggers: &["open videos", "videos folder", "my videos"],
+        name: "Open Videos",
+        breadcrumb: "File System > User > Videos",
+        launch_command: "action:folder:videos",
+        description: "Open the Videos folder.",
+    },
+    QuickAction {
+        triggers: &["open temp", "temp folder", "temporary files", "open tmp"],
+        name: "Open Temp Folder",
+        breadcrumb: "System > Temp > %TEMP% folder",
+        launch_command: "action:folder:temp",
+        description: "Open the Windows temporary files folder.",
+    },
+    QuickAction {
+        triggers: &["open startup", "startup folder", "startup programs folder"],
+        name: "Open Startup Folder",
+        breadcrumb: "System > Startup > Shell startup programs",
+        launch_command: "shell:startup",
+        description: "Open the user startup programs folder.",
+    },
+    QuickAction {
+        triggers: &["flush dns", "clear dns", "reset dns", "dns cache"],
+        name: "Flush DNS Cache",
+        breadcrumb: "Network > DNS > Flush resolver cache",
+        launch_command: "action:flushdns",
+        description: "Clear the DNS resolver cache.",
+    },
+    QuickAction {
+        triggers: &["open task manager", "task manager", "taskmgr"],
+        name: "Open Task Manager",
+        breadcrumb: "System > Performance > Task Manager",
+        launch_command: "taskmgr.exe",
+        description: "Open Task Manager.",
+    },
+    QuickAction {
+        triggers: &["open registry", "registry editor", "regedit"],
+        name: "Open Registry Editor",
+        breadcrumb: "System > Advanced > Registry Editor",
+        launch_command: "regedit.exe",
+        description: "Open the Windows Registry Editor.",
+    },
+    QuickAction {
+        triggers: &["open environment variables", "environment variables", "env variables", "path variable"],
+        name: "Environment Variables",
+        breadcrumb: "System > Advanced System Settings > Environment Variables",
+        launch_command: "action:envvars",
+        description: "Open Environment Variables settings.",
+    },
+    QuickAction {
+        triggers: &["clear clipboard", "empty clipboard", "reset clipboard"],
+        name: "Clear Clipboard",
+        breadcrumb: "System > Clipboard > Clear clipboard contents",
+        launch_command: "action:clearclip",
+        description: "Clear all contents from the clipboard.",
+    },
+    QuickAction {
+        triggers: &["open hosts file", "hosts file", "edit hosts"],
+        name: "Open Hosts File",
+        breadcrumb: "Network > DNS > Edit hosts file",
+        launch_command: "action:hosts",
+        description: "Open the system hosts file in Notepad.",
+    },
+];
+
+fn get_quick_actions(query: &str) -> Vec<SearchResult> {
+    let q = query.trim().to_lowercase();
+    if q.len() < 2 { return vec![]; }
+
+    let mut matches = Vec::new();
+    for action in QUICK_ACTIONS {
+        let mut best_score = 0.0f32;
+        for &trigger in action.triggers {
+            let t = trigger.to_lowercase();
+            let score = if t == q {
+                3.5
+            } else if t.starts_with(&q) {
+                3.0
+            } else if q.starts_with(&t) {
+                2.8
+            } else if t.contains(&q) {
+                2.5
+            } else if q.contains(&t) {
+                2.3
+            } else {
+                // Word-level match
+                let t_words: Vec<&str> = t.split_whitespace().collect();
+                let q_words: Vec<&str> = q.split_whitespace().collect();
+                let matched = q_words.iter().filter(|w| t_words.contains(w)).count();
+                if matched > 0 {
+                    let ratio = matched as f32 / q_words.len().max(1) as f32;
+                    if ratio >= 0.5 { 1.5 + ratio } else { 0.0 }
+                } else {
+                    0.0
+                }
+            };
+            if score > best_score { best_score = score; }
+        }
+        if best_score > 0.0 {
+            matches.push(SearchResult {
+                entry: CatalogEntry {
+                    id: format!("action.{}", action.name.to_lowercase().replace(' ', "_")),
+                    control_name: action.name.to_string(),
+                    breadcrumb_path: action.breadcrumb.to_string(),
+                    launch_command: action.launch_command.to_string(),
+                    source: "ACTION".to_string(),
+                    description: action.description.to_string(),
+                    synonyms: action.triggers.join("|"),
+                },
+                score: best_score,
+            });
+        }
+    }
+    matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    matches
+}
+
+// ── Calculator: recursive-descent expression parser ────────────────────────
+// Supports: +, -, *, /, ^, %, parentheses, unary minus
+// Named functions: sqrt, abs, round, floor, ceil, sin, cos, tan, log, ln
+// Special form: "N% of M" → N/100 * M
+pub fn try_calc(input: &str) -> Option<f64> {
+    let s = input.trim();
+    // Must contain at least one digit to be a math expression
+    if !s.chars().any(|c| c.is_ascii_digit()) { return None; }
+
+    // Handle "X% of Y" shorthand
+    let s = if let Some(pct_of) = try_pct_of(s) {
+        return Some(pct_of);
+    } else {
+        s.to_string()
+    };
+
+    let tokens = tokenize(&s)?;
+    let mut pos = 0usize;
+    let result = parse_expr(&tokens, &mut pos)?;
+    // Consume any trailing whitespace tokens
+    while pos < tokens.len() {
+        if tokens[pos] != Token::EOF { return None; }
+        pos += 1;
+    }
+    if result.is_nan() || result.is_infinite() { return None; }
+    Some(result)
+}
+
+fn try_pct_of(s: &str) -> Option<f64> {
+    // Match "N% of M" case-insensitively
+    let lower = s.to_lowercase();
+    let idx = lower.find("% of ")?;
+    let pct_str = s[..idx].trim();
+    let rest_str = s[idx + 5..].trim();
+    let pct: f64 = pct_str.parse().ok()?;
+    let base: f64 = rest_str.parse().ok()?;
+    Some(pct / 100.0 * base)
+}
+
+#[derive(Debug, PartialEq, Clone)]
+enum Token {
+    Num(f64),
+    Plus, Minus, Star, Slash, Caret, Percent,
+    LParen, RParen,
+    Ident(String),
+    EOF,
+}
+
+fn tokenize(s: &str) -> Option<Vec<Token>> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            ' ' | '\t' => { i += 1; }
+            '+' => { tokens.push(Token::Plus);    i += 1; }
+            '-' => { tokens.push(Token::Minus);   i += 1; }
+            '*' | '×' => { tokens.push(Token::Star);  i += 1; }
+            '/' | '÷' => { tokens.push(Token::Slash); i += 1; }
+            '^' => { tokens.push(Token::Caret);   i += 1; }
+            '%' => { tokens.push(Token::Percent); i += 1; }
+            '(' => { tokens.push(Token::LParen);  i += 1; }
+            ')' => { tokens.push(Token::RParen);  i += 1; }
+            ',' => { i += 1; } // ignore comma separators
+            c if c.is_ascii_digit() || c == '.' => {
+                let start = i;
+                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') { i += 1; }
+                let num_str: String = chars[start..i].iter().collect();
+                let n: f64 = num_str.parse().ok()?;
+                tokens.push(Token::Num(n));
+            }
+            c if c.is_alphabetic() || c == '_' => {
+                let start = i;
+                while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') { i += 1; }
+                let word: String = chars[start..i].iter().collect();
+                tokens.push(Token::Ident(word.to_lowercase()));
+            }
+            _ => return None, // unknown character → not a math expression
+        }
+    }
+    tokens.push(Token::EOF);
+    Some(tokens)
+}
+
+// expr = term (('+' | '-') term)*
+fn parse_expr(tokens: &[Token], pos: &mut usize) -> Option<f64> {
+    let mut left = parse_term(tokens, pos)?;
+    loop {
+        match tokens.get(*pos) {
+            Some(Token::Plus)  => { *pos += 1; left += parse_term(tokens, pos)?; }
+            Some(Token::Minus) => { *pos += 1; left -= parse_term(tokens, pos)?; }
+            _ => break,
+        }
+    }
+    Some(left)
+}
+
+// term = power (('*' | '/' | '%') power)*
+fn parse_term(tokens: &[Token], pos: &mut usize) -> Option<f64> {
+    let mut left = parse_power(tokens, pos)?;
+    loop {
+        match tokens.get(*pos) {
+            Some(Token::Star)    => { *pos += 1; left *= parse_power(tokens, pos)?; }
+            Some(Token::Slash)   => { *pos += 1; let r = parse_power(tokens, pos)?; if r == 0.0 { return None; } left /= r; }
+            Some(Token::Percent) => {
+                // Check if next token is 'of' (handled earlier) or treat as modulo
+                *pos += 1;
+                match tokens.get(*pos) {
+                    Some(Token::Ident(w)) if w == "of" => {
+                        *pos += 1;
+                        let base = parse_power(tokens, pos)?;
+                        left = left / 100.0 * base;
+                    }
+                    _ => {
+                        // treat as percentage of the next value if present, else /100
+                        left = left / 100.0;
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    Some(left)
+}
+
+// power = unary ('^' power)?  (right-associative)
+fn parse_power(tokens: &[Token], pos: &mut usize) -> Option<f64> {
+    let base = parse_unary(tokens, pos)?;
+    if matches!(tokens.get(*pos), Some(Token::Caret)) {
+        *pos += 1;
+        let exp = parse_power(tokens, pos)?;
+        Some(base.powf(exp))
+    } else {
+        Some(base)
+    }
+}
+
+// unary = '-' unary | primary
+fn parse_unary(tokens: &[Token], pos: &mut usize) -> Option<f64> {
+    if matches!(tokens.get(*pos), Some(Token::Minus)) {
+        *pos += 1;
+        Some(-parse_unary(tokens, pos)?)
+    } else {
+        parse_primary(tokens, pos)
+    }
+}
+
+// primary = number | ident '(' expr ')' | '(' expr ')'
+fn parse_primary(tokens: &[Token], pos: &mut usize) -> Option<f64> {
+    match tokens.get(*pos)?.clone() {
+        Token::Num(n) => { *pos += 1; Some(n) }
+        Token::LParen => {
+            *pos += 1;
+            let val = parse_expr(tokens, pos)?;
+            if tokens.get(*pos) == Some(&Token::RParen) { *pos += 1; }
+            Some(val)
+        }
+        Token::Ident(name) => {
+            *pos += 1;
+            // Named functions expect a parenthesised argument
+            if tokens.get(*pos) == Some(&Token::LParen) {
+                *pos += 1;
+                let arg = parse_expr(tokens, pos)?;
+                if tokens.get(*pos) == Some(&Token::RParen) { *pos += 1; }
+                match name.as_str() {
+                    "sqrt" => Some(arg.sqrt()),
+                    "abs"  => Some(arg.abs()),
+                    "round"=> Some(arg.round()),
+                    "floor"=> Some(arg.floor()),
+                    "ceil" => Some(arg.ceil()),
+                    "sin"  => Some(arg.to_radians().sin()),
+                    "cos"  => Some(arg.to_radians().cos()),
+                    "tan"  => Some(arg.to_radians().tan()),
+                    "log"  => Some(arg.log10()),
+                    "ln"   => Some(arg.ln()),
+                    _ => None,
+                }
+            } else {
+                // Named constants
+                match name.as_str() {
+                    "pi" | "π" => Some(std::f64::consts::PI),
+                    "e"        => Some(std::f64::consts::E),
+                    _ => None,
+                }
+            }
+        }
+        _ => None,
+    }
 }
