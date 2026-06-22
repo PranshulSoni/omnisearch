@@ -458,18 +458,32 @@ impl SearchEngine {
         recent_matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         recent_matches.truncate(5); // Cap at 5 recent file results
 
+        let encoded_query = url_encode(q);
+        let web_search = SearchResult {
+            entry: CatalogEntry {
+                id: "web_search".to_string(),
+                control_name: format!("Search Google for \"{}\"", q),
+                breadcrumb_path: "Web > Google Search > Open in default browser".to_string(),
+                launch_command: format!("https://www.google.com/search?q={}", encoded_query),
+                source: "web".to_string(),
+                description: format!("Opens default browser and searches Google for '{}'.", q),
+                synonyms: "google search web internet online".to_string(),
+            },
+            score: 1.1,
+        };
+
         let mut merged = Vec::new();
         merged.append(&mut app_matches);
         merged.append(&mut recent_matches);
         merged.append(&mut vec_results);
+        merged.push(web_search.clone());
         merged.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-
 
         conv_results.append(&mut final_results);
         final_results = conv_results;
         final_results.append(&mut merged);
         
-        final_results.truncate(top_k.saturating_sub(1));
+        final_results.truncate(top_k);
 
         // Quick system actions: match against query
         let mut action_matches = get_quick_actions(q);
@@ -482,22 +496,12 @@ impl SearchEngine {
         // Prepend calc result if we got one
         if let Some(calc) = calc_result {
             final_results.insert(0, calc);
-            // Don't count it against top_k since it's always useful context
         }
 
-        let encoded_query = url_encode(q);
-        final_results.push(SearchResult {
-            entry: CatalogEntry {
-                id: "web_search".to_string(),
-                control_name: format!("Search Google for \"{}\"", q),
-                breadcrumb_path: "Web > Google Search > Open in default browser".to_string(),
-                launch_command: format!("https://www.google.com/search?q={}", encoded_query),
-                source: "web".to_string(),
-                description: format!("Opens default browser and searches Google for '{}'.", q),
-                synonyms: "google search web internet online".to_string(),
-            },
-            score: 0.0,
-        });
+        // Ensure web_search is always in the list as a fallback
+        if !final_results.iter().any(|r| r.entry.id == "web_search") {
+            final_results.push(web_search);
+        }
 
         final_results
     }
