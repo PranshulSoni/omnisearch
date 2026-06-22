@@ -4,6 +4,7 @@ mod launcher;
 mod search;
 mod indexer;
 mod browser_indexer;
+mod git_indexer;
 
 use std::ptr::null_mut;
 use search::{SearchEngine, SearchResult};
@@ -74,6 +75,8 @@ struct State {
     icon_web: HICON,
     icon_bookmark: HICON,
     icon_folder: HICON,
+    icon_commit: HICON,
+    icon_todo: HICON,
     text_selected: bool,
     scroll_offset: usize,
     last_mouse_x: i32,
@@ -136,6 +139,8 @@ unsafe fn run() {
     let icon_web = load_icon_from_memory(WEB_ICO, 32);
     let icon_bookmark = load_icon_from_dll("shell32.dll", 43, 32);
     let icon_folder = load_icon_from_dll("shell32.dll", 3, 32);
+    let icon_commit = load_icon_from_dll("shell32.dll", 22, 32);
+    let icon_todo = load_icon_from_dll("shell32.dll", 270, 32);
 
     let state = Box::new(State {
         engine: None,
@@ -155,6 +160,8 @@ unsafe fn run() {
         icon_web,
         icon_bookmark,
         icon_folder,
+        icon_commit,
+        icon_todo,
         text_selected: false,
         scroll_offset: 0,
         last_mouse_x: -1,
@@ -214,6 +221,7 @@ unsafe fn run() {
         };
         indexer::start_indexer(db_path.clone());
         browser_indexer::start_browser_indexer(db_path.clone());
+        git_indexer::start_git_indexer(db_path.clone());
 
         let model_path = std::env::current_exe().ok()
             .and_then(|p| p.parent().map(|d| d.join("model_int8.onnx")));
@@ -604,6 +612,8 @@ unsafe extern "system" fn wnd_proc(
                 if !s.icon_web.0.is_null() { let _ = DestroyIcon(s.icon_web); }
                 if !s.icon_bookmark.0.is_null() { let _ = DestroyIcon(s.icon_bookmark); }
                 if !s.icon_folder.0.is_null() { let _ = DestroyIcon(s.icon_folder); }
+                if !s.icon_commit.0.is_null() { let _ = DestroyIcon(s.icon_commit); }
+                if !s.icon_todo.0.is_null() { let _ = DestroyIcon(s.icon_todo); }
                 for &hicon in s.app_icons.values() {
                     if !hicon.0.is_null() {
                         let _ = DestroyIcon(hicon);
@@ -1013,6 +1023,10 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 s.icon_bookmark
             } else if res.entry.source == "FOLDER" {
                 s.icon_folder
+            } else if res.entry.source == "COMMIT" {
+                s.icon_commit
+            } else if res.entry.source == "TODO" {
+                s.icon_todo
             } else {
                 s.icon_control_panel
             };
@@ -1104,6 +1118,10 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
         ("HISTORY", COLORREF(0x00_90_60_20), CLR_WHITE)
     } else if src_lc == "folder" {
         ("FOLDER", COLORREF(0x00_13_45_8B), CLR_WHITE)
+    } else if src_lc == "commit" {
+        ("COMMIT", COLORREF(0x00_20_7A_D6), CLR_WHITE)
+    } else if src_lc == "todo" {
+        ("TODO", COLORREF(0x00_2A_3E_E6), CLR_WHITE)
     } else if src_lc == "browser" {
         ("BROWSER", COLORREF(0x00_2A_8F_C6), CLR_WHITE)
     } else if src_lc.contains("legacy") {

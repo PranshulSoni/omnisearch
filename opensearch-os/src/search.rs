@@ -599,6 +599,225 @@ impl SearchEngine {
         results
     }
 
+    pub fn search_commits_only(&self, sub_query: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        let conn = match Connection::open(&self.db_path) {
+            Ok(c) => c,
+            Err(_) => return results,
+        };
+
+        let q_lower = sub_query.trim().to_lowercase();
+        let q_words: Vec<&str> = q_lower.split_whitespace().collect();
+
+        let rows = if q_lower.is_empty() {
+            let mut stmt = match conn.prepare(
+                "SELECT c.hash, c.author, c.date, c.message, r.name 
+                 FROM git_commits c
+                 JOIN git_repos r ON c.repo_id = r.id
+                 ORDER BY c.date DESC LIMIT 100"
+            ) {
+                Ok(s) => s,
+                Err(_) => return results,
+            };
+            let mapped = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            });
+            match mapped {
+                Ok(r) => r.collect::<Vec<_>>(),
+                Err(_) => return results,
+            }
+        } else {
+            let name_query = format!("%{}%", q_lower);
+            let mut stmt = match conn.prepare(
+                "SELECT c.hash, c.author, c.date, c.message, r.name 
+                 FROM git_commits c
+                 JOIN git_repos r ON c.repo_id = r.id
+                 WHERE c.message LIKE ?1 OR c.author LIKE ?1 OR c.hash LIKE ?1
+                 ORDER BY c.date DESC LIMIT 100"
+            ) {
+                Ok(s) => s,
+                Err(_) => return results,
+            };
+            let mapped = stmt.query_map([&name_query], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            });
+            match mapped {
+                Ok(r) => r.collect::<Vec<_>>(),
+                Err(_) => return results,
+            }
+        };
+
+        let format_unix_time = |timestamp: i64| -> String {
+            let days = timestamp / 86400;
+            let years = 1970 + days / 365;
+            let month = 1 + (days % 365) / 30;
+            let day = 1 + (days % 365) % 30;
+            format!("{:04}-{:02}-{:02}", years, month, day)
+        };
+
+        for row in rows.into_iter().filter_map(|r| r.ok()) {
+            let (hash, author, date, message, repo_name) = row;
+            let msg_lower = message.to_lowercase();
+            let auth_lower = author.to_lowercase();
+            
+            let mut score = 1.0f32;
+            if !q_lower.is_empty() {
+                if msg_lower == q_lower || hash.to_lowercase() == q_lower {
+                    score = 2.0;
+                } else if msg_lower.starts_with(&q_lower) || hash.to_lowercase().starts_with(&q_lower) {
+                    score = 1.6;
+                } else if msg_lower.contains(&q_lower) || auth_lower.contains(&q_lower) {
+                    score = 1.2;
+                } else {
+                    let matched = q_words.iter().filter(|w| msg_lower.contains(*w) || auth_lower.contains(*w)).count();
+                    if matched > 0 {
+                        score = 0.5 + 0.5 * (matched as f32 / q_words.len() as f32);
+                    } else {
+                        score = 0.0;
+                    }
+                }
+            }
+
+            if score > 0.0 {
+                let date_str = format_unix_time(date);
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("git.commit.{}", hash),
+                        control_name: format!("[{}] {}", repo_name, message),
+                        breadcrumb_path: format!("Git > Commit > {} by {}", hash[..7.min(hash.len())].to_string(), author),
+                        launch_command: format!("copy:{}", hash),
+                        source: "COMMIT".to_string(),
+                        description: format!("Commit on {} - {}", date_str, hash),
+                        synonyms: format!("{} {} {}", message, author, hash),
+                    },
+                    score,
+                });
+            }
+        }
+
+        results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results
+    }
+
+    pub fn search_todos_only(&self, sub_query: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        let conn = match Connection::open(&self.db_path) {
+            Ok(c) => c,
+            Err(_) => return results,
+        };
+
+        let q_lower = sub_query.trim().to_lowercase();
+        let q_words: Vec<&str> = q_lower.split_whitespace().collect();
+
+        let rows = if q_lower.is_empty() {
+            let mut stmt = match conn.prepare(
+                "SELECT t.file_path, t.line_number, t.todo_text, r.name 
+                 FROM git_todos t
+                 JOIN git_repos r ON t.repo_id = r.id
+                 ORDER BY t.id DESC LIMIT 100"
+            ) {
+                Ok(s) => s,
+                Err(_) => return results,
+            };
+            let mapped = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i32>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            });
+            match mapped {
+                Ok(r) => r.collect::<Vec<_>>(),
+                Err(_) => return results,
+            }
+        } else {
+            let name_query = format!("%{}%", q_lower);
+            let mut stmt = match conn.prepare(
+                "SELECT t.file_path, t.line_number, t.todo_text, r.name 
+                 FROM git_todos t
+                 JOIN git_repos r ON t.repo_id = r.id
+                 WHERE t.todo_text LIKE ?1 OR t.file_path LIKE ?1
+                 ORDER BY t.id DESC LIMIT 100"
+            ) {
+                Ok(s) => s,
+                Err(_) => return results,
+            };
+            let mapped = stmt.query_map([&name_query], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i32>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            });
+            match mapped {
+                Ok(r) => r.collect::<Vec<_>>(),
+                Err(_) => return results,
+            }
+        };
+
+        for row in rows.into_iter().filter_map(|r| r.ok()) {
+            let (file_path, line_number, todo_text, repo_name) = row;
+            let todo_lower = todo_text.to_lowercase();
+            let file_lower = file_path.to_lowercase();
+            
+            let mut score = 1.0f32;
+            if !q_lower.is_empty() {
+                if todo_lower == q_lower {
+                    score = 2.0;
+                } else if todo_lower.starts_with(&q_lower) {
+                    score = 1.6;
+                } else if todo_lower.contains(&q_lower) || file_lower.contains(&q_lower) {
+                    score = 1.2;
+                } else {
+                    let matched = q_words.iter().filter(|w| todo_lower.contains(*w) || file_lower.contains(*w)).count();
+                    if matched > 0 {
+                        score = 0.5 + 0.5 * (matched as f32 / q_words.len() as f32);
+                    } else {
+                        score = 0.0;
+                    }
+                }
+            }
+
+            if score > 0.0 {
+                let filename = std::path::Path::new(&file_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&file_path)
+                    .to_string();
+                
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("git.todo.{}.{}", file_path, line_number),
+                        control_name: format!("[{}] {}", repo_name, todo_text),
+                        breadcrumb_path: format!("Git > TODO > {}:L{}", filename, line_number),
+                        launch_command: format!("vscode:{}:{}", file_path, line_number),
+                        source: "TODO".to_string(),
+                        description: format!("Line {}: {}", line_number, file_path),
+                        synonyms: format!("{} {}", todo_text, file_path),
+                    },
+                    score,
+                });
+            }
+        }
+
+        results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results
+    }
+
     pub fn search(&mut self, query: &str, top_k: usize) -> Vec<SearchResult> {
         let q = query.trim();
         let q_lower_trimmed = q.to_lowercase();
@@ -627,6 +846,30 @@ impl SearchEngine {
                     synonyms: "history folders browser recent urls websites web".to_string(),
                 },
                 score: 4.5,
+            });
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: "folder.commits".to_string(),
+                    control_name: "Git Commits".to_string(),
+                    breadcrumb_path: "Git > Commits".to_string(),
+                    launch_command: "commits:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Folder containing recent git commits".to_string(),
+                    synonyms: "git commits codes changes hashes log repo history".to_string(),
+                },
+                score: 4.0,
+            });
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: "folder.todos".to_string(),
+                    control_name: "Git TODOs".to_string(),
+                    breadcrumb_path: "Git > TODOs".to_string(),
+                    launch_command: "todos:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Folder containing active TODO and FIXME comments".to_string(),
+                    synonyms: "git todos tasks comment code fixme bug".to_string(),
+                },
+                score: 3.5,
             });
             for rf in self.recent_files.iter().take(top_k.min(20)) {
                 let ext = rf.name.rsplit('.').next().unwrap_or("").to_uppercase();
@@ -674,6 +917,16 @@ impl SearchEngine {
         if q_lower_trimmed.starts_with("history:") {
             let sub_query = q_lower_trimmed.strip_prefix("history:").unwrap().trim();
             return self.search_history_only(sub_query);
+        }
+
+        if q_lower_trimmed.starts_with("commits:") {
+            let sub_query = q_lower_trimmed.strip_prefix("commits:").unwrap().trim();
+            return self.search_commits_only(sub_query);
+        }
+
+        if q_lower_trimmed.starts_with("todos:") {
+            let sub_query = q_lower_trimmed.strip_prefix("todos:").unwrap().trim();
+            return self.search_todos_only(sub_query);
         }
 
         // ── Calculator: inject instantly if query is a math expression ──────

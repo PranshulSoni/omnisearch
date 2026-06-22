@@ -24,6 +24,19 @@ pub fn launch(cmd: &str) {
         _ => cmd,
     };
 
+    // ── VS Code direct line number opening ──────────────────────────────
+    if let Some(rest) = cmd.strip_prefix("vscode:") {
+        if let Some(last_colon) = rest.rfind(':') {
+            let file_path = &rest[..last_colon];
+            let line_number = &rest[last_colon + 1..];
+            let _ = Command::new("cmd")
+                .args(["/c", &format!("code -g \"{file_path}\":{line_number}")])
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .spawn();
+        }
+        return;
+    }
+
     // ── Action commands ────────────────────────────────────────────────────
     if let Some(action) = cmd.strip_prefix("action:") {
         handle_action(action);

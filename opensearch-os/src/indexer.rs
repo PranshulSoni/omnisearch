@@ -129,7 +129,7 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn get_scan_folders() -> Vec<PathBuf> {
+pub fn get_scan_folders() -> Vec<PathBuf> {
     let mut folders = Vec::new();
     unsafe {
         use windows::Win32::UI::Shell::{
