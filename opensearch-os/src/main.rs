@@ -702,12 +702,14 @@ unsafe fn resolve_lnk(path: &str) -> Option<String> {
 
 unsafe fn get_app_icon(path: &str) -> HICON {
     let mut hicon = HICON(null_mut());
+    let mut log_msg = format!("get_app_icon input: {}\n", path);
 
     // Resolve shortcut if it ends in .lnk to bypass shortcut arrow overlay
     let mut target_path = path.to_string();
     if target_path.to_lowercase().ends_with(".lnk") {
         if let Some(resolved) = resolve_lnk(&target_path) {
             target_path = resolved;
+            log_msg.push_str(&format!("  Resolved shortcut to: {}\n", target_path));
         }
     }
 
@@ -719,6 +721,7 @@ unsafe fn get_app_icon(path: &str) -> HICON {
     } else {
         target_path.clone()
     };
+    log_msg.push_str(&format!("  Parsing path: {}\n", parsing_path));
 
     let path_wide: Vec<u16> = parsing_path.encode_utf16().chain(std::iter::once(0)).collect();
 
@@ -728,30 +731,76 @@ unsafe fn get_app_icon(path: &str) -> HICON {
         None,
     ).ok();
 
-    if let Some(item) = shell_item {
-        if let Ok(pidl) = windows::Win32::UI::Shell::SHGetIDListFromObject(&item) {
-            let mut shfi = windows::Win32::UI::Shell::SHFILEINFOW::default();
-            let flags = windows::Win32::UI::Shell::SHGFI_ICON 
-                | windows::Win32::UI::Shell::SHGFI_LARGEICON 
-                | windows::Win32::UI::Shell::SHGFI_PIDL;
-            let _ = windows::Win32::UI::Shell::SHGetFileInfoW(
-                PCWSTR(pidl as *const u16),
-                windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(0),
-                Some(&mut shfi),
-                std::mem::size_of::<windows::Win32::UI::Shell::SHFILEINFOW>() as u32,
-                flags,
+    if let Some(item) = &shell_item {
+        log_msg.push_str("  SHCreateItemFromParsingName: SUCCESS\n");
+        
+        // 1. Try modern IShellItemImageFactory first
+        let factory: Option<windows::Win32::UI::Shell::IShellItemImageFactory> = item.cast().ok();
+        if let Some(f) = factory {
+            let res = f.GetImage(
+                windows::Win32::Foundation::SIZE { cx: 32, cy: 32 },
+                windows::Win32::UI::Shell::SIIGBF_ICONONLY,
             );
-            hicon = shfi.hIcon;
-            windows::Win32::UI::Shell::ILFree(Some(pidl));
+            match res {
+                Ok(hbitmap) => {
+                    let hbm_mask = windows::Win32::Graphics::Gdi::CreateBitmap(32, 32, 1, 1, None);
+                    if !hbm_mask.is_invalid() {
+                        let mut ii = windows::Win32::UI::WindowsAndMessaging::ICONINFO {
+                            fIcon: windows::Win32::Foundation::TRUE,
+                            xHotspot: 0,
+                            yHotspot: 0,
+                            hbmMask: hbm_mask,
+                            hbmColor: hbitmap,
+                        };
+                        if let Ok(hi) = windows::Win32::UI::WindowsAndMessaging::CreateIconIndirect(&mut ii) {
+                            hicon = hi;
+                            log_msg.push_str(&format!("  IShellItemImageFactory SUCCESS: {:?}\n", hicon.0));
+                        }
+                        let _ = windows::Win32::Graphics::Gdi::DeleteObject(hbm_mask);
+                    }
+                    let _ = windows::Win32::Graphics::Gdi::DeleteObject(hbitmap);
+                }
+                Err(e) => {
+                    log_msg.push_str(&format!("  IShellItemImageFactory GetImage FAILED: {:?}\n", e));
+                }
+            }
+        } else {
+            log_msg.push_str("  IShellItemImageFactory cast FAILED\n");
         }
+
+        // 2. Fall back to legacy SHGetFileInfoW with PIDL
+        if hicon.0.is_null() {
+            if let Ok(pidl) = windows::Win32::UI::Shell::SHGetIDListFromObject(item) {
+                log_msg.push_str("  SHGetIDListFromObject: SUCCESS\n");
+                let mut shfi = windows::Win32::UI::Shell::SHFILEINFOW::default();
+                let flags = windows::Win32::UI::Shell::SHGFI_ICON 
+                    | windows::Win32::UI::Shell::SHGFI_LARGEICON 
+                    | windows::Win32::UI::Shell::SHGFI_PIDL;
+                let res = windows::Win32::UI::Shell::SHGetFileInfoW(
+                    PCWSTR(pidl as *const u16),
+                    windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(0),
+                    Some(&mut shfi),
+                    std::mem::size_of::<windows::Win32::UI::Shell::SHFILEINFOW>() as u32,
+                    flags,
+                );
+                hicon = shfi.hIcon;
+                log_msg.push_str(&format!("  SHGetFileInfoW res: {}, hicon: {:?}\n", res, hicon.0));
+                windows::Win32::UI::Shell::ILFree(Some(pidl));
+            } else {
+                log_msg.push_str("  SHGetIDListFromObject: FAILED\n");
+            }
+        }
+    } else {
+        log_msg.push_str("  SHCreateItemFromParsingName: FAILED\n");
     }
 
     // Fallback directly using path
     if hicon.0.is_null() {
+        log_msg.push_str("  Entering fallback\n");
         let mut shfi = windows::Win32::UI::Shell::SHFILEINFOW::default();
         let flags = windows::Win32::UI::Shell::SHGFI_ICON | windows::Win32::UI::Shell::SHGFI_LARGEICON;
         let fallback_wide: Vec<u16> = target_path.encode_utf16().chain(std::iter::once(0)).collect();
-        let _ = windows::Win32::UI::Shell::SHGetFileInfoW(
+        let res = windows::Win32::UI::Shell::SHGetFileInfoW(
             PCWSTR(fallback_wide.as_ptr()),
             windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(0),
             Some(&mut shfi),
@@ -759,6 +808,16 @@ unsafe fn get_app_icon(path: &str) -> HICON {
             flags,
         );
         hicon = shfi.hIcon;
+        log_msg.push_str(&format!("  Fallback SHGetFileInfoW res: {}, hicon: {:?}\n", res, hicon.0));
+    }
+
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("C:\\Users\\Pranshul Soni\\.gemini\\antigravity\\brain\\63a8f76b-b4b2-431b-9719-18e67f5a0652\\scratch\\icon_log.txt")
+    {
+        use std::io::Write;
+        let _ = write!(file, "{}\n", log_msg);
     }
 
     hicon
@@ -1068,4 +1127,90 @@ unsafe fn paste_from_clipboard(hwnd: HWND) -> Option<String> {
         let _ = CloseClipboard();
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_antigravity_icons() {
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE
+            );
+            let h1 = get_app_icon("electron.app.Antigravity");
+            let h2 = get_app_icon("Google.Antigravity");
+            let h3 = get_app_icon("Google.AntigravityIDE");
+            println!("electron.app.Antigravity HICON: {:?}", h1.0);
+            println!("Google.Antigravity HICON: {:?}", h2.0);
+            println!("Google.AntigravityIDE HICON: {:?}", h3.0);
+            assert!(!h1.0.is_null(), "electron.app.Antigravity icon was null");
+            assert!(!h2.0.is_null(), "Google.Antigravity icon was null");
+            assert!(!h3.0.is_null(), "Google.AntigravityIDE icon was null");
+        }
+    }
+
+    #[test]
+    fn test_image_factory_cast() {
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE
+            );
+
+            unsafe fn get_icon_via_image_factory(parsing_path: &str) -> Option<HICON> {
+                use windows::Win32::UI::Shell::IShellItemImageFactory;
+                use windows::Win32::UI::Shell::SIIGBF_ICONONLY;
+                use windows::Win32::Foundation::SIZE;
+                use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
+                use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, ICONINFO};
+                use windows::Win32::UI::Shell::SHCreateItemFromParsingName;
+                use windows::core::{Interface, PCWSTR};
+                
+                let path_wide: Vec<u16> = parsing_path.encode_utf16().chain(std::iter::once(0)).collect();
+                let item: windows::Win32::UI::Shell::IShellItem = SHCreateItemFromParsingName(
+                    PCWSTR(path_wide.as_ptr()),
+                    None,
+                ).ok()?;
+                
+                let factory: IShellItemImageFactory = item.cast().ok()?;
+                let hbitmap = factory.GetImage(
+                    SIZE { cx: 32, cy: 32 },
+                    SIIGBF_ICONONLY,
+                ).ok()?;
+                
+                let hbm_mask = CreateBitmap(32, 32, 1, 1, None);
+                if hbm_mask.is_invalid() {
+                    let _ = DeleteObject(hbitmap);
+                    return None;
+                }
+                
+                let mut ii = ICONINFO {
+                    fIcon: windows::Win32::Foundation::TRUE,
+                    xHotspot: 0,
+                    yHotspot: 0,
+                    hbmMask: hbm_mask,
+                    hbmColor: hbitmap,
+                };
+                
+                let hicon = CreateIconIndirect(&mut ii).ok();
+                
+                let _ = DeleteObject(hbitmap);
+                let _ = DeleteObject(hbm_mask);
+                
+                hicon
+            }
+            
+            for app_id in &["electron.app.Antigravity", "Google.Antigravity", "Google.AntigravityIDE"] {
+                let parsing_path = format!("shell:AppsFolder\\{}", app_id);
+                let hicon = get_icon_via_image_factory(&parsing_path);
+                println!("App: {}, ImageFactory HICON: {:?}", app_id, hicon.map(|h| h.0));
+                if let Some(h) = hicon {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(h);
+                }
+            }
+        }
+    }
 }
