@@ -297,9 +297,9 @@ unsafe extern "system" fn wnd_proc(
                 if !sp.is_null() {
                     let s = &mut *sp;
                     s.engine = Some(engine);
-                    if !s.query.is_empty() {
-                        kick_debounce(hwnd);
-                    }
+                    s.results = s.engine.as_mut().unwrap().search(&s.query, MAX_RESULTS);
+                    trigger_icon_loading(hwnd, s);
+                    InvalidateRect(hwnd, None, FALSE);
                 }
             } else {
                 let err = *Box::from_raw(lp.0 as *mut String);
@@ -322,43 +322,7 @@ unsafe extern "system" fn wnd_proc(
                     } else {
                         vec![]
                     };
-                    for res in &s.results {
-                        let (source, key) = (res.entry.source.as_str(), res.entry.launch_command.clone());
-                        let needs_icon = (source == "app" || source == "RECENT")
-                            && !s.app_icons.contains_key(&key);
-                        if needs_icon {
-                            // Placeholder so we don't spawn multiple threads for same path
-                            s.app_icons.insert(key.clone(), HICON(std::ptr::null_mut()));
-                            let is_recent = source == "RECENT";
-                            let hwnd_clone = SendHwnd(hwnd);
-                            std::thread::spawn(move || {
-                                let hwnd_raw = hwnd_clone;
-                                unsafe {
-                                    let _ = windows::Win32::System::Com::CoInitializeEx(
-                                        None,
-                                        windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE
-                                    );
-                                    let hicon = if is_recent {
-                                        get_file_icon(&key)
-                                    } else {
-                                        get_app_icon(&key)
-                                    };
-                                    if !hicon.0.is_null() {
-                                        let key_ptr = Box::into_raw(Box::new(key));
-                                        if PostMessageW(
-                                            hwnd_raw.0,
-                                            WM_ICON_LOADED,
-                                            WPARAM(hicon.0 as usize),
-                                            LPARAM(key_ptr as isize),
-                                        ).is_err() {
-                                            let _ = Box::from_raw(key_ptr);
-                                            let _ = DestroyIcon(hicon);
-                                        }
-                                    }
-                                }
-                            });
-                        }
-                    }
+                    trigger_icon_loading(hwnd, s);
                     s.selected = 0;
                     s.scroll_offset = 0;
                     reposition(hwnd, s, 0);
@@ -606,9 +570,14 @@ unsafe extern "system" fn wnd_proc(
 // ── Window lifecycle ──────────────────────────────────────────────────────────
 unsafe fn do_show(hwnd: HWND, s: &mut State) {
     s.query.clear();
-    s.results.clear();
     s.selected = 0;
     s.scroll_offset = 0;
+    s.results = if let Some(ref mut engine) = s.engine {
+        engine.search("", MAX_RESULTS)
+    } else {
+        vec![]
+    };
+    trigger_icon_loading(hwnd, s);
     
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
@@ -838,6 +807,46 @@ unsafe fn get_file_icon(path: &str) -> HICON {
         flags,
     );
     if res != 0 { shfi.hIcon } else { HICON(null_mut()) }
+}
+
+unsafe fn trigger_icon_loading(hwnd: HWND, s: &mut State) {
+    for res in &s.results {
+        let (source, key) = (res.entry.source.as_str(), res.entry.launch_command.clone());
+        let needs_icon = (source == "app" || source == "RECENT")
+            && !s.app_icons.contains_key(&key);
+        if needs_icon {
+            // Placeholder so we don't spawn multiple threads for same path
+            s.app_icons.insert(key.clone(), HICON(std::ptr::null_mut()));
+            let is_recent = source == "RECENT";
+            let hwnd_clone = SendHwnd(hwnd);
+            std::thread::spawn(move || {
+                let hwnd_raw = hwnd_clone;
+                unsafe {
+                    let _ = windows::Win32::System::Com::CoInitializeEx(
+                        None,
+                        windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE
+                    );
+                    let hicon = if is_recent {
+                        get_file_icon(&key)
+                    } else {
+                        get_app_icon(&key)
+                    };
+                    if !hicon.0.is_null() {
+                        let key_ptr = Box::into_raw(Box::new(key));
+                        if PostMessageW(
+                            hwnd_raw.0,
+                            WM_ICON_LOADED,
+                            WPARAM(hicon.0 as usize),
+                            LPARAM(key_ptr as isize),
+                        ).is_err() {
+                            let _ = Box::from_raw(key_ptr);
+                            let _ = DestroyIcon(hicon);
+                        }
+                    }
+                }
+            });
+        }
+    }
 }
 
 unsafe fn paint(hwnd: HWND, s: &State) {

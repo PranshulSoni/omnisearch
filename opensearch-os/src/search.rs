@@ -171,7 +171,25 @@ impl SearchEngine {
 
     pub fn search(&mut self, query: &str, top_k: usize) -> Vec<SearchResult> {
         let q = query.trim();
-        if q.is_empty() { return vec![]; }
+        if q.is_empty() || q.to_lowercase() == "recent" || q.to_lowercase() == "recents" {
+            let mut results = Vec::new();
+            for rf in self.recent_files.iter().take(top_k.min(20)) {
+                let ext = rf.name.rsplit('.').next().unwrap_or("").to_uppercase();
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("recent.{}", rf.path),
+                        control_name: rf.name.clone(),
+                        breadcrumb_path: format!("Recent > {}", rf.path),
+                        launch_command: rf.path.clone(),
+                        source: "RECENT".to_string(),
+                        description: format!("Recently opened {} file", ext),
+                        synonyms: rf.name.to_lowercase(),
+                    },
+                    score: 3.0,
+                });
+            }
+            return results;
+        }
 
         // ── Calculator: inject instantly if query is a math expression ──────
         let calc_result: Option<SearchResult> = try_calc(q).map(|val| {
