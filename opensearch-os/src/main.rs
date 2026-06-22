@@ -36,7 +36,7 @@ const TIMER_ANIM: usize = 2;
 const ANIM_TICK_MS: u32 = 16;
 const APPEAR_FRAMES: f32 = 9.0;  // ~144ms
 const HIDE_FRAMES: f32 = 6.0;   // ~96ms
-const MAX_ALPHA: u8 = 242;       // 95% opacity
+const MAX_ALPHA: u8 = 215;       // 84% opacity for Acrylic backdrop
 const SLIDE_PX: i32 = 14;
 
 // ── Colors (COLORREF = 0x00BBGGRR) ───────────────────────────────────────────
@@ -176,6 +176,13 @@ unsafe fn run(engine: SearchEngine) {
     let _ = DwmSetWindowAttribute(
         hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
         &corner as *const _ as _, 4,
+    );
+
+    // DWM Acrylic backdrop (Windows 11)
+    let backdrop = 3i32; // DWMSBT_TRANSIENTWINDOW (Acrylic)
+    let _ = DwmSetWindowAttribute(
+        hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
+        &backdrop as *const _ as _, 4,
     );
 
     // Win+Space is reserved by Windows IME; Alt+Space is the conventional launcher hotkey.
@@ -490,8 +497,39 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     let bmp = CreateCompatibleBitmap(hdc, WIN_W, h);
     let old = SelectObject(mdc, bmp);
 
-    // Fill background
-    fill(mdc, 0, 0, WIN_W, h, BG);
+    // Fill background / Draw Glowing Border
+    let has_results = s.results.len().min(MAX_RESULTS) > 0;
+    if has_results {
+        // Draw vibrant gradient border
+        let vertices = [
+            TRIVERTEX {
+                x: 0,
+                y: 0,
+                Red: 0x0000,
+                Green: 0xb400,
+                Blue: 0xdb00,
+                Alpha: 0x0000,
+            },
+            TRIVERTEX {
+                x: WIN_W,
+                y: h,
+                Red: 0x7f00,
+                Green: 0x0000,
+                Blue: 0xff00,
+                Alpha: 0x0000,
+            },
+        ];
+        let g_rect = [GRADIENT_RECT {
+            UpperLeft: 0,
+            LowerRight: 1,
+        }];
+        let _ = GradientFill(mdc, &vertices, g_rect.as_ptr() as *const _, 1, GRADIENT_FILL(0)); // Horizontal gradient
+        fill(mdc, 1, 1, WIN_W - 2, h - 2, BG);
+    } else {
+        // Draw subtle solid gray border
+        fill(mdc, 0, 0, WIN_W, h, CLR_DIV);
+        fill(mdc, 1, 1, WIN_W - 2, h - 2, BG);
+    }
 
     // ── Search row ────────────────────────────────────────────────────────
     SetBkMode(mdc, TRANSPARENT);
