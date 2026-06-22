@@ -1125,6 +1125,10 @@ fn get_live_results(query: &str) -> Vec<SearchResult> {
 // ── Recent Files ────────────────────────────────────────────────────────────
 fn scan_recent_files() -> Vec<RecentFileInfo> {
     let mut results = Vec::new();
+    unsafe {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    }
 
     // %APPDATA%\Microsoft\Windows\Recent
     let recent_dir = match std::env::var("APPDATA") {
