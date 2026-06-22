@@ -43,3 +43,5 @@ graphify-out/graph.json
 VISIBLE_RESULTS
 bytes.len()
 opensearch-os/bytes.len()
+*.db
+

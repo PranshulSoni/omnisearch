@@ -9,7 +9,7 @@
       "source_file": "opensearch-os\\build.rs",
       "source_location": "L1",
       "id": "build",
-      "community": 5
+      "community": 6
     },
     {
       "label": "main()",
@@ -17,7 +17,7 @@
       "source_file": "opensearch-os\\build.rs",
       "source_location": "L1",
       "id": "build_main",
-      "community": 5
+      "community": 6
     },
     {
       "label": "copy_model()",
@@ -25,7 +25,7 @@
       "source_file": "opensearch-os\\build.rs",
       "source_location": "L8",
       "id": "build_copy_model",
-      "community": 5
+      "community": 6
     },
     {
       "label": "copy_directml()",
@@ -33,7 +33,7 @@
       "source_file": "opensearch-os\\build.rs",
       "source_location": "L29",
       "id": "build_copy_directml",
-      "community": 5
+      "community": 6
     },
     {
       "label": "find_directml()",
@@ -41,7 +41,47 @@
       "source_file": "opensearch-os\\build.rs",
       "source_location": "L75",
       "id": "build_find_directml",
-      "community": 5
+      "community": 6
+    },
+    {
+      "label": "indexer.rs",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L1",
+      "id": "indexer",
+      "community": 7
+    },
+    {
+      "label": "start_indexer()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L7",
+      "id": "indexer_start_indexer",
+      "community": 7
+    },
+    {
+      "label": "run_indexer()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L21",
+      "id": "indexer_run_indexer",
+      "community": 7
+    },
+    {
+      "label": "get_scan_folders()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L132",
+      "id": "indexer_get_scan_folders",
+      "community": 7
+    },
+    {
+      "label": "read_text_file()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L167",
+      "id": "indexer_read_text_file",
+      "community": 7
     },
     {
       "label": "launcher.rs",
@@ -49,15 +89,31 @@
       "source_file": "opensearch-os\\src\\launcher.rs",
       "source_location": "L1",
       "id": "launcher",
-      "community": 12
+      "community": 9
     },
     {
       "label": "launch()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\launcher.rs",
-      "source_location": "L11",
+      "source_location": "L13",
       "id": "launcher_launch",
-      "community": 12
+      "community": 9
+    },
+    {
+      "label": "handle_action()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\launcher.rs",
+      "source_location": "L73",
+      "id": "launcher_handle_action",
+      "community": 9
+    },
+    {
+      "label": "get_known_folder_path()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\launcher.rs",
+      "source_location": "L145",
+      "id": "launcher_get_known_folder_path",
+      "community": 9
     },
     {
       "label": "main.rs",
@@ -71,15 +127,15 @@
       "label": "State",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L57",
+      "source_location": "L58",
       "id": "main_state",
-      "community": 6
+      "community": 5
     },
     {
       "label": "Anim",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L81",
+      "source_location": "L82",
       "id": "main_anim",
       "community": 1
     },
@@ -87,31 +143,31 @@
       "label": "SendHwnd",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L84",
+      "source_location": "L85",
       "id": "main_sendhwnd",
-      "community": 4
+      "community": 1
     },
     {
       "label": ".win_h()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L89",
+      "source_location": "L90",
       "id": "main_state_win_h",
-      "community": 6
+      "community": 5
     },
     {
       "label": ".result_rect()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L93",
+      "source_location": "L94",
       "id": "main_state_result_rect",
-      "community": 6
+      "community": 5
     },
     {
       "label": "main()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L100",
+      "source_location": "L101",
       "id": "main_main",
       "community": 1
     },
@@ -119,7 +175,7 @@
       "label": "run()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L109",
+      "source_location": "L110",
       "id": "main_run",
       "community": 1
     },
@@ -127,71 +183,71 @@
       "label": "wnd_proc()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L240",
+      "source_location": "L251",
       "id": "main_wnd_proc",
-      "community": 4
+      "community": 2
     },
     {
       "label": "do_show()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L604",
+      "source_location": "L582",
       "id": "main_do_show",
-      "community": 6
+      "community": 2
     },
     {
       "label": "do_hide()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L623",
+      "source_location": "L606",
       "id": "main_do_hide",
-      "community": 9
+      "community": 2
     },
     {
       "label": "start_hide()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L631",
+      "source_location": "L614",
       "id": "main_start_hide",
-      "community": 4
+      "community": 2
     },
     {
       "label": "reposition()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L636",
+      "source_location": "L619",
       "id": "main_reposition",
-      "community": 6
+      "community": 2
     },
     {
       "label": "kick_debounce()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L643",
+      "source_location": "L626",
       "id": "main_kick_debounce",
-      "community": 4
+      "community": 2
     },
     {
       "label": "tick()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L649",
+      "source_location": "L632",
       "id": "main_tick",
-      "community": 9
+      "community": 2
     },
     {
       "label": "ease_out()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L681",
+      "source_location": "L664",
       "id": "main_ease_out",
-      "community": 9
+      "community": 2
     },
     {
       "label": "resolve_lnk()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L684",
+      "source_location": "L667",
       "id": "main_resolve_lnk",
       "community": 1
     },
@@ -199,39 +255,55 @@
       "label": "get_app_icon()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L703",
+      "source_location": "L686",
       "id": "main_get_app_icon",
+      "community": 1
+    },
+    {
+      "label": "get_file_icon()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\main.rs",
+      "source_location": "L809",
+      "id": "main_get_file_icon",
+      "community": 1
+    },
+    {
+      "label": "trigger_icon_loading()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\main.rs",
+      "source_location": "L823",
+      "id": "main_trigger_icon_loading",
       "community": 1
     },
     {
       "label": "paint()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L826",
+      "source_location": "L863",
       "id": "main_paint",
-      "community": 10
+      "community": 5
     },
     {
       "label": "fill()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L996",
+      "source_location": "L1033",
       "id": "main_fill",
-      "community": 10
+      "community": 5
     },
     {
       "label": "badge()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1002",
+      "source_location": "L1039",
       "id": "main_badge",
-      "community": 10
+      "community": 5
     },
     {
       "label": "load_icon_from_memory()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1030",
+      "source_location": "L1073",
       "id": "main_load_icon_from_memory",
       "community": 1
     },
@@ -239,23 +311,23 @@
       "label": "copy_to_clipboard()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1083",
+      "source_location": "L1126",
       "id": "main_copy_to_clipboard",
-      "community": 4
+      "community": 2
     },
     {
       "label": "paste_from_clipboard()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1103",
+      "source_location": "L1146",
       "id": "main_paste_from_clipboard",
-      "community": 4
+      "community": 2
     },
     {
       "label": "test_antigravity_icons()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1137",
+      "source_location": "L1180",
       "id": "main_test_antigravity_icons",
       "community": 1
     },
@@ -263,7 +335,7 @@
       "label": "test_image_factory_cast()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1156",
+      "source_location": "L1199",
       "id": "main_test_image_factory_cast",
       "community": 1
     },
@@ -279,7 +351,7 @@
       "label": "CatalogEntry",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L13",
+      "source_location": "L14",
       "id": "search_catalogentry",
       "community": 0
     },
@@ -287,7 +359,7 @@
       "label": "SearchResult",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L24",
+      "source_location": "L25",
       "id": "search_searchresult",
       "community": 0
     },
@@ -295,7 +367,7 @@
       "label": "MetaJson",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L30",
+      "source_location": "L31",
       "id": "search_metajson",
       "community": 0
     },
@@ -303,7 +375,7 @@
       "label": "AnchorCategory",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L41",
+      "source_location": "L42",
       "id": "search_anchorcategory",
       "community": 0
     },
@@ -311,79 +383,95 @@
       "label": "AppInfo",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L50",
+      "source_location": "L51",
       "id": "search_appinfo",
+      "community": 0
+    },
+    {
+      "label": "RecentFileInfo",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L57",
+      "id": "search_recentfileinfo",
       "community": 0
     },
     {
       "label": "SearchEngine",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L55",
+      "source_location": "L62",
       "id": "search_searchengine",
-      "community": 2
+      "community": 3
     },
     {
       "label": ".new()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L67",
+      "source_location": "L76",
       "id": "search_searchengine_new",
-      "community": 2
+      "community": 3
+    },
+    {
+      "label": ".search_local_files()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L174",
+      "id": "search_searchengine_search_local_files",
+      "community": 3
     },
     {
       "label": ".search()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L164",
+      "source_location": "L289",
       "id": "search_searchengine_search",
-      "community": 2
+      "community": 3
     },
     {
       "label": ".embed()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L393",
+      "source_location": "L630",
       "id": "search_searchengine_embed",
-      "community": 2
+      "community": 3
     },
     {
       "label": ".get_conversational_results()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L420",
+      "source_location": "L657",
       "id": "search_searchengine_get_conversational_results",
-      "community": 2
+      "community": 3
     },
     {
       "label": "url_encode()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L458",
+      "source_location": "L695",
       "id": "search_url_encode",
-      "community": 2
+      "community": 3
     },
     {
       "label": "mean_pool_norm()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L476",
+      "source_location": "L713",
       "id": "search_mean_pool_norm",
-      "community": 2
+      "community": 0
     },
     {
       "label": "test_hybrid_search_accuracy()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L496",
+      "source_location": "L733",
       "id": "search_test_hybrid_search_accuracy",
-      "community": 2
+      "community": 3
     },
     {
       "label": "test_enumerate_apps_folder()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L601",
+      "source_location": "L838",
       "id": "search_test_enumerate_apps_folder",
       "community": 0
     },
@@ -391,7 +479,7 @@
       "label": "SYSTEM_POWER_STATUS",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L640",
+      "source_location": "L877",
       "id": "search_system_power_status",
       "community": 0
     },
@@ -399,7 +487,7 @@
       "label": "MEMORYSTATUSEX",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L650",
+      "source_location": "L887",
       "id": "search_memorystatusex",
       "community": 0
     },
@@ -407,25 +495,129 @@
       "label": "get_local_ip()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L674",
+      "source_location": "L911",
       "id": "search_get_local_ip",
-      "community": 0
+      "community": 14
     },
     {
       "label": "get_live_results()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L680",
+      "source_location": "L917",
       "id": "search_get_live_results",
-      "community": 0
+      "community": 14
+    },
+    {
+      "label": "scan_recent_files()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1044",
+      "id": "search_scan_recent_files",
+      "community": 15
+    },
+    {
+      "label": "resolve_lnk_path()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1123",
+      "id": "search_resolve_lnk_path",
+      "community": 15
     },
     {
       "label": "scan_apps()",
       "file_type": "code",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L806",
+      "source_location": "L1141",
       "id": "search_scan_apps",
-      "community": 2
+      "community": 0
+    },
+    {
+      "label": "QuickAction",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1259",
+      "id": "search_quickaction",
+      "community": 0
+    },
+    {
+      "label": "get_quick_actions()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1403",
+      "id": "search_get_quick_actions",
+      "community": 3
+    },
+    {
+      "label": "try_calc()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1459",
+      "id": "search_try_calc",
+      "community": 12
+    },
+    {
+      "label": "try_pct_of()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1483",
+      "id": "search_try_pct_of",
+      "community": 12
+    },
+    {
+      "label": "Token",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1495",
+      "id": "search_token",
+      "community": 0
+    },
+    {
+      "label": "tokenize()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1503",
+      "id": "search_tokenize",
+      "community": 12
+    },
+    {
+      "label": "parse_expr()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1540",
+      "id": "search_parse_expr",
+      "community": 8
+    },
+    {
+      "label": "parse_term()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1553",
+      "id": "search_parse_term",
+      "community": 8
+    },
+    {
+      "label": "parse_power()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1581",
+      "id": "search_parse_power",
+      "community": 8
+    },
+    {
+      "label": "parse_unary()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1593",
+      "id": "search_parse_unary",
+      "community": 8
+    },
+    {
+      "label": "parse_primary()",
+      "file_type": "code",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1603",
+      "id": "search_parse_primary",
+      "community": 8
     },
     {
       "label": "test_ico_load.py",
@@ -433,7 +625,7 @@
       "source_file": "scratch\\test_ico_load.py",
       "source_location": "L1",
       "id": "test_ico_load",
-      "community": 11
+      "community": 13
     },
     {
       "label": "test_ico_load()",
@@ -441,7 +633,7 @@
       "source_file": "scratch\\test_ico_load.py",
       "source_location": "L28",
       "id": "test_ico_load_test_ico_load",
-      "community": 11
+      "community": 13
     },
     {
       "label": "main()",
@@ -449,7 +641,7 @@
       "source_file": "scratch\\test_ico_load.py",
       "source_location": "L86",
       "id": "test_ico_load_main",
-      "community": 11
+      "community": 13
     },
     {
       "label": "benchmark_embeddings.py",
@@ -457,7 +649,7 @@
       "source_file": "scripts\\benchmark_embeddings.py",
       "source_location": "L1",
       "id": "benchmark_embeddings",
-      "community": 3
+      "community": 4
     },
     {
       "label": "load_catalog()",
@@ -465,7 +657,7 @@
       "source_file": "scripts\\benchmark_embeddings.py",
       "source_location": "L76",
       "id": "benchmark_embeddings_load_catalog",
-      "community": 3
+      "community": 4
     },
     {
       "label": "score_result()",
@@ -473,7 +665,7 @@
       "source_file": "scripts\\benchmark_embeddings.py",
       "source_location": "L91",
       "id": "benchmark_embeddings_score_result",
-      "community": 3
+      "community": 4
     },
     {
       "label": "benchmark_model()",
@@ -481,7 +673,7 @@
       "source_file": "scripts\\benchmark_embeddings.py",
       "source_location": "L100",
       "id": "benchmark_embeddings_benchmark_model",
-      "community": 3
+      "community": 4
     },
     {
       "label": "main()",
@@ -489,7 +681,7 @@
       "source_file": "scripts\\benchmark_embeddings.py",
       "source_location": "L163",
       "id": "benchmark_embeddings_main",
-      "community": 3
+      "community": 4
     },
     {
       "label": "Benchmark multiple small embedding models against the Windows settings catalog.",
@@ -497,7 +689,7 @@
       "source_file": "scripts\\benchmark_embeddings.py",
       "source_location": "L1",
       "id": "benchmark_embeddings_rationale_1",
-      "community": 3
+      "community": 4
     },
     {
       "label": "Return 1 if any keyword appears in control_name, breadcrumb_path, or synonyms.",
@@ -505,7 +697,7 @@
       "source_file": "scripts\\benchmark_embeddings.py",
       "source_location": "L92",
       "id": "benchmark_embeddings_rationale_92",
-      "community": 3
+      "community": 4
     },
     {
       "label": "convert_logos.py",
@@ -513,7 +705,7 @@
       "source_file": "scripts\\convert_logos.py",
       "source_location": "L1",
       "id": "convert_logos",
-      "community": 7
+      "community": 10
     },
     {
       "label": "generate_search_png()",
@@ -521,7 +713,7 @@
       "source_file": "scripts\\convert_logos.py",
       "source_location": "L4",
       "id": "convert_logos_generate_search_png",
-      "community": 7
+      "community": 10
     },
     {
       "label": "convert_to_ico()",
@@ -529,7 +721,7 @@
       "source_file": "scripts\\convert_logos.py",
       "source_location": "L20",
       "id": "convert_logos_convert_to_ico",
-      "community": 7
+      "community": 10
     },
     {
       "label": "main()",
@@ -537,7 +729,7 @@
       "source_file": "scripts\\convert_logos.py",
       "source_location": "L40",
       "id": "convert_logos_main",
-      "community": 7
+      "community": 10
     },
     {
       "label": "embed_catalog.py",
@@ -545,7 +737,7 @@
       "source_file": "scripts\\embed_catalog.py",
       "source_location": "L1",
       "id": "embed_catalog",
-      "community": 8
+      "community": 11
     },
     {
       "label": "load_catalog()",
@@ -553,7 +745,7 @@
       "source_file": "scripts\\embed_catalog.py",
       "source_location": "L20",
       "id": "embed_catalog_load_catalog",
-      "community": 8
+      "community": 11
     },
     {
       "label": "main()",
@@ -561,7 +753,7 @@
       "source_file": "scripts\\embed_catalog.py",
       "source_location": "L31",
       "id": "embed_catalog_main",
-      "community": 8
+      "community": 11
     },
     {
       "label": "Build-time embedding pipeline. Run once to produce catalog.bin. Usage: python sc",
@@ -569,7 +761,7 @@
       "source_file": "scripts\\embed_catalog.py",
       "source_location": "L1",
       "id": "embed_catalog_rationale_1",
-      "community": 8
+      "community": 11
     },
     {
       "label": "export_bge_base.py",
@@ -577,7 +769,7 @@
       "source_file": "scripts\\export_bge_base.py",
       "source_location": "L1",
       "id": "export_bge_base",
-      "community": 13
+      "community": 16
     },
     {
       "label": "main()",
@@ -585,7 +777,7 @@
       "source_file": "scripts\\export_bge_base.py",
       "source_location": "L7",
       "id": "export_bge_base_main",
-      "community": 13
+      "community": 16
     }
   ],
   "links": [
@@ -676,8 +868,92 @@
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L7",
+      "weight": 1.0,
+      "_src": "indexer",
+      "_tgt": "indexer_start_indexer",
+      "source": "indexer",
+      "target": "indexer_start_indexer",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L21",
+      "weight": 1.0,
+      "_src": "indexer",
+      "_tgt": "indexer_run_indexer",
+      "source": "indexer",
+      "target": "indexer_run_indexer",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L132",
+      "weight": 1.0,
+      "_src": "indexer",
+      "_tgt": "indexer_get_scan_folders",
+      "source": "indexer",
+      "target": "indexer_get_scan_folders",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L167",
+      "weight": 1.0,
+      "_src": "indexer",
+      "_tgt": "indexer_read_text_file",
+      "source": "indexer",
+      "target": "indexer_read_text_file",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L12",
+      "weight": 1.0,
+      "_src": "indexer_start_indexer",
+      "_tgt": "indexer_run_indexer",
+      "source": "indexer_start_indexer",
+      "target": "indexer_run_indexer",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L43",
+      "weight": 1.0,
+      "_src": "indexer_run_indexer",
+      "_tgt": "indexer_get_scan_folders",
+      "source": "indexer_run_indexer",
+      "target": "indexer_get_scan_folders",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\indexer.rs",
+      "source_location": "L97",
+      "weight": 1.0,
+      "_src": "indexer_run_indexer",
+      "_tgt": "indexer_read_text_file",
+      "source": "indexer_run_indexer",
+      "target": "indexer_read_text_file",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\launcher.rs",
-      "source_location": "L11",
+      "source_location": "L13",
       "weight": 1.0,
       "_src": "launcher",
       "_tgt": "launcher_launch",
@@ -686,10 +962,58 @@
       "confidence_score": 1.0
     },
     {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\launcher.rs",
+      "source_location": "L73",
+      "weight": 1.0,
+      "_src": "launcher",
+      "_tgt": "launcher_handle_action",
+      "source": "launcher",
+      "target": "launcher_handle_action",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\launcher.rs",
+      "source_location": "L145",
+      "weight": 1.0,
+      "_src": "launcher",
+      "_tgt": "launcher_get_known_folder_path",
+      "source": "launcher",
+      "target": "launcher_get_known_folder_path",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\launcher.rs",
+      "source_location": "L29",
+      "weight": 1.0,
+      "_src": "launcher_launch",
+      "_tgt": "launcher_handle_action",
+      "source": "launcher_launch",
+      "target": "launcher_handle_action",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\launcher.rs",
+      "source_location": "L128",
+      "weight": 1.0,
+      "_src": "launcher_handle_action",
+      "_tgt": "launcher_get_known_folder_path",
+      "source": "launcher_handle_action",
+      "target": "launcher_get_known_folder_path",
+      "confidence_score": 1.0
+    },
+    {
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L7",
+      "source_location": "L8",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "search",
@@ -701,7 +1025,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L57",
+      "source_location": "L58",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_state",
@@ -713,7 +1037,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L81",
+      "source_location": "L82",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_anim",
@@ -725,7 +1049,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L84",
+      "source_location": "L85",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_sendhwnd",
@@ -737,7 +1061,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L100",
+      "source_location": "L101",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_main",
@@ -749,7 +1073,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L109",
+      "source_location": "L110",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_run",
@@ -761,7 +1085,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L240",
+      "source_location": "L251",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_wnd_proc",
@@ -773,7 +1097,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L604",
+      "source_location": "L582",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_do_show",
@@ -785,7 +1109,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L623",
+      "source_location": "L606",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_do_hide",
@@ -797,7 +1121,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L631",
+      "source_location": "L614",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_start_hide",
@@ -809,7 +1133,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L636",
+      "source_location": "L619",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_reposition",
@@ -821,7 +1145,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L643",
+      "source_location": "L626",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_kick_debounce",
@@ -833,7 +1157,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L649",
+      "source_location": "L632",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_tick",
@@ -845,7 +1169,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L681",
+      "source_location": "L664",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_ease_out",
@@ -857,7 +1181,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L684",
+      "source_location": "L667",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_resolve_lnk",
@@ -869,7 +1193,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L703",
+      "source_location": "L686",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_get_app_icon",
@@ -881,7 +1205,31 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L826",
+      "source_location": "L809",
+      "weight": 1.0,
+      "_src": "main",
+      "_tgt": "main_get_file_icon",
+      "source": "main",
+      "target": "main_get_file_icon",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\main.rs",
+      "source_location": "L823",
+      "weight": 1.0,
+      "_src": "main",
+      "_tgt": "main_trigger_icon_loading",
+      "source": "main",
+      "target": "main_trigger_icon_loading",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\main.rs",
+      "source_location": "L863",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_paint",
@@ -893,7 +1241,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L996",
+      "source_location": "L1033",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_fill",
@@ -905,7 +1253,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1002",
+      "source_location": "L1039",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_badge",
@@ -917,7 +1265,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1030",
+      "source_location": "L1073",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_load_icon_from_memory",
@@ -929,7 +1277,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1083",
+      "source_location": "L1126",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_copy_to_clipboard",
@@ -941,7 +1289,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1103",
+      "source_location": "L1146",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_paste_from_clipboard",
@@ -953,7 +1301,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1137",
+      "source_location": "L1180",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_test_antigravity_icons",
@@ -965,7 +1313,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1156",
+      "source_location": "L1199",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "main_test_image_factory_cast",
@@ -977,7 +1325,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L89",
+      "source_location": "L90",
       "weight": 1.0,
       "_src": "main_state",
       "_tgt": "main_state_win_h",
@@ -989,7 +1337,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L93",
+      "source_location": "L94",
       "weight": 1.0,
       "_src": "main_state",
       "_tgt": "main_state_result_rect",
@@ -1001,19 +1349,19 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L333",
+      "source_location": "L832",
       "weight": 1.0,
-      "_src": "main_wnd_proc",
+      "_src": "main_trigger_icon_loading",
       "_tgt": "main_sendhwnd",
       "source": "main_sendhwnd",
-      "target": "main_wnd_proc",
+      "target": "main_trigger_icon_loading",
       "confidence_score": 1.0
     },
     {
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L637",
+      "source_location": "L620",
       "weight": 1.0,
       "_src": "main_reposition",
       "_tgt": "main_state_win_h",
@@ -1025,7 +1373,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L829",
+      "source_location": "L866",
       "weight": 1.0,
       "_src": "main_paint",
       "_tgt": "main_state_win_h",
@@ -1037,7 +1385,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L525",
+      "source_location": "L503",
       "weight": 1.0,
       "_src": "main_wnd_proc",
       "_tgt": "main_state_result_rect",
@@ -1049,7 +1397,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L106",
+      "source_location": "L107",
       "weight": 1.0,
       "_src": "main_main",
       "_tgt": "main_run",
@@ -1061,7 +1409,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L129",
+      "source_location": "L130",
       "weight": 1.0,
       "_src": "main_run",
       "_tgt": "main_load_icon_from_memory",
@@ -1073,7 +1421,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L255",
+      "source_location": "L266",
       "weight": 1.0,
       "_src": "main_wnd_proc",
       "_tgt": "main_do_show",
@@ -1085,7 +1433,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L256",
+      "source_location": "L267",
       "weight": 1.0,
       "_src": "main_wnd_proc",
       "_tgt": "main_do_hide",
@@ -1097,7 +1445,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L265",
+      "source_location": "L276",
       "weight": 1.0,
       "_src": "main_wnd_proc",
       "_tgt": "main_start_hide",
@@ -1109,31 +1457,19 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L301",
+      "source_location": "L312",
       "weight": 1.0,
       "_src": "main_wnd_proc",
-      "_tgt": "main_kick_debounce",
+      "_tgt": "main_trigger_icon_loading",
       "source": "main_wnd_proc",
-      "target": "main_kick_debounce",
+      "target": "main_trigger_icon_loading",
       "confidence_score": 1.0
     },
     {
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L341",
-      "weight": 1.0,
-      "_src": "main_wnd_proc",
-      "_tgt": "main_get_app_icon",
-      "source": "main_wnd_proc",
-      "target": "main_get_app_icon",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "confidence": "EXTRACTED",
-      "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L361",
+      "source_location": "L339",
       "weight": 1.0,
       "_src": "main_wnd_proc",
       "_tgt": "main_reposition",
@@ -1145,7 +1481,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L364",
+      "source_location": "L342",
       "weight": 1.0,
       "_src": "main_wnd_proc",
       "_tgt": "main_tick",
@@ -1157,7 +1493,19 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L407",
+      "source_location": "L359",
+      "weight": 1.0,
+      "_src": "main_wnd_proc",
+      "_tgt": "main_kick_debounce",
+      "source": "main_wnd_proc",
+      "target": "main_kick_debounce",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\main.rs",
+      "source_location": "L385",
       "weight": 1.0,
       "_src": "main_wnd_proc",
       "_tgt": "main_copy_to_clipboard",
@@ -1169,7 +1517,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L412",
+      "source_location": "L390",
       "weight": 1.0,
       "_src": "main_wnd_proc",
       "_tgt": "main_paste_from_clipboard",
@@ -1181,7 +1529,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L574",
+      "source_location": "L552",
       "weight": 1.0,
       "_src": "main_wnd_proc",
       "_tgt": "main_paint",
@@ -1193,7 +1541,19 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L616",
+      "source_location": "L591",
+      "weight": 1.0,
+      "_src": "main_do_show",
+      "_tgt": "main_trigger_icon_loading",
+      "source": "main_do_show",
+      "target": "main_trigger_icon_loading",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\main.rs",
+      "source_location": "L599",
       "weight": 1.0,
       "_src": "main_do_show",
       "_tgt": "main_reposition",
@@ -1205,7 +1565,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L673",
+      "source_location": "L656",
       "weight": 1.0,
       "_src": "main_tick",
       "_tgt": "main_do_hide",
@@ -1217,7 +1577,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L658",
+      "source_location": "L641",
       "weight": 1.0,
       "_src": "main_tick",
       "_tgt": "main_reposition",
@@ -1229,7 +1589,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L654",
+      "source_location": "L637",
       "weight": 1.0,
       "_src": "main_tick",
       "_tgt": "main_ease_out",
@@ -1241,7 +1601,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L710",
+      "source_location": "L693",
       "weight": 1.0,
       "_src": "main_get_app_icon",
       "_tgt": "main_resolve_lnk",
@@ -1253,7 +1613,19 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1143",
+      "source_location": "L843",
+      "weight": 1.0,
+      "_src": "main_trigger_icon_loading",
+      "_tgt": "main_get_app_icon",
+      "source": "main_get_app_icon",
+      "target": "main_trigger_icon_loading",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\main.rs",
+      "source_location": "L1186",
       "weight": 1.0,
       "_src": "main_test_antigravity_icons",
       "_tgt": "main_get_app_icon",
@@ -1265,7 +1637,19 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L863",
+      "source_location": "L841",
+      "weight": 1.0,
+      "_src": "main_trigger_icon_loading",
+      "_tgt": "main_get_file_icon",
+      "source": "main_get_file_icon",
+      "target": "main_trigger_icon_loading",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\main.rs",
+      "source_location": "L900",
       "weight": 1.0,
       "_src": "main_paint",
       "_tgt": "main_fill",
@@ -1277,7 +1661,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L961",
+      "source_location": "L998",
       "weight": 1.0,
       "_src": "main_paint",
       "_tgt": "main_badge",
@@ -1289,7 +1673,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\main.rs",
-      "source_location": "L1021",
+      "source_location": "L1064",
       "weight": 1.0,
       "_src": "main_badge",
       "_tgt": "main_fill",
@@ -1301,7 +1685,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L13",
+      "source_location": "L14",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_catalogentry",
@@ -1313,7 +1697,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L24",
+      "source_location": "L25",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_searchresult",
@@ -1325,7 +1709,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L30",
+      "source_location": "L31",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_metajson",
@@ -1337,7 +1721,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L41",
+      "source_location": "L42",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_anchorcategory",
@@ -1349,7 +1733,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L50",
+      "source_location": "L51",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_appinfo",
@@ -1361,7 +1745,19 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L55",
+      "source_location": "L57",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_recentfileinfo",
+      "source": "search",
+      "target": "search_recentfileinfo",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L62",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_searchengine",
@@ -1373,7 +1769,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L458",
+      "source_location": "L695",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_url_encode",
@@ -1385,7 +1781,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L476",
+      "source_location": "L713",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_mean_pool_norm",
@@ -1397,7 +1793,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L496",
+      "source_location": "L733",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_test_hybrid_search_accuracy",
@@ -1409,7 +1805,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L601",
+      "source_location": "L838",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_test_enumerate_apps_folder",
@@ -1421,7 +1817,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L640",
+      "source_location": "L877",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_system_power_status",
@@ -1433,7 +1829,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L650",
+      "source_location": "L887",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_memorystatusex",
@@ -1445,7 +1841,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L674",
+      "source_location": "L911",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_get_local_ip",
@@ -1457,7 +1853,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L680",
+      "source_location": "L917",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_get_live_results",
@@ -1469,7 +1865,31 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L806",
+      "source_location": "L1044",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_scan_recent_files",
+      "source": "search",
+      "target": "search_scan_recent_files",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1123",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_resolve_lnk_path",
+      "source": "search",
+      "target": "search_resolve_lnk_path",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1141",
       "weight": 1.0,
       "_src": "search",
       "_tgt": "search_scan_apps",
@@ -1478,10 +1898,142 @@
       "confidence_score": 1.0
     },
     {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1259",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_quickaction",
+      "source": "search",
+      "target": "search_quickaction",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1403",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_get_quick_actions",
+      "source": "search",
+      "target": "search_get_quick_actions",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1459",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_try_calc",
+      "source": "search",
+      "target": "search_try_calc",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1483",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_try_pct_of",
+      "source": "search",
+      "target": "search_try_pct_of",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1495",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_token",
+      "source": "search",
+      "target": "search_token",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1503",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_tokenize",
+      "source": "search",
+      "target": "search_tokenize",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1540",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_parse_expr",
+      "source": "search",
+      "target": "search_parse_expr",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1553",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_parse_term",
+      "source": "search",
+      "target": "search_parse_term",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1581",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_parse_power",
+      "source": "search",
+      "target": "search_parse_power",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1593",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_parse_unary",
+      "source": "search",
+      "target": "search_parse_unary",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1603",
+      "weight": 1.0,
+      "_src": "search",
+      "_tgt": "search_parse_primary",
+      "source": "search",
+      "target": "search_parse_primary",
+      "confidence_score": 1.0
+    },
+    {
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L67",
+      "source_location": "L76",
       "weight": 1.0,
       "_src": "search_searchengine",
       "_tgt": "search_searchengine_new",
@@ -1493,7 +2045,19 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L164",
+      "source_location": "L174",
+      "weight": 1.0,
+      "_src": "search_searchengine",
+      "_tgt": "search_searchengine_search_local_files",
+      "source": "search_searchengine",
+      "target": "search_searchengine_search_local_files",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L289",
       "weight": 1.0,
       "_src": "search_searchengine",
       "_tgt": "search_searchengine_search",
@@ -1505,7 +2069,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L393",
+      "source_location": "L630",
       "weight": 1.0,
       "_src": "search_searchengine",
       "_tgt": "search_searchengine_embed",
@@ -1517,7 +2081,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L420",
+      "source_location": "L657",
       "weight": 1.0,
       "_src": "search_searchengine",
       "_tgt": "search_searchengine_get_conversational_results",
@@ -1529,7 +2093,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L153",
+      "source_location": "L162",
       "weight": 1.0,
       "_src": "search_searchengine_new",
       "_tgt": "search_searchengine_embed",
@@ -1541,7 +2105,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L807",
+      "source_location": "L1143",
       "weight": 1.0,
       "_src": "search_scan_apps",
       "_tgt": "search_searchengine_new",
@@ -1553,7 +2117,19 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L316",
+      "source_location": "L1045",
+      "weight": 1.0,
+      "_src": "search_scan_recent_files",
+      "_tgt": "search_searchengine_new",
+      "source": "search_searchengine_new",
+      "target": "search_scan_recent_files",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L292",
       "weight": 1.0,
       "_src": "search_searchengine_search",
       "_tgt": "search_searchengine_new",
@@ -1565,7 +2141,19 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L459",
+      "source_location": "L175",
+      "weight": 1.0,
+      "_src": "search_searchengine_search_local_files",
+      "_tgt": "search_searchengine_new",
+      "source": "search_searchengine_new",
+      "target": "search_searchengine_search_local_files",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L696",
       "weight": 1.0,
       "_src": "search_url_encode",
       "_tgt": "search_searchengine_new",
@@ -1577,7 +2165,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L504",
+      "source_location": "L741",
       "weight": 1.0,
       "_src": "search_test_hybrid_search_accuracy",
       "_tgt": "search_searchengine_new",
@@ -1589,7 +2177,55 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L176",
+      "source_location": "L1407",
+      "weight": 1.0,
+      "_src": "search_get_quick_actions",
+      "_tgt": "search_searchengine_new",
+      "source": "search_searchengine_new",
+      "target": "search_get_quick_actions",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1505",
+      "weight": 1.0,
+      "_src": "search_tokenize",
+      "_tgt": "search_searchengine_new",
+      "source": "search_searchengine_new",
+      "target": "search_tokenize",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L591",
+      "weight": 1.0,
+      "_src": "search_searchengine_search",
+      "_tgt": "search_searchengine_search_local_files",
+      "source": "search_searchengine_search_local_files",
+      "target": "search_searchengine_search",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L312",
+      "weight": 1.0,
+      "_src": "search_searchengine_search",
+      "_tgt": "search_try_calc",
+      "source": "search_searchengine_search",
+      "target": "search_try_calc",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L342",
       "weight": 1.0,
       "_src": "search_searchengine_search",
       "_tgt": "search_searchengine_embed",
@@ -1601,7 +2237,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L291",
+      "source_location": "L457",
       "weight": 1.0,
       "_src": "search_searchengine_search",
       "_tgt": "search_searchengine_get_conversational_results",
@@ -1613,7 +2249,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L293",
+      "source_location": "L459",
       "weight": 1.0,
       "_src": "search_searchengine_search",
       "_tgt": "search_get_live_results",
@@ -1625,7 +2261,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L376",
+      "source_location": "L577",
       "weight": 1.0,
       "_src": "search_searchengine_search",
       "_tgt": "search_url_encode",
@@ -1637,7 +2273,19 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L562",
+      "source_location": "L610",
+      "weight": 1.0,
+      "_src": "search_searchengine_search",
+      "_tgt": "search_get_quick_actions",
+      "source": "search_searchengine_search",
+      "target": "search_get_quick_actions",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L799",
       "weight": 1.0,
       "_src": "search_test_hybrid_search_accuracy",
       "_tgt": "search_searchengine_search",
@@ -1649,7 +2297,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L417",
+      "source_location": "L654",
       "weight": 1.0,
       "_src": "search_searchengine_embed",
       "_tgt": "search_mean_pool_norm",
@@ -1661,12 +2309,120 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "opensearch-os\\src\\search.rs",
-      "source_location": "L728",
+      "source_location": "L965",
       "weight": 1.0,
       "_src": "search_get_live_results",
       "_tgt": "search_get_local_ip",
       "source": "search_get_local_ip",
       "target": "search_get_live_results",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1081",
+      "weight": 1.0,
+      "_src": "search_scan_recent_files",
+      "_tgt": "search_resolve_lnk_path",
+      "source": "search_scan_recent_files",
+      "target": "search_resolve_lnk_path",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1465",
+      "weight": 1.0,
+      "_src": "search_try_calc",
+      "_tgt": "search_try_pct_of",
+      "source": "search_try_calc",
+      "target": "search_try_pct_of",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1471",
+      "weight": 1.0,
+      "_src": "search_try_calc",
+      "_tgt": "search_tokenize",
+      "source": "search_try_calc",
+      "target": "search_tokenize",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1473",
+      "weight": 1.0,
+      "_src": "search_try_calc",
+      "_tgt": "search_parse_expr",
+      "source": "search_try_calc",
+      "target": "search_parse_expr",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1541",
+      "weight": 1.0,
+      "_src": "search_parse_expr",
+      "_tgt": "search_parse_term",
+      "source": "search_parse_expr",
+      "target": "search_parse_term",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1608",
+      "weight": 1.0,
+      "_src": "search_parse_primary",
+      "_tgt": "search_parse_expr",
+      "source": "search_parse_expr",
+      "target": "search_parse_primary",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1554",
+      "weight": 1.0,
+      "_src": "search_parse_term",
+      "_tgt": "search_parse_power",
+      "source": "search_parse_term",
+      "target": "search_parse_power",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1582",
+      "weight": 1.0,
+      "_src": "search_parse_power",
+      "_tgt": "search_parse_unary",
+      "source": "search_parse_power",
+      "target": "search_parse_unary",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "opensearch-os\\src\\search.rs",
+      "source_location": "L1598",
+      "weight": 1.0,
+      "_src": "search_parse_unary",
+      "_tgt": "search_parse_primary",
+      "source": "search_parse_unary",
+      "target": "search_parse_primary",
       "confidence_score": 1.0
     },
     {

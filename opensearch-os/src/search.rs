@@ -3,6 +3,7 @@ use ort::{session::{Session, builder::GraphOptimizationLevel}, value::TensorRef}
 use serde::Deserialize;
 use tokenizers::Tokenizer;
 use std::sync::atomic::{AtomicBool, Ordering};
+use rusqlite::Connection;
 
 pub static DISABLE_LIVE_RESULTS: AtomicBool = AtomicBool::new(false);
 
@@ -68,10 +69,11 @@ pub struct SearchEngine {
     anchor_categories: Vec<AnchorCategory>,
     apps: Vec<AppInfo>,
     recent_files: Vec<RecentFileInfo>,
+    db_path: std::path::PathBuf,
 }
 
 impl SearchEngine {
-    pub fn new(model_path: &std::path::Path) -> Result<Self> {
+    pub fn new(model_path: &std::path::Path, db_path: std::path::PathBuf) -> Result<Self> {
         if CATALOG.len() < 8 {
             bail!("catalog.bin too small");
         }
@@ -153,7 +155,7 @@ impl SearchEngine {
             },
         ];
 
-        let mut engine = Self { vecs, meta, n, dim, session, tokenizer, anchor_categories: vec![], apps: vec![], recent_files: vec![] };
+        let mut engine = Self { vecs, meta, n, dim, session, tokenizer, anchor_categories: vec![], apps: vec![], recent_files: vec![], db_path };
         for cat in &mut anchor_categories {
             for phrase in cat.phrases {
                 let phrase_with_prefix = format!("query: {}", phrase);
@@ -167,6 +169,121 @@ impl SearchEngine {
         engine.recent_files = scan_recent_files();
         let _ = engine.search("settings", 1);
         Ok(engine)
+    }
+
+    fn search_local_files(&self, query: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        let conn = match Connection::open(&self.db_path) {
+            Ok(c) => c,
+            Err(_) => return results,
+        };
+
+        let q_lower = query.to_lowercase();
+        let q_words: Vec<&str> = q_lower.split_whitespace().collect();
+        if q_words.is_empty() { return results; }
+
+        let name_query = format!("%{}%", q_lower);
+        let mut stmt = match conn.prepare("SELECT path, name, extension, modified FROM files WHERE name LIKE ? LIMIT 15") {
+            Ok(s) => s,
+            Err(_) => return results,
+        };
+
+        let metadata_rows = stmt.query_map([&name_query], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        });
+
+        if let Ok(rows) = metadata_rows {
+            for row in rows.filter_map(|r| r.ok()) {
+                let (path, name, ext, _modified) = row;
+                
+                let name_lower = name.to_lowercase();
+                let name_no_ext = if let Some(dot) = name_lower.rfind('.') {
+                    &name_lower[..dot]
+                } else {
+                    &name_lower
+                };
+                
+                let mut score = 0.0f32;
+                if name_lower == q_lower || name_no_ext == q_lower {
+                    score = 2.5;
+                } else if name_lower.starts_with(&q_lower) || name_no_ext.starts_with(&q_lower) {
+                    score = 2.0;
+                } else if name_lower.contains(&q_lower) {
+                    score = 1.5;
+                } else {
+                    let name_words: Vec<&str> = name_no_ext.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+                    let matched = q_words.iter().filter(|w| name_words.contains(w)).count();
+                    if matched > 0 {
+                        score = 0.8 + 0.4 * (matched as f32 / q_words.len() as f32);
+                    }
+                }
+
+                if score > 0.0 {
+                    results.push(SearchResult {
+                        entry: CatalogEntry {
+                            id: format!("file.{}", path),
+                            control_name: name.clone(),
+                            breadcrumb_path: format!("File > {}", path),
+                            launch_command: path.clone(),
+                            source: "FILE".to_string(),
+                            description: format!("Local {} file", ext.to_uppercase()),
+                            synonyms: name.to_lowercase(),
+                        },
+                        score,
+                    });
+                }
+            }
+        }
+
+        let clean_fts_query = q_words.join(" ");
+        let mut stmt_fts = match conn.prepare(
+            "SELECT f.path, f.name, f.extension, f.modified 
+             FROM files f 
+             JOIN files_fts fts ON f.path = fts.path 
+             WHERE files_fts MATCH ? LIMIT 15"
+        ) {
+            Ok(s) => s,
+            Err(_) => return results,
+        };
+
+        let fts_rows = stmt_fts.query_map([&clean_fts_query], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        });
+
+        if let Ok(rows) = fts_rows {
+            for row in rows.filter_map(|r| r.ok()) {
+                let (path, name, ext, _modified) = row;
+                
+                if results.iter().any(|r| r.entry.launch_command == path) {
+                    continue;
+                }
+
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("file.{}", path),
+                        control_name: name.clone(),
+                        breadcrumb_path: format!("File > {}", path),
+                        launch_command: path.clone(),
+                        source: "FILE".to_string(),
+                        description: format!("Local {} file (matches content)", ext.to_uppercase()),
+                        synonyms: name.to_lowercase(),
+                    },
+                    score: 1.0,
+                });
+            }
+        }
+
+        results
     }
 
     pub fn search(&mut self, query: &str, top_k: usize) -> Vec<SearchResult> {
@@ -471,9 +588,14 @@ impl SearchEngine {
             score: 1.1,
         };
 
+        let mut file_matches = self.search_local_files(q);
+        file_matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        file_matches.truncate(10); // Cap at 10 file results
+
         let mut merged = Vec::new();
         merged.append(&mut app_matches);
         merged.append(&mut recent_matches);
+        merged.append(&mut file_matches);
         merged.append(&mut vec_results);
         merged.push(web_search.clone());
         merged.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
@@ -616,7 +738,7 @@ mod tests {
         if !model_path.exists() {
             model_path = parent.parent().expect("failed to get grandparent").join("model_int8.onnx");
         }
-        let mut engine = SearchEngine::new(&model_path).expect("Failed to initialize engine");
+        let mut engine = SearchEngine::new(&model_path, std::path::PathBuf::from("test_db.db")).expect("Failed to initialize engine");
         
         let queries = vec![
             ("stop mouse from jumping", vec!["pointer precision", "pointer speed", "mouse"]),

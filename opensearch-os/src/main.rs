@@ -2,6 +2,7 @@
 
 mod launcher;
 mod search;
+mod indexer;
 
 use std::ptr::null_mut;
 use search::{SearchEngine, SearchResult};
@@ -196,10 +197,20 @@ unsafe fn run() {
     // Load the search engine in a background thread so the window appears instantly.
     let hwnd_usize = hwnd.0 as usize;
     std::thread::spawn(move || {
+        let db_path = match std::env::var("APPDATA") {
+            Ok(d) => {
+                let path = std::path::PathBuf::from(d).join("opensearch-os");
+                let _ = std::fs::create_dir_all(&path);
+                path.join("file_index.db")
+            }
+            Err(_) => std::path::PathBuf::from("file_index.db"),
+        };
+        indexer::start_indexer(db_path.clone());
+
         let model_path = std::env::current_exe().ok()
             .and_then(|p| p.parent().map(|d| d.join("model_int8.onnx")));
         let result = match model_path {
-            Some(p) => SearchEngine::new(&p),
+            Some(p) => SearchEngine::new(&p, db_path),
             None => Err(anyhow::anyhow!("cannot locate exe directory")),
         };
         let hwnd_bg = HWND(hwnd_usize as *mut std::ffi::c_void);
@@ -812,12 +823,12 @@ unsafe fn get_file_icon(path: &str) -> HICON {
 unsafe fn trigger_icon_loading(hwnd: HWND, s: &mut State) {
     for res in &s.results {
         let (source, key) = (res.entry.source.as_str(), res.entry.launch_command.clone());
-        let needs_icon = (source == "app" || source == "RECENT")
+        let needs_icon = (source == "app" || source == "RECENT" || source == "FILE")
             && !s.app_icons.contains_key(&key);
         if needs_icon {
             // Placeholder so we don't spawn multiple threads for same path
             s.app_icons.insert(key.clone(), HICON(std::ptr::null_mut()));
-            let is_recent = source == "RECENT";
+            let is_recent = source == "RECENT" || source == "FILE";
             let hwnd_clone = SendHwnd(hwnd);
             std::thread::spawn(move || {
                 let hwnd_raw = hwnd_clone;
@@ -949,7 +960,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let cy = ry + (RESULT_H - 40) / 2;
 
             // Draw Icon
-            let icon_to_draw = if res.entry.source == "app" || res.entry.source == "RECENT" {
+            let icon_to_draw = if res.entry.source == "app" || res.entry.source == "RECENT" || res.entry.source == "FILE" {
                 s.app_icons.get(&res.entry.launch_command)
                     .copied()
                     .filter(|h| !h.0.is_null())
@@ -1041,6 +1052,8 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
         ("CALC", COLORREF(0x00_9B_4D_00), CLR_WHITE)
     } else if src_lc == "recent" {
         ("RECENT", COLORREF(0x00_7A_1F_7A), CLR_WHITE)
+    } else if src_lc == "file" {
+        ("FILE", COLORREF(0x00_90_40_00), CLR_WHITE)
     } else if src_lc.contains("legacy") {
         ("LEGACY", CLR_BDGBG, CLR_BDGTX)
     } else if src_lc.contains("native") {
