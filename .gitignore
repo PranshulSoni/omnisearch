@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# HuggingFace model cache (large, re-downloadable)
+~/.cache/huggingface/
+
+# Rust
+target/
+
+# Compiled binary
+*.exe
+*.bin
+!assets/catalog.bin
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Env / secrets
+.env
+*.env.local
