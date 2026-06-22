@@ -20,7 +20,7 @@ pub fn start_indexer(db_path: PathBuf) {
 
 fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
     let conn = Connection::open(db_path)?;
-    conn.execute("PRAGMA journal_mode=WAL;", [])?;
+    conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     
     conn.execute(
         "CREATE TABLE IF NOT EXISTS files (
