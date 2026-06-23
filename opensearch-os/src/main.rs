@@ -34,7 +34,8 @@ const ICON_W: i32 = 36;
 // ── Win32 IDs ─────────────────────────────────────────────────────────────────
 const HOTKEY_ID: i32 = 1;
 const TIMER_DEBOUNCE: usize = 1;
-// const TIMER_ANIM: usize = 2;
+const TIMER_CURSOR_BLINK: usize = 2;
+const CURSOR_BLINK_MS: u32 = 530;
 const WM_ICON_LOADED: u32 = WM_USER + 1;
 const WM_ENGINE_READY: u32 = WM_USER + 2;
 const WM_SEARCH_RESULTS: u32 = WM_USER + 3;
@@ -89,6 +90,7 @@ struct State {
     icon_clipboard: HICON,
     icon_memory: HICON,
     text_selected: bool,
+    cursor_visible: bool,
     scroll_offset: usize,
     last_mouse_x: i32,
     last_mouse_y: i32,
@@ -219,6 +221,7 @@ unsafe fn run() {
         icon_clipboard,
         icon_memory,
         text_selected: false,
+        cursor_visible: true,
         scroll_offset: 0,
         last_mouse_x: -1,
         last_mouse_y: -1,
@@ -564,6 +567,10 @@ unsafe extern "system" fn wnd_proc(
                     let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
                     trigger_search(hwnd, s);
                 }
+                TIMER_CURSOR_BLINK => {
+                    s.cursor_visible = !s.cursor_visible;
+                    let _ = InvalidateRect(hwnd, None, FALSE);
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -581,6 +588,7 @@ unsafe extern "system" fn wnd_proc(
                     s.query.push(c);
                     s.selected = 0;
                     kick_debounce(hwnd);
+                    reset_cursor_blink(hwnd, s);
                     let _ = InvalidateRect(hwnd, None, FALSE);
                 }
             }
@@ -621,6 +629,7 @@ unsafe extern "system" fn wnd_proc(
                             }
                             s.selected = 0;
                             kick_debounce(hwnd);
+                            reset_cursor_blink(hwnd, s);
                             let _ = InvalidateRect(hwnd, None, FALSE);
                         }
                         return LRESULT(0);
@@ -633,13 +642,21 @@ unsafe extern "system" fn wnd_proc(
                 VK_ESCAPE => {
                     if s.text_selected {
                         s.text_selected = false;
+                        reset_cursor_blink(hwnd, s);
                         let _ = InvalidateRect(hwnd, None, FALSE);
                     } else {
                         start_hide(hwnd, s);
                     }
                 }
                 VK_BACK => {
-                    if s.text_selected {
+                    if ctrl_down {
+                        if s.text_selected {
+                            s.query.clear();
+                            s.text_selected = false;
+                        } else {
+                            delete_word_before(s);
+                        }
+                    } else if s.text_selected {
                         s.query.clear();
                         s.text_selected = false;
                     } else {
@@ -647,6 +664,7 @@ unsafe extern "system" fn wnd_proc(
                     }
                     s.selected = 0;
                     kick_debounce(hwnd);
+                    reset_cursor_blink(hwnd, s);
                     let _ = InvalidateRect(hwnd, None, FALSE);
                 }
                 VK_RETURN => {
@@ -668,6 +686,7 @@ unsafe extern "system" fn wnd_proc(
                             s.selected = 0;
                             s.scroll_offset = 0;
                             s.text_selected = false;
+                            reset_cursor_blink(hwnd, s);
                             trigger_search(hwnd, s);
                         } else {
                             if let Some(text) = cmd.strip_prefix("copy:") {
@@ -687,6 +706,7 @@ unsafe extern "system" fn wnd_proc(
                         if s.selected >= s.scroll_offset + VISIBLE_RESULTS {
                             s.scroll_offset = s.selected - (VISIBLE_RESULTS - 1);
                         }
+                        reset_cursor_blink(hwnd, s);
                         let _ = InvalidateRect(hwnd, None, FALSE);
                     }
                 }
@@ -696,6 +716,7 @@ unsafe extern "system" fn wnd_proc(
                         if s.selected < s.scroll_offset {
                             s.scroll_offset = s.selected;
                         }
+                        reset_cursor_blink(hwnd, s);
                         let _ = InvalidateRect(hwnd, None, FALSE);
                     }
                 }
@@ -735,6 +756,7 @@ unsafe extern "system" fn wnd_proc(
         WM_LBUTTONDOWN => {
             if sp.is_null() { return LRESULT(0); }
             let s = &mut *sp;
+            reset_cursor_blink(hwnd, s);
             let my = ((lp.0 >> 16) & 0xFFFF) as i16 as i32;
             let n = s.results.len().min(VISIBLE_RESULTS);
             for i in 0..n {
@@ -935,7 +957,14 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
     IN_ANIMATION = false;
 }
 
-unsafe fn do_show(hwnd: HWND, _s: &mut State) {
+unsafe fn reset_cursor_blink(hwnd: HWND, s: &mut State) {
+    s.cursor_visible = true;
+    let _ = KillTimer(hwnd, TIMER_CURSOR_BLINK);
+    let _ = SetTimer(hwnd, TIMER_CURSOR_BLINK, CURSOR_BLINK_MS, None);
+}
+
+unsafe fn do_show(hwnd: HWND, s: &mut State) {
+    reset_cursor_blink(hwnd, s);
     animate_window(hwnd, true);
 }
 
@@ -945,6 +974,7 @@ unsafe fn start_hide(hwnd: HWND, _s: &mut State) {
 
 unsafe fn do_hide(hwnd: HWND, s: &mut State) {
     let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
+    let _ = KillTimer(hwnd, TIMER_CURSOR_BLINK);
     let _ = ShowWindow(hwnd, SW_HIDE);
     s.anim = Anim::Hidden;
 }
@@ -980,6 +1010,16 @@ unsafe fn fill_rounded(hdc: HDC, x: i32, y: i32, w: i32, h: i32, r: i32, c: COLO
     let _ = DeleteObject(pen);
     let _ = SelectObject(hdc, old_brush);
     let _ = DeleteObject(br);
+}
+
+fn delete_word_before(s: &mut State) {
+    let bytes = s.query.as_bytes();
+    let mut i = bytes.len();
+    // Skip trailing whitespace
+    while i > 0 && bytes[i-1].is_ascii_whitespace() { i -= 1; }
+    // Skip the word
+    while i > 0 && !bytes[i-1].is_ascii_whitespace() { i -= 1; }
+    s.query.truncate(i);
 }
 
 // ── Painting ──────────────────────────────────────────────────────────────────
@@ -1238,7 +1278,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             SetTextColor(mdc, CLR_WHITE);
             let _ = DrawTextW(mdc, &mut dw, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         } else {
-            let display = format!("{}_", s.query);
+            let display = if s.cursor_visible { format!("{}|", s.query) } else { s.query.clone() };
             let mut dw_cursor: Vec<u16> = display.encode_utf16().collect();
             SetTextColor(mdc, CLR_WHITE);
             let _ = DrawTextW(mdc, &mut dw_cursor, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
