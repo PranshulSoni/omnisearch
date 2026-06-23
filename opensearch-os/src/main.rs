@@ -55,6 +55,7 @@ const CLR_GRAY: COLORREF  = COLORREF(0x00_9A_94_94);
 const CLR_PH: COLORREF    = COLORREF(0x00_5A_55_55);
 const CLR_BDGBG: COLORREF = COLORREF(0x00_50_48_48);
 const CLR_BDGTX: COLORREF = COLORREF(0x00_C0_BB_BB);
+const COLOR_KEY: COLORREF = COLORREF(0x00_12_34_56);
 
 // ── App state ─────────────────────────────────────────────────────────────────
 struct State {
@@ -104,7 +105,9 @@ impl State {
         if n == 0 { SEARCH_H } else { SEARCH_H + 1 + n * RESULT_H }
     }
     fn result_rect(&self, i: usize) -> RECT {
-        let y = SEARCH_H + 1 + i as i32 * RESULT_H;
+        let end_h = self.win_h();
+        let end_y = self.cy - end_h / 2;
+        let y = end_y + SEARCH_H + 1 + i as i32 * RESULT_H;
         RECT { left: 0, top: y, right: WIN_W, bottom: y + RESULT_H }
     }
     fn current_p(&self) -> f32 {
@@ -204,22 +207,24 @@ unsafe fn run() {
     };
     RegisterClassExW(&wc);
 
+    let sw = GetSystemMetrics(SM_CXSCREEN);
+    let win_x = (sw - WIN_W) / 2;
     let hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         PCWSTR(class.as_ptr()),
         PCWSTR::null(),
         WS_POPUP,
-        -4000, -4000, WIN_W, SEARCH_H,
+        win_x, 0, WIN_W, 800,
         HWND(null_mut()), HMENU(null_mut()), hinst,
         Some(Box::into_raw(state) as _),
     ).unwrap();
 
     let _ = unsafe { windows::Win32::System::DataExchange::AddClipboardFormatListener(hwnd) };
 
-    SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA).unwrap();
+    SetLayeredWindowAttributes(hwnd, COLOR_KEY, 255, LWA_COLORKEY).unwrap();
 
-    // DWM rounded corners (Windows 11)
-    let corner = DWMWCP_ROUND;
+    // DWM rounded corners (Windows 11) - Do not round the transparent box
+    let corner = DWMWCP_DONOTROUND;
     let _ = DwmSetWindowAttribute(
         hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
         &corner as *const _ as _, 4,
@@ -276,6 +281,8 @@ unsafe fn run() {
             }
         }
     });
+
+    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 
     // Win+Space is reserved by Windows IME; Alt+Space is the conventional launcher hotkey.
     if RegisterHotKey(hwnd, HOTKEY_ID, MOD_ALT | MOD_NOREPEAT, VK_SPACE.0 as u32).is_err() {
@@ -781,7 +788,7 @@ unsafe fn do_show(hwnd: HWND, s: &mut State) {
     reposition_animated(hwnd, s, t);
     
     let alpha = (t * 255.0) as u8;
-    let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
+    let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, alpha, LWA_COLORKEY | LWA_ALPHA);
     
     let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     let _ = SetForegroundWindow(hwnd);
@@ -793,8 +800,19 @@ unsafe fn do_show(hwnd: HWND, s: &mut State) {
 unsafe fn do_hide(hwnd: HWND, s: &mut State) {
     let _ = KillTimer(hwnd, TIMER_ANIM);
     let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
+    
+    // Hide the window so Windows automatically returns focus to the previously active window
     let _ = ShowWindow(hwnd, SW_HIDE);
     s.anim = Anim::Hidden;
+    
+    // Reset alpha back to 255 (pill is fully opaque)
+    let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, 255, LWA_COLORKEY);
+    
+    // Immediately show again with SW_SHOWNOACTIVATE so the resting pill is visible on desktop, without stealing focus
+    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    
+    // Repaint to draw only the pill
+    let _ = InvalidateRect(hwnd, None, FALSE);
 }
 
 unsafe fn start_hide(hwnd: HWND, s: &mut State) {
@@ -806,24 +824,8 @@ unsafe fn start_hide(hwnd: HWND, s: &mut State) {
     let _ = SetTimer(hwnd, TIMER_ANIM, ANIM_TICK_MS, None);
 }
 
-unsafe fn reposition_animated(hwnd: HWND, s: &State, t: f32) {
-    let sw = GetSystemMetrics(SM_CXSCREEN);
-    let search_w = WIN_W;
-    let search_h = s.win_h();
-
-    let start_x = sw / 2 - search_w / 2;
-    let start_y = 8;
-    let start_h = PILL_H;
-
-    let end_x = s.cx - search_w / 2;
-    let end_y = s.cy - search_h / 2;
-    let end_h = search_h;
-
-    let x = start_x; // Centered horizontally
-    let y = (start_y as f32 + (end_y - start_y) as f32 * t) as i32;
-    let h = (start_h as f32 + (end_h - start_h) as f32 * t) as i32;
-
-    let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, search_w, h, SWP_NOACTIVATE | SWP_NOCOPYBITS);
+unsafe fn reposition_animated(_hwnd: HWND, _s: &State, _t: f32) {
+    // No-op because the window is physically static!
 }
 
 unsafe fn kick_debounce(hwnd: HWND) {
@@ -837,7 +839,7 @@ unsafe fn tick(hwnd: HWND, s: &mut State) {
     let t = ease_out(p);
     
     let alpha = (t * 255.0) as u8;
-    let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
+    let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, alpha, LWA_COLORKEY | LWA_ALPHA);
     reposition_animated(hwnd, s, t);
     
     // Force immediate paint
@@ -1107,53 +1109,49 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     let bmp = CreateCompatibleBitmap(hdc, win_w, win_h);
     let old = SelectObject(mdc, bmp);
 
-    // Fill background / Draw Glowing Border
+    // Clear background with COLOR_KEY (completely transparent)
+    fill(mdc, 0, 0, win_w, win_h, COLOR_KEY);
+
+    // Calculate dynamic shape coordinates
+    let p = s.current_p();
+    let t = ease_out(p);
+
+    let pill_w = 150;
+    let pill_h = 28;
+    let pill_y = 8;
+    let pill_r = 28;
+
+    let end_w = WIN_W;
+    let end_h = s.win_h();
+    let end_y = s.cy - end_h / 2;
+
+    let w = (pill_w as f32 + (end_w - pill_w) as f32 * t) as i32;
+    let h = (pill_h as f32 + (end_h - pill_h) as f32 * t) as i32;
+    let x = (win_w - w) / 2;
+    let y = (pill_y as f32 + (end_y - pill_y) as f32 * t) as i32;
+    let r = (pill_r as f32 + (12 - pill_r) as f32 * t) as i32;
+
+    // Fill background / Draw Glowing Border around the morphing rounded rect
     let has_results = s.results.len().min(MAX_RESULTS) > 0;
-    if has_results {
-        // Draw vibrant gradient border
-        let vertices = [
-            TRIVERTEX {
-                x: 0,
-                y: 0,
-                Red: 0x0000,
-                Green: 0xb400,
-                Blue: 0xdb00,
-                Alpha: 0x0000,
-            },
-            TRIVERTEX {
-                x: win_w,
-                y: win_h,
-                Red: 0x7f00,
-                Green: 0x0000,
-                Blue: 0xff00,
-                Alpha: 0x0000,
-            },
-        ];
-        let g_rect = [GRADIENT_RECT {
-            UpperLeft: 0,
-            LowerRight: 1,
-        }];
-        let _ = GradientFill(mdc, &vertices, g_rect.as_ptr() as *const _, 1, GRADIENT_FILL(0)); // Horizontal gradient
-        fill(mdc, 1, 1, win_w - 2, win_h - 2, BG);
-    } else {
-        // Draw subtle solid gray border
-        fill(mdc, 0, 0, win_w, win_h, CLR_DIV);
-        fill(mdc, 1, 1, win_w - 2, win_h - 2, BG);
-    }
+    draw_rounded_border_and_bg(mdc, x, y, w, h, r, has_results && s.anim != Anim::Hidden);
+
+    // Create rounded clipping region matching the inner background area of the morphing shape
+    let clip_rgn = CreateRoundRectRgn(x + 1, y + 1, x + w - 1, y + h - 1, r - 1, r - 1);
+    let old_clip = SelectClipRgn(mdc, clip_rgn);
 
     // ── Search row ────────────────────────────────────────────────────────
     SetBkMode(mdc, TRANSPARENT);
 
     // Draw Search Icon
     if !s.icon_search.0.is_null() {
-        let icon_y = (SEARCH_H - 24) / 2;
-        let _ = DrawIconEx(mdc, PAD_L, icon_y, s.icon_search, 24, 24, 0, HBRUSH(null_mut()), DI_NORMAL);
+        let icon_y = y + (SEARCH_H - 24) / 2;
+        let _ = DrawIconEx(mdc, x + PAD_L, icon_y, s.icon_search, 24, 24, 0, HBRUSH(null_mut()), DI_NORMAL);
     }
 
     // Text / placeholder
-    let tx = PAD_L + ICON_W + 8;
-    let ty = (SEARCH_H - 26) / 2;
-    let tw = win_w - tx - PAD_L;
+    let tx = x + PAD_L + ICON_W + 8;
+    let ty = y + (SEARCH_H - 26) / 2;
+    let tw = w - (PAD_L + ICON_W + 8) - PAD_L;
     let mut tr = RECT { left: tx, top: ty, right: tx + tw, bottom: ty + 26 };
 
     SelectObject(mdc, s.font_q);
@@ -1184,15 +1182,15 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     // ── Results ───────────────────────────────────────────────────────────
     let n = s.results.len().min(VISIBLE_RESULTS);
     if n > 0 {
-        fill(mdc, 0, SEARCH_H, win_w, 1, CLR_DIV);
+        fill(mdc, x, y + SEARCH_H, w, 1, CLR_DIV);
 
         for i in 0..n {
             let res_idx = s.scroll_offset + i;
             let res = &s.results[res_idx];
-            let ry = SEARCH_H + 1 + i as i32 * RESULT_H;
+            let ry = y + SEARCH_H + 1 + i as i32 * RESULT_H;
 
-            if res_idx == s.selected { fill(mdc, 0, ry, win_w, RESULT_H, BG_SEL); }
-            if i > 0 { fill(mdc, PAD_L, ry, win_w - PAD_L * 2, 1, CLR_DIV); }
+            if res_idx == s.selected { fill(mdc, x, ry, w, RESULT_H, BG_SEL); }
+            if i > 0 { fill(mdc, x + PAD_L, ry, w - PAD_L * 2, 1, CLR_DIV); }
 
             let cy = ry + (RESULT_H - 40) / 2;
 
@@ -1222,14 +1220,14 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
             if !icon_to_draw.0.is_null() {
                 let icon_y = ry + (RESULT_H - 32) / 2;
-                let _ = DrawIconEx(mdc, PAD_L, icon_y, icon_to_draw, 32, 32, 0, HBRUSH(null_mut()), DI_NORMAL);
+                let _ = DrawIconEx(mdc, x + PAD_L, icon_y, icon_to_draw, 32, 32, 0, HBRUSH(null_mut()), DI_NORMAL);
             }
 
             // Name
             SelectObject(mdc, s.font_n);
             SetTextColor(mdc, CLR_WHITE);
             let mut name: Vec<u16> = res.entry.control_name.encode_utf16().collect();
-            let mut r = RECT { left: tx, top: cy, right: win_w - 96, bottom: cy + 22 };
+            let mut r = RECT { left: tx, top: cy, right: x + w - 96, bottom: cy + 22 };
             let _ = DrawTextW(mdc, &mut name, &mut r,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
@@ -1237,19 +1235,19 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             SelectObject(mdc, s.font_c);
             SetTextColor(mdc, CLR_GRAY);
             let mut crumb: Vec<u16> = res.entry.breadcrumb_path.encode_utf16().collect();
-            let mut r2 = RECT { left: tx, top: cy + 24, right: win_w - 96, bottom: cy + 40 };
+            let mut r2 = RECT { left: tx, top: cy + 24, right: x + w - 96, bottom: cy + 40 };
             let _ = DrawTextW(mdc, &mut crumb, &mut r2,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
             // Badge
-            badge(mdc, s, &res.entry.source, win_w - 88, ry + (RESULT_H - 20) / 2);
+            badge(mdc, s, &res.entry.source, x + w - 88, ry + (RESULT_H - 20) / 2);
         }
 
         // Draw scrollbar if there are more results than visible
         let total_results = s.results.len();
         if total_results > VISIBLE_RESULTS {
-            let track_top = SEARCH_H + 8;
-            let track_bottom = win_h - 8;
+            let track_top = y + SEARCH_H + 8;
+            let track_bottom = y + h - 8;
             let track_h = track_bottom - track_top;
             
             // Thumb height proportional to ratio of visible results, capped at min 24px
@@ -1261,7 +1259,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let thumb_y = track_top + (s.scroll_offset as f32 / max_offset as f32 * (track_h - thumb_h) as f32) as i32;
             
             // Draw subtle track
-            let sb_x = win_w - 10;
+            let sb_x = x + w - 10;
             let sb_w = 4;
             fill(mdc, sb_x, track_top, sb_w, track_h, COLORREF(0x00_2A_2A_2A));
             
@@ -1269,6 +1267,10 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             fill(mdc, sb_x, thumb_y, sb_w, thumb_h, CLR_GRAY);
         }
     }
+
+    // Restore clipping
+    let _ = SelectClipRgn(mdc, HRGN(null_mut()));
+    let _ = DeleteObject(clip_rgn);
 
     let _ = BitBlt(hdc, 0, 0, win_w, win_h, mdc, 0, 0, SRCCOPY);
     let _ = SelectObject(mdc, old);
@@ -1281,6 +1283,50 @@ unsafe fn fill(hdc: HDC, x: i32, y: i32, w: i32, h: i32, c: COLORREF) {
     let br = CreateSolidBrush(c);
     FillRect(hdc, &RECT { left: x, top: y, right: x + w, bottom: y + h }, br);
     DeleteObject(br);
+}
+
+unsafe fn draw_rounded_border_and_bg(hdc: HDC, x: i32, y: i32, w: i32, h: i32, r: i32, gradient: bool) {
+    if gradient {
+        // Create a rounded region for the border
+        let rgn = CreateRoundRectRgn(x, y, x + w + 1, y + h + 1, r, r);
+        let old_rgn = SelectClipRgn(hdc, rgn);
+        
+        // Draw horizontal gradient over the outer bounds
+        let vertices = [
+            TRIVERTEX {
+                x,
+                y,
+                Red: 0x0000,
+                Green: 0xb400,
+                Blue: 0xdb00,
+                Alpha: 0x0000,
+            },
+            TRIVERTEX {
+                x: x + w,
+                y: y + h,
+                Red: 0x7f00,
+                Green: 0x0000,
+                Blue: 0xff00,
+                Alpha: 0x0000,
+            },
+        ];
+        let g_rect = [GRADIENT_RECT {
+            UpperLeft: 0,
+            LowerRight: 1,
+        }];
+        let _ = GradientFill(hdc, &vertices, g_rect.as_ptr() as *const _, 1, GRADIENT_FILL(0));
+        
+        // Restore clipping
+        let _ = SelectClipRgn(hdc, HRGN(null_mut()));
+        let _ = DeleteObject(rgn);
+        
+        // Draw the inner background
+        fill_rounded(hdc, x + 1, y + 1, w - 2, h - 2, r - 1, BG);
+    } else {
+        // Draw subtle solid gray border
+        fill_rounded(hdc, x, y, w, h, r, CLR_DIV);
+        fill_rounded(hdc, x + 1, y + 1, w - 2, h - 2, r - 1, BG);
+    }
 }
 
 unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
