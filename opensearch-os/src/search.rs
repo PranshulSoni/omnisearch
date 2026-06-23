@@ -1726,10 +1726,14 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             })
         } else { None };
 
-        // ── Process Kill: triggered by 'kill <name>' prefix ─────────────────
+        // ── Process Kill: triggered by 'kill' or 'kill <name>' prefix ───────
         let q_lower = q.to_lowercase();
-        let kill_results: Vec<SearchResult> = if q_lower.starts_with("kill ") {
-            let proc_query = q_lower.strip_prefix("kill ").unwrap_or("").trim();
+        let kill_results: Vec<SearchResult> = if q_lower == "kill" || q_lower.starts_with("kill ") {
+            let proc_query = if q_lower == "kill" {
+                ""
+            } else {
+                q_lower.strip_prefix("kill ").unwrap_or("").trim()
+            };
             search_processes(proc_query)
         } else { vec![] };
         if !kill_results.is_empty() {
@@ -3628,7 +3632,7 @@ pub fn search_processes(query: &str) -> Vec<SearchResult> {
     #[cfg(target_os = "windows")]
     use std::os::windows::process::CommandExt;
     let q = query.trim().to_lowercase();
-    if q.len() < 2 { return vec![]; }
+    if !q.is_empty() && q.len() < 2 { return vec![]; }
 
     let output = match std::process::Command::new("tasklist")
         .args(["/FO", "CSV", "/NH"])
@@ -3650,15 +3654,22 @@ pub fn search_processes(query: &str) -> Vec<SearchResult> {
         let name = fields[0].trim_matches('"');
         let pid_str = fields[1].trim_matches('"');
         let name_lower = name.to_lowercase();
-        if !name_lower.contains(&q) { continue; }
+        if !q.is_empty() && !name_lower.contains(&q) { continue; }
         if protected.iter().any(|p| name_lower == *p) { continue; }
         let pid: u32 = pid_str.parse().unwrap_or(0);
-        let score = if name_lower == q { 3.0 } else if name_lower.starts_with(&q) { 2.0 } else { 1.0 };
-        let mem_mb = fields.get(4)
+        let mem_kb = fields.get(4)
             .map(|m| m.trim_matches('"').replace(",", "").replace(" K", ""))
             .and_then(|kb| kb.parse::<u64>().ok())
-            .map(|kb| format!("{:.0} MB", kb as f64 / 1024.0))
-            .unwrap_or_default();
+            .unwrap_or(0);
+        
+        let score = if q.is_empty() {
+            mem_kb as f32
+        } else {
+            let base = if name_lower == q { 3.0 } else if name_lower.starts_with(&q) { 2.0 } else { 1.0 };
+            base + (mem_kb as f32 / 10_000_000.0) // Small boost for memory usage to break ties
+        };
+
+        let mem_mb = format!("{:.0} MB", mem_kb as f64 / 1024.0);
         let display = name.trim_end_matches(".exe");
         results.push(SearchResult {
             entry: CatalogEntry {
