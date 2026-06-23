@@ -7,6 +7,10 @@ edition = "2021"
 name = "opensearch-os"
 path = "src/main.rs"
 
+[[bin]]
+name = "inspect-db"
+path = "src/inspect_db.rs"
+
 [dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
