@@ -1109,7 +1109,7 @@ unsafe extern "system" fn wnd_proc(
                         let cmd = r.entry.launch_command.clone();
                         let is_action_folder = r.entry.source == "FOLDER" && (
                             cmd == "bookmarks:" || cmd == "history:" || cmd == "commits:" ||
-                            cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:"
+                            cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" || cmd == "switch:" || cmd == "window:\"
                         );
                         if is_action_folder {
                             s.query = cmd;
@@ -1228,7 +1228,7 @@ unsafe extern "system" fn wnd_proc(
                     let cmd = s.results[actual_idx].entry.launch_command.clone();
                     let is_action_folder = s.results[actual_idx].entry.source == "FOLDER" && (
                         cmd == "bookmarks:" || cmd == "history:" || cmd == "commits:" ||
-                        cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:"
+                        cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" || cmd == "switch:" || cmd == "window:\"
                     );
                     if is_action_folder {
                         s.query = cmd;
@@ -1940,7 +1940,22 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             }
 
             if !drawn_custom_thumbnail {
-                let icon_to_draw = if res.entry.source == "app" || res.entry.source == "RECENT" || res.entry.source == "FILE" || res.entry.source == "CODE"
+                let mut is_win_icon = false;
+                let mut win_icon_h = HICON(std::ptr::null_mut());
+                
+                let icon_to_draw = if res.entry.source == "WINDOW" {
+                    let hwnd_val = res.entry.launch_command.strip_prefix("window:")
+                        .and_then(|h| h.parse::<isize>().ok())
+                        .unwrap_or(0);
+                    let win_hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
+                    win_icon_h = get_window_icon(win_hwnd);
+                    if !win_icon_h.0.is_null() {
+                        is_win_icon = true;
+                        win_icon_h
+                    } else {
+                        s.icon_control_panel
+                    }
+                } else if res.entry.source == "app" || res.entry.source == "RECENT" || res.entry.source == "FILE" || res.entry.source == "CODE"
                     || (res.entry.source == "ACTION" && res.entry.launch_command.starts_with("kill:")) {
                     s.app_icons.get(&res.entry.launch_command)
                         .copied()
@@ -1969,6 +1984,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 if !icon_to_draw.0.is_null() {
                     let icon_y = ry + (RESULT_H - 32) / 2;
                     let _ = unsafe { DrawIconEx(mdc, x + PAD_L, icon_y, icon_to_draw, 32, 32, 0, HBRUSH(null_mut()), DI_NORMAL) };
+                }
+                if is_win_icon && !win_icon_h.0.is_null() {
+                    unsafe {
+                        let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(win_icon_h);
+                    }
                 }
             }
 
@@ -2177,7 +2197,9 @@ unsafe fn draw_rounded_border_and_bg(hdc: HDC, x: i32, y: i32, w: i32, h: i32, r
 
 unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
     let src_lc = source.to_lowercase();
-    let (label, bg_color, tx_color) = if src_lc == "live" {
+    let (label, bg_color, tx_color) = if src_lc == "window" {
+        ("WINDOW", COLORREF(0x00_8C_3F_13), CLR_WHITE)
+    } else if src_lc == "live" {
         ("LIVE", COLORREF(0x00_1F_A6_0A), CLR_WHITE)
     } else if src_lc == "project" {
         ("PROJECT", COLORREF(0x00_B5_25_9E), CLR_WHITE)
@@ -2857,12 +2879,60 @@ mod tests {
 }
 
 
-fn get_app_path(launch_command: &str) -> &str {
-    if let Some(rest) = launch_command.strip_prefix("shell:AppsFolder\\") {
+fn resolve_known_folder_path(path: &str) -> String {
+    if path.starts_with('{') && path.contains('}') {
+        if let Some(close_brace_idx) = path.find('}') {
+            let guid_str = &path[0..=close_brace_idx];
+            let guid_str_wide: Vec<u16> = guid_str.encode_utf16().chain(std::iter::once(0)).collect();
+            unsafe {
+                use windows::Win32::System::Com::CLSIDFromString;
+                use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+                use windows::Win32::Foundation::HANDLE;
+                use windows::core::PCWSTR;
+                if let Ok(guid) = CLSIDFromString(PCWSTR(guid_str_wide.as_ptr())) {
+                    if let Ok(result) = SHGetKnownFolderPath(&guid, KF_FLAG_DEFAULT, HANDLE::default()) {
+                        let mut len = 0;
+                        while *result.0.add(len) != 0 { len += 1; }
+                        let base_path = String::from_utf16_lossy(std::slice::from_raw_parts(result.0, len));
+                        windows::Win32::System::Com::CoTaskMemFree(Some(result.0 as *const _));
+                        
+                        let remaining = &path[close_brace_idx + 1..];
+                        let remaining = remaining.trim_start_matches('\');
+                        return format!("{}\{}", base_path, remaining);
+                    }
+                }
+            }
+        }
+    }
+    path.to_string()
+}
+
+fn get_app_path(launch_command: &str) -> String {
+    let clean = if let Some(rest) = launch_command.strip_prefix("shell:AppsFolder\") {
         rest
     } else {
         launch_command
+    };
+    resolve_known_folder_path(clean)
+}
+
+unsafe fn get_window_icon(hwnd: HWND) -> HICON {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SendMessageW, WM_GETICON, ICON_BIG, ICON_SMALL, GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW
+    };
+    use windows::Win32::Foundation::WPARAM;
+    
+    let mut hicon = HICON(SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_BIG as usize), None).0);
+    if hicon.0.is_null() {
+        hicon = HICON(SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_SMALL as usize), None).0);
     }
+    if hicon.0.is_null() {
+        hicon = HICON(GetClassLongPtrW(hwnd, GCLP_HICON) as *mut std::ffi::c_void);
+    }
+    if hicon.0.is_null() {
+        hicon = HICON(GetClassLongPtrW(hwnd, GCLP_HICONSM) as *mut std::ffi::c_void);
+    }
+    hicon
 }
 
 unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
@@ -2871,7 +2941,7 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
             let launch_cmd = &r.entry.launch_command;
             let parsing_name = get_app_path(launch_cmd);
             
-            let lnk_path = std::path::Path::new(parsing_name);
+            let lnk_path = std::path::Path::new(&parsing_name);
             let resolved_path = if parsing_name.to_lowercase().ends_with(".lnk") {
                 crate::search::resolve_lnk_path(lnk_path)
             } else {
@@ -2882,9 +2952,13 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
                 0 => {
                     // Run as Administrator
                     let run_cmd = if parsing_name.to_lowercase().ends_with(".lnk") {
-                        resolved_path.unwrap_or_else(|| parsing_name.to_string())
+                        resolved_path.unwrap_or_else(|| parsing_name.clone())
                     } else {
-                        format!("shell:AppsFolder\\{}", parsing_name)
+                        if parsing_name.contains('\') {
+                            parsing_name.clone()
+                        } else {
+                            format!("shell:AppsFolder\{}", parsing_name)
+                        }
                     };
                     
                     let run_cmd_wide: Vec<u16> = run_cmd.encode_utf16().chain(std::iter::once(0)).collect();
@@ -2909,10 +2983,10 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
                         if let Some(ref res) = resolved_path {
                             res.clone()
                         } else {
-                            parsing_name.to_string()
+                            parsing_name.clone()
                         }
                     } else {
-                        parsing_name.to_string()
+                        parsing_name.clone()
                     };
                     
                     if std::path::Path::new(&select_path).exists() {
@@ -2929,9 +3003,9 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
                 2 => {
                     // Copy Path
                     let copy_val = if parsing_name.to_lowercase().ends_with(".lnk") {
-                        resolved_path.unwrap_or_else(|| parsing_name.to_string())
+                        resolved_path.unwrap_or_else(|| parsing_name.clone())
                     } else {
-                        parsing_name.to_string()
+                        parsing_name.clone()
                     };
                     
                     copy_to_clipboard(hwnd, &copy_val);
