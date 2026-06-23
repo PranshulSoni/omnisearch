@@ -1117,31 +1117,8 @@ unsafe extern "system" fn wnd_proc(
                         let url = format!("https://www.google.com/search?q={}", encoded);
                         launcher::launch(&url);
                         do_hide(hwnd, s);
-                    } else if let Some(r) = s.results.get(s.selected) {
-                        let cmd = r.entry.launch_command.clone();
-                        let is_action_folder = r.entry.source == "FOLDER" && (
-                            cmd == "bookmarks:" || cmd == "history:" || cmd == "commits:" ||
-                            cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" ||
-                            cmd == "switch:" || cmd == "window:"
-                        );
-                        if is_action_folder {
-                            s.query = cmd;
-                            s.cursor_pos = s.query.len();
-                            s.selected = 0;
-                            s.scroll_offset = 0;
-                            s.text_selected = false;
-                            reset_cursor_blink(hwnd, s);
-                            trigger_search(hwnd, s);
-                        } else {
-                            if let Some(text) = cmd.strip_prefix("copy:") {
-                                copy_to_clipboard(hwnd, text);
-                            } else if let Some(path) = cmd.strip_prefix("copy_image:") {
-                                copy_image_to_clipboard(hwnd, path);
-                            } else {
-                                launcher::launch(&cmd);
-                            }
-                            do_hide(hwnd, s);
-                        }
+                    } else {
+                        execute_selected(hwnd, s);
                     }
                 }
                 VK_DOWN => {
