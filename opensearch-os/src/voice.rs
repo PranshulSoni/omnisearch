@@ -36,6 +36,18 @@ impl HwndPtr {
     }
 }
 
+// ── Simple file logger for background diagnostics ────────────────────────────
+fn log_voice(msg: String) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("voice_log.txt")
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "[Voice] {}", msg);
+    }
+}
+
 // ── Minimal IIterable<HSTRING> + IIterator<HSTRING> impl ─────────────────────
 
 #[implement(IIterable<HSTRING>, IIterator<HSTRING>)]
@@ -98,6 +110,7 @@ fn make_phrase_iterable(phrases: &[&str]) -> IIterable<HSTRING> {
 pub fn start_wake_word_listener(hwnd: HWND) {
     let h = HwndPtr(hwnd.0 as usize);
     std::thread::spawn(move || {
+        log_voice("start_wake_word_listener: spawning listener thread".to_string());
         let _ = unsafe {
             windows::Win32::System::Com::CoInitializeEx(
                 None,
@@ -105,37 +118,52 @@ pub fn start_wake_word_listener(hwnd: HWND) {
             )
         };
         if let Err(e) = run_wake_word_loop(h) {
-            eprintln!("[Voice] Wake word error: {:?}", e);
+            log_voice(format!("run_wake_word_loop error: {:?}", e));
         }
         unsafe { windows::Win32::System::Com::CoUninitialize() };
+        log_voice("start_wake_word_listener: thread exiting".to_string());
     });
 }
 
 fn run_wake_word_loop(h: HwndPtr) -> windows_core::Result<()> {
+    log_voice("run_wake_word_loop: creating SpeechRecognizer".to_string());
     let recognizer = SpeechRecognizer::new()?;
+    log_voice("run_wake_word_loop: SpeechRecognizer created".to_string());
 
-    let phrases = make_phrase_iterable(&["hey search", "open search", "hey open search", "hey speech", "hey launch"]);
+    let phrases = make_phrase_iterable(&["hey search", "open search", "hey open search"]);
     let constraint = SpeechRecognitionListConstraint::CreateWithTag(
         &phrases,
         &HSTRING::from("wakeword"),
     )?;
+    log_voice("run_wake_word_loop: SpeechRecognitionListConstraint created".to_string());
 
     recognizer.Constraints()?.Append(&constraint)?;
+    log_voice("run_wake_word_loop: Constraint appended".to_string());
+
     recognizer.CompileConstraintsAsync()?.get()?;
+    log_voice("run_wake_word_loop: Constraints compiled".to_string());
 
     let session: SpeechContinuousRecognitionSession =
         recognizer.ContinuousRecognitionSession()?;
+    log_voice("run_wake_word_loop: Session retrieved".to_string());
 
     let handler = windows::Foundation::TypedEventHandler::<
         SpeechContinuousRecognitionSession,
         SpeechContinuousRecognitionResultGeneratedEventArgs,
     >::new(move |_session, args| {
+        log_voice("run_wake_word_loop: ResultGenerated callback fired".to_string());
         if let Some(args) = args {
             let result = args.Result()?;
-            if result.Status()? == SpeechRecognitionResultStatus::Success
-                && result.RawConfidence()? > 0.3
-            {
+            let text = result.Text()?.to_string();
+            let status = result.Status()?;
+            let confidence = result.RawConfidence()?;
+            log_voice(format!(
+                "ResultGenerated: text='{}' status={:?} confidence={}",
+                text, status, confidence
+            ));
+            if status == SpeechRecognitionResultStatus::Success && confidence > 0.3 {
                 unsafe {
+                    log_voice("ResultGenerated: wake word detected, posting WM_VOICE_WAKEWORD".to_string());
                     let _ = PostMessageW(h.hwnd(), WM_VOICE_WAKEWORD, WPARAM(0), LPARAM(0));
                 }
             }
@@ -144,7 +172,10 @@ fn run_wake_word_loop(h: HwndPtr) -> windows_core::Result<()> {
     });
 
     session.ResultGenerated(&handler)?;
+    log_voice("run_wake_word_loop: Handler registered".to_string());
+
     session.StartAsync()?.get()?;
+    log_voice("run_wake_word_loop: Session started asynchronously".to_string());
 
     // Keep session alive forever
     loop {
@@ -160,6 +191,7 @@ fn run_wake_word_loop(h: HwndPtr) -> windows_core::Result<()> {
 pub fn start_query_listener(hwnd: HWND) {
     let h = HwndPtr(hwnd.0 as usize);
     std::thread::spawn(move || {
+        log_voice("start_query_listener: spawning query thread".to_string());
         let _ = unsafe {
             windows::Win32::System::Com::CoInitializeEx(
                 None,
@@ -170,28 +202,42 @@ pub fn start_query_listener(hwnd: HWND) {
         unsafe {
             match run_dictation() {
                 Ok(text) if !text.trim().is_empty() => {
+                    log_voice(format!("start_query_listener: dictation success: '{}'", text));
                     let ptr = Box::into_raw(Box::new(text)) as isize;
                     let _ = PostMessageW(h.hwnd(), WM_VOICE_QUERY_READY, WPARAM(1), LPARAM(ptr));
                 }
-                _ => {
+                res => {
+                    log_voice(format!("start_query_listener: dictation failed/empty: {:?}", res));
                     let _ = PostMessageW(h.hwnd(), WM_VOICE_QUERY_READY, WPARAM(0), LPARAM(0));
                 }
             }
             windows::Win32::System::Com::CoUninitialize();
         }
+        log_voice("start_query_listener: thread exiting".to_string());
     });
 }
 
 fn run_dictation() -> windows_core::Result<String> {
+    log_voice("run_dictation: creating SpeechRecognizer".to_string());
     let recognizer = SpeechRecognizer::new()?;
+    log_voice("run_dictation: SpeechRecognizer created".to_string());
+
     let constraint = SpeechRecognitionTopicConstraint::Create(
         SpeechRecognitionScenario::Dictation,
         &HSTRING::from("dictation"),
     )?;
-    recognizer.Constraints()?.Append(&constraint)?;
-    recognizer.CompileConstraintsAsync()?.get()?;
+    log_voice("run_dictation: Topic constraint created".to_string());
 
+    recognizer.Constraints()?.Append(&constraint)?;
+    log_voice("run_dictation: Topic constraint appended".to_string());
+
+    recognizer.CompileConstraintsAsync()?.get()?;
+    log_voice("run_dictation: Constraints compiled".to_string());
+
+    log_voice("run_dictation: starting RecognizeAsync".to_string());
     let result = recognizer.RecognizeAsync()?.get()?;
+    log_voice(format!("run_dictation: RecognizeAsync completed with status: {:?}", result.Status()?));
+
     if result.Status()? == SpeechRecognitionResultStatus::Success {
         Ok(result.Text()?.to_string())
     } else {
