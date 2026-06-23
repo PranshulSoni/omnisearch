@@ -38,18 +38,17 @@ const TIMER_DEBOUNCE: usize = 1;
 const TIMER_ANIM: usize = 2;
 const WM_ICON_LOADED: u32 = WM_USER + 1;
 const WM_ENGINE_READY: u32 = WM_USER + 2;
-
 // ── Animation ─────────────────────────────────────────────────────────────────
 const ANIM_TICK_MS: u32 = 16;
-const APPEAR_FRAMES: f32 = 8.0;  // ~130ms
-const HIDE_FRAMES: f32 = 8.0;    // ~130ms
-const MAX_ALPHA: u8 = 255;       // 100% opacity for solid backdrop
+const APPEAR_FRAMES: f32 = 10.0; // ~160ms (Apple-like liquid animation speed)
+const HIDE_FRAMES: f32 = 10.0;   // ~160ms
+const MAX_ALPHA: u8 = 255;
 const SLIDE_PX: i32 = 14;
 
-// ── Pill Dimensions ───────────────────────────────────────────────────────────
+// ── Genie Morph Dimensions ────────────────────────────────────────────────────
 const PILL_W: i32 = 150;
 const PILL_H: i32 = 12;
-const PILL_Y: i32 = 8;
+const COLOR_KEY: COLORREF = COLORREF(0x00_01_01_01);
 
 // ── Colors (COLORREF = 0x00BBGGRR) ───────────────────────────────────────────
 const BG: COLORREF        = COLORREF(0x00_24_21_21);
@@ -91,7 +90,7 @@ struct State {
 }
 
 #[derive(PartialEq)]
-enum Anim { Pill, Appearing(i32), Visible, Hiding(i32) }
+enum Anim { Hidden, Appearing(i32), Visible, Hiding(i32) }
 
 #[derive(Clone, Copy)]
 struct SendHwnd(HWND);
@@ -154,7 +153,7 @@ unsafe fn run() {
         query: String::new(),
         results: vec![],
         selected: 0,
-        anim: Anim::Pill,
+        anim: Anim::Hidden,
         cx: sw / 2,
         cy: sh / 3,
         font_q: mk_font(-19, 400),
@@ -190,24 +189,19 @@ unsafe fn run() {
     };
     RegisterClassExW(&wc);
 
-    let sw = GetSystemMetrics(SM_CXSCREEN);
-    let pill_x = sw / 2 - PILL_W / 2;
-    let pill_y = PILL_Y;
-
     let hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         PCWSTR(class.as_ptr()),
         PCWSTR::null(),
         WS_POPUP,
-        pill_x, pill_y, PILL_W, PILL_H,
+        -4000, -4000, WIN_W, SEARCH_H,
         HWND(null_mut()), HMENU(null_mut()), hinst,
         Some(Box::into_raw(state) as _),
     ).unwrap();
 
     let _ = unsafe { windows::Win32::System::DataExchange::AddClipboardFormatListener(hwnd) };
 
-    SetLayeredWindowAttributes(hwnd, COLORREF(0), 240, LWA_ALPHA).unwrap();
-    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    SetLayeredWindowAttributes(hwnd, COLOR_KEY, 0, LWA_COLORKEY | LWA_ALPHA).unwrap();
 
     // DWM rounded corners (Windows 11)
     let corner = DWMWCP_ROUND;
@@ -303,7 +297,7 @@ unsafe extern "system" fn wnd_proc(
         WM_HOTKEY if wp.0 as i32 == HOTKEY_ID => {
             let s = &mut *sp;
             match s.anim {
-                Anim::Pill | Anim::Hiding(_) => do_show(hwnd, s),
+                Anim::Hidden | Anim::Hiding(_) => do_show(hwnd, s),
                 _ => start_hide(hwnd, s),
             }
             LRESULT(0)
@@ -312,7 +306,7 @@ unsafe extern "system" fn wnd_proc(
         WM_KILLFOCUS => {
             if !sp.is_null() {
                 let s = &mut *sp;
-                if !matches!(s.anim, Anim::Pill | Anim::Hiding(_)) {
+                if !matches!(s.anim, Anim::Hidden | Anim::Hiding(_)) {
                     start_hide(hwnd, s);
                 }
             }
@@ -633,10 +627,6 @@ unsafe extern "system" fn wnd_proc(
         WM_LBUTTONDOWN => {
             if sp.is_null() { return LRESULT(0); }
             let s = &mut *sp;
-            if s.anim == Anim::Pill {
-                do_show(hwnd, s);
-                return LRESULT(0);
-            }
             let my = ((lp.0 >> 16) & 0xFFFF) as i16 as i32;
             let n = s.results.len().min(VISIBLE_RESULTS);
             for i in 0..n {
@@ -746,6 +736,7 @@ unsafe extern "system" fn wnd_proc(
 }
 
 // ── Window lifecycle ──────────────────────────────────────────────────────────
+// ── Window lifecycle ──────────────────────────────────────────────────────────
 unsafe fn do_show(hwnd: HWND, s: &mut State) {
     s.query.clear();
     s.selected = 0;
@@ -759,11 +750,18 @@ unsafe fn do_show(hwnd: HWND, s: &mut State) {
     
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
+    let sw = GetSystemMetrics(SM_CXSCREEN);
+    let sh = GetSystemMetrics(SM_CYSCREEN);
+    s.cx = sw / 2;
+    s.cy = sh / 3;
     s.last_mouse_x = pt.x;
     s.last_mouse_y = pt.y;
     
     s.anim = Anim::Appearing(0);
     reposition_animated(hwnd, s, 0.0);
+    
+    let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, 255, LWA_COLORKEY | LWA_ALPHA);
+    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     let _ = SetForegroundWindow(hwnd);
     let _ = SetFocus(hwnd);
     let _ = SetTimer(hwnd, TIMER_ANIM, ANIM_TICK_MS, None);
@@ -771,25 +769,10 @@ unsafe fn do_show(hwnd: HWND, s: &mut State) {
 }
 
 unsafe fn do_hide(hwnd: HWND, s: &mut State) {
-    KillTimer(hwnd, TIMER_ANIM);
-    KillTimer(hwnd, TIMER_DEBOUNCE);
-    
-    // Hide the window so Windows naturally restores focus to the previously active window
+    let _ = KillTimer(hwnd, TIMER_ANIM);
+    let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
     let _ = ShowWindow(hwnd, SW_HIDE);
-    
-    s.anim = Anim::Pill;
-    
-    // Reposition to pill size and position at top center
-    let sw = GetSystemMetrics(SM_CXSCREEN);
-    let pill_x = sw / 2 - PILL_W / 2;
-    let pill_y = PILL_Y;
-    let _ = SetWindowPos(hwnd, HWND_TOPMOST, pill_x, pill_y, PILL_W, PILL_H, SWP_NOACTIVATE);
-    
-    // Reset to pill opacity
-    let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 240, LWA_ALPHA);
-    
-    // Show window as pill without focus
-    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    s.anim = Anim::Hidden;
 }
 
 unsafe fn start_hide(hwnd: HWND, s: &mut State) {
@@ -799,26 +782,23 @@ unsafe fn start_hide(hwnd: HWND, s: &mut State) {
 
 unsafe fn reposition_animated(hwnd: HWND, s: &State, t: f32) {
     let sw = GetSystemMetrics(SM_CXSCREEN);
-    let pill_x = sw / 2 - PILL_W / 2;
-    let pill_y = PILL_Y;
-    let pill_w = PILL_W;
-    let pill_h = PILL_H;
-
     let search_w = WIN_W;
     let search_h = s.win_h();
-    let search_x = s.cx - WIN_W / 2;
-    let search_y = s.cy - search_h / 2;
 
-    let x = (pill_x as f32 + (search_x - pill_x) as f32 * t) as i32;
-    let y = (pill_y as f32 + (search_y - pill_y) as f32 * t) as i32;
-    let w = (pill_w as f32 + (search_w - pill_w) as f32 * t) as i32;
-    let h = (pill_h as f32 + (search_h - pill_h) as f32 * t) as i32;
+    let start_x = sw / 2 - search_w / 2;
+    let start_y = 0; // Starts at top center
 
-    let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_NOCOPYBITS);
+    let end_x = s.cx - search_w / 2;
+    let end_y = s.cy - search_h / 2;
+
+    let x = (start_x as f32 + (end_x - start_x) as f32 * t) as i32;
+    let y = (start_y as f32 + (end_y - start_y) as f32 * t) as i32;
+
+    let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, search_w, search_h, SWP_NOACTIVATE | SWP_NOCOPYBITS);
 }
 
 unsafe fn kick_debounce(hwnd: HWND) {
-    KillTimer(hwnd, TIMER_DEBOUNCE);
+    let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
     let _ = SetTimer(hwnd, TIMER_DEBOUNCE, 120, None);
 }
 
@@ -829,12 +809,10 @@ unsafe fn tick(hwnd: HWND, s: &mut State) {
             *f += 1;
             let progress = (*f as f32 / APPEAR_FRAMES).min(1.0);
             let t = ease_out(progress);
-            let alpha = (240.0 + (255.0 - 240.0) * t) as u8;
-            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
             reposition_animated(hwnd, s, t);
             if progress >= 1.0 {
                 s.anim = Anim::Visible;
-                KillTimer(hwnd, TIMER_ANIM);
+                let _ = KillTimer(hwnd, TIMER_ANIM);
                 let _ = SetForegroundWindow(hwnd);
                 let _ = SetFocus(hwnd);
             }
@@ -843,14 +821,12 @@ unsafe fn tick(hwnd: HWND, s: &mut State) {
             *f += 1;
             let progress = (*f as f32 / HIDE_FRAMES).min(1.0);
             let t = 1.0 - ease_in(progress);
-            let alpha = (240.0 + (255.0 - 240.0) * t) as u8;
-            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
             reposition_animated(hwnd, s, t);
             if progress >= 1.0 {
                 do_hide(hwnd, s);
             }
         }
-        _ => { KillTimer(hwnd, TIMER_ANIM); }
+        _ => { let _ = KillTimer(hwnd, TIMER_ANIM); }
     }
     let _ = InvalidateRect(hwnd, None, FALSE);
 }
@@ -1071,6 +1047,15 @@ unsafe fn trigger_icon_loading(hwnd: HWND, s: &mut State) {
     }
 }
 
+fn get_anim_t(anim: &Anim) -> f32 {
+    match anim {
+        Anim::Hidden => 0.0,
+        Anim::Appearing(f) => ease_out(*f as f32 / APPEAR_FRAMES),
+        Anim::Visible => 1.0,
+        Anim::Hiding(f) => 1.0 - ease_in(*f as f32 / HIDE_FRAMES),
+    }
+}
+
 unsafe fn paint(hwnd: HWND, s: &State) {
     let mut ps = PAINTSTRUCT::default();
     let hdc = BeginPaint(hwnd, &mut ps);
@@ -1085,50 +1070,42 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     let bmp = CreateCompatibleBitmap(hdc, win_w, win_h);
     let old = SelectObject(mdc, bmp);
 
-    if win_h < SEARCH_H {
-        // Draw simple rounded notch/pill for Dynamic Island state
-        fill_rounded(mdc, 0, 0, win_w, win_h, 8, COLORREF(0x00_15_12_12));
-        let _ = BitBlt(hdc, 0, 0, win_w, win_h, mdc, 0, 0, SRCCOPY);
-        let _ = SelectObject(mdc, old);
-        let _ = DeleteObject(bmp);
-        let _ = DeleteDC(mdc);
-        EndPaint(hwnd, &ps);
-        return;
-    }
+    // Retrieve animation progress t
+    let t = get_anim_t(&s.anim);
 
-    // Fill background / Draw Glowing Border
-    let has_results = s.results.len().min(MAX_RESULTS) > 0;
-    if has_results {
-        // Draw vibrant gradient border
-        let vertices = [
-            TRIVERTEX {
-                x: 0,
-                y: 0,
-                Red: 0x0000,
-                Green: 0xb400,
-                Blue: 0xdb00,
-                Alpha: 0x0000,
-            },
-            TRIVERTEX {
-                x: win_w,
-                y: win_h,
-                Red: 0x7f00,
-                Green: 0x0000,
-                Blue: 0xff00,
-                Alpha: 0x0000,
-            },
-        ];
-        let g_rect = [GRADIENT_RECT {
-            UpperLeft: 0,
-            LowerRight: 1,
-        }];
-        let _ = GradientFill(mdc, &vertices, g_rect.as_ptr() as *const _, 1, GRADIENT_FILL(0)); // Horizontal gradient
-        fill(mdc, 1, 1, win_w - 2, win_h - 2, BG);
-    } else {
-        // Draw subtle solid gray border
-        fill(mdc, 0, 0, win_w, win_h, CLR_DIV);
-        fill(mdc, 1, 1, win_w - 2, win_h - 2, BG);
-    }
+    // Fill entire compatible bitmap with COLOR_KEY (fully transparent click-through background)
+    fill(mdc, 0, 0, win_w, win_h, COLOR_KEY);
+
+    // Morphing shape dimensions
+    let pill_w = PILL_W as f32;
+    let pill_h = PILL_H as f32;
+
+    let w_t = pill_w + (win_w as f32 - pill_w) * t;
+    let h_t = pill_h + (win_h as f32 - pill_h) * t;
+    let left_t = (win_w as f32 - w_t) / 2.0;
+    let top_t = 0.0;
+
+    // Interpolate corner radius from pill_h/2 (6px) to 12px
+    let r_t = (pill_h / 2.0) + (12.0 - (pill_h / 2.0)) * t;
+
+    // Draw the outer border of the morphing shape
+    let border_color = CLR_DIV;
+    fill_rounded(mdc, left_t as i32, top_t as i32, w_t as i32, h_t as i32, r_t as i32, border_color);
+
+    // Draw the inner background of the morphing shape
+    fill_rounded(mdc, (left_t + 1.0) as i32, (top_t + 1.0) as i32, (w_t - 2.0) as i32, (h_t - 2.0) as i32, (r_t - 1.0).max(0.0) as i32, BG);
+
+    // Set up GDI clipping region to clip all content to the inner morphed shape
+    let rgn = CreateRoundRectRgn(
+        (left_t + 1.0) as i32,
+        (top_t + 1.0) as i32,
+        (left_t + w_t - 1.0) as i32,
+        (top_t + h_t - 1.0) as i32,
+        (r_t - 1.0).max(0.0) as i32,
+        (r_t - 1.0).max(0.0) as i32,
+    );
+    let _ = SelectClipRgn(mdc, rgn);
+    let _ = DeleteObject(rgn);
 
     // ── Search row ────────────────────────────────────────────────────────
     SetBkMode(mdc, TRANSPARENT);
@@ -1258,6 +1235,9 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             fill(mdc, sb_x, thumb_y, sb_w, thumb_h, CLR_GRAY);
         }
     }
+
+    // Reset clipping region
+    let _ = SelectClipRgn(mdc, HRGN(null_mut()));
 
     let _ = BitBlt(hdc, 0, 0, win_w, win_h, mdc, 0, 0, SRCCOPY);
     let _ = SelectObject(mdc, old);
