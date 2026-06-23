@@ -58,19 +58,37 @@ pub fn launch(cmd: &str) {
                 SW_SHOWNORMAL,
             );
         }
-        // Spawn a thread: wait for page to load, then use PowerShell AppActivate to focus
-        // the ChatGPT browser window and send Enter to submit the filled prompt
+        // Spawn a thread: poll for the ChatGPT browser window to appear,
+        // then focus it and send Enter to submit the filled prompt.
         std::thread::spawn(|| {
-            std::thread::sleep(std::time::Duration::from_millis(3000));
             let _ = Command::new("powershell")
                 .args([
                     "-WindowStyle", "Hidden",
                     "-Command",
                     "Add-Type -AssemblyName Microsoft.VisualBasic; \
                      Add-Type -AssemblyName System.Windows.Forms; \
-                     try { [Microsoft.VisualBasic.Interaction]::AppActivate('ChatGPT') } catch {}; \
-                     Start-Sleep -Milliseconds 400; \
-                     [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')",
+                     for ($i = 0; $i -lt 30; $i++) { \
+                         $proc = Get-Process | Where-Object { $_.MainWindowTitle -match 'ChatGPT|OpenAI' } | Select-Object -First 1; \
+                         if ($proc) { \
+                             Start-Sleep -Milliseconds 1500; \
+                             $activated = $false; \
+                             try { \
+                                 [Microsoft.VisualBasic.Interaction]::AppActivate($proc.Id); \
+                                 $activated = $true; \
+                             } catch { \
+                                 try { \
+                                     [Microsoft.VisualBasic.Interaction]::AppActivate($proc.MainWindowTitle); \
+                                     $activated = $true; \
+                                 } catch {} \
+                             } \
+                             if ($activated) { \
+                                 Start-Sleep -Milliseconds 200; \
+                                 [System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); \
+                                 break; \
+                             } \
+                         } \
+                         Start-Sleep -Milliseconds 500; \
+                     }",
                 ])
                 .creation_flags(0x08000000) // CREATE_NO_WINDOW
                 .spawn();
