@@ -1834,7 +1834,16 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let res = &s.results[res_idx];
             let ry = y + SEARCH_H + 1 + i as i32 * RESULT_H;
 
-            if res_idx == s.selected { fill(mdc, x, ry, w, RESULT_H, BG_SEL); }
+            let is_checked = s.selected_clip_ids.contains(&res.entry.id);
+            if res_idx == s.selected {
+                if is_checked {
+                    fill(mdc, x, ry, w, RESULT_H, COLORREF(0x00_4E_45_45));
+                } else {
+                    fill(mdc, x, ry, w, RESULT_H, BG_SEL);
+                }
+            } else if is_checked {
+                fill(mdc, x, ry, w, RESULT_H, COLORREF(0x00_25_2A_2E));
+            }
             if i > 0 { fill(mdc, x + PAD_L, ry, w - PAD_L * 2, 1, CLR_DIV); }
 
             let cy = ry + (RESULT_H - 40) / 2;
@@ -1953,17 +1962,17 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
     // Draw footer instructions if showing clipboard
     if s.query.starts_with("clip:") || s.query.starts_with("clipboard:") {
-        let footer_y = win_h - 24;
-        fill(mdc, 0, footer_y, win_w, 24, COLORREF(0x00_15_15_15));
-        fill(mdc, 0, footer_y, win_w, 1, CLR_DIV);
+        let footer_y = y + h - 24;
+        fill(mdc, x, footer_y, w, 24, COLORREF(0x00_15_15_15));
+        fill(mdc, x, footer_y, w, 1, CLR_DIV);
         
         if s.delete_confirm {
-            badge(mdc, s, "confirm", PAD_L, footer_y + 2);
+            badge(mdc, s, "confirm", x + PAD_L, footer_y + 2);
             SelectObject(mdc, s.font_c);
             SetTextColor(mdc, CLR_GRAY);
             let inst_text = format!(" Press Delete again to delete {} selected items, Escape to cancel", s.selected_clip_ids.len());
             let mut inst_wide: Vec<u16> = inst_text.encode_utf16().collect();
-            let mut r_inst = RECT { left: PAD_L + 68, top: footer_y, right: win_w - PAD_L, bottom: win_h };
+            let mut r_inst = RECT { left: x + PAD_L + 68, top: footer_y, right: x + w - PAD_L, bottom: y + h };
             let _ = DrawTextW(mdc, &mut inst_wide, &mut r_inst, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         } else {
             SelectObject(mdc, s.font_c);
@@ -1979,7 +1988,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 }
             };
             let mut inst_wide: Vec<u16> = inst_text.encode_utf16().collect();
-            let mut r_inst = RECT { left: PAD_L, top: footer_y, right: win_w - PAD_L, bottom: win_h };
+            let mut r_inst = RECT { left: x + PAD_L, top: footer_y, right: x + w - PAD_L, bottom: y + h };
             let _ = DrawTextW(mdc, &mut inst_wide, &mut r_inst, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
     }
