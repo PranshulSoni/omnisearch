@@ -8,6 +8,12 @@ use rusqlite::{Connection, params};
 pub fn start_indexer(db_path: PathBuf) {
     let db_path_clone = db_path.clone();
     thread::spawn(move || {
+        // Initialize COM for WinRT OCR
+        let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_MULTITHREADED
+        ) };
+
         // Set low priority so indexing never slows down foreground apps
         unsafe {
             use windows::Win32::System::Threading::{SetThreadPriority, GetCurrentThread, THREAD_PRIORITY_BELOW_NORMAL};
@@ -258,16 +264,20 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
                 "rb", "php", "lua", "swift", "dart", "vue", "svelte", "csv",
                 "tex", "rst", "adoc", "conf", "env"
             ];
+            let image_extensions = ["png", "jpg", "jpeg", "bmp", "gif"];
+
             let is_text_or_doc = is_file && (text_extensions.contains(&ext.as_str()) || ext == "pdf" || ext == "docx");
-            let needs_fts_check = is_text_or_doc && !fts_paths.contains(&path_str);
+            let is_image = is_file && image_extensions.contains(&ext.as_str());
+            let should_fts = is_text_or_doc || is_image;
+            let needs_fts_check = should_fts && !fts_paths.contains(&path_str);
 
             if db_modified.is_none() || db_modified.unwrap() != modified || needs_fts_check {
                 let mut content = None;
-                if is_file && is_text_or_doc {
-                    let is_pdf = ext == "pdf";
-                    let is_docx = ext == "docx";
-
+                if is_file && should_fts {
                     if is_text_or_doc {
+                        let is_pdf = ext == "pdf";
+                        let is_docx = ext == "docx";
+
                         let extracted = if is_pdf {
                             match pdf_extract::extract_text(path) {
                                 Ok(text) => {
@@ -296,11 +306,15 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
                             read_text_file(path).ok()
                         };
 
-                        content = extracted;
+                        content = Some(extracted.unwrap_or_default());
 
                         if is_pdf || is_docx {
                             thread::sleep(std::time::Duration::from_millis(50));
                         }
+                    } else if is_image {
+                        let extracted = extract_ocr_text(path);
+                        content = Some(extracted.unwrap_or_default());
+                        thread::sleep(std::time::Duration::from_millis(100));
                     }
                 }
 
@@ -412,4 +426,58 @@ fn read_text_file(path: &Path) -> std::io::Result<String> {
     buf.truncate(n);
     
     Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+fn extract_ocr_text(path: &Path) -> Option<String> {
+    use windows::core::HSTRING;
+    use windows::Storage::StorageFile;
+    use windows::Graphics::Imaging::BitmapDecoder;
+    use windows::Media::Ocr::OcrEngine;
+
+    unsafe {
+        let path_str = path.to_str()?;
+        let path_wide = HSTRING::from(path_str);
+        
+        let file = match StorageFile::GetFileFromPathAsync(&path_wide).ok()?.get() {
+            Ok(f) => f,
+            Err(_) => return None,
+        };
+        
+        let stream = match file.OpenAsync(windows::Storage::FileAccessMode::Read).ok()?.get() {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+        
+        let decoder = match BitmapDecoder::CreateAsync(&stream).ok()?.get() {
+            Ok(d) => d,
+            Err(_) => return None,
+        };
+        
+        let software_bitmap = match decoder.GetSoftwareBitmapAsync().ok()?.get() {
+            Ok(b) => b,
+            Err(_) => return None,
+        };
+        
+        let ocr_engine = match OcrEngine::TryCreateFromUserProfileLanguages() {
+            Ok(engine) => engine,
+            Err(_) => return None,
+        };
+        
+        let ocr_result = match ocr_engine.RecognizeAsync(&software_bitmap).ok()?.get() {
+            Ok(res) => res,
+            Err(_) => return None,
+        };
+        
+        let text = match ocr_result.Text() {
+            Ok(t) => t.to_string(),
+            Err(_) => return None,
+        };
+        
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
 }
