@@ -135,5 +135,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("Total FTS matches found: {}", match_count);
 
+    // WalkDir test on Pictures
+    println!("\n--- WalkDir test on Pictures ---");
+    let pictures_path = std::path::PathBuf::from("C:\\Users\\Pranshul Soni\\Pictures");
+    if pictures_path.exists() {
+        let walker = walkdir::WalkDir::new(&pictures_path)
+            .into_iter()
+            .take(20);
+        for (i, entry) in walker.enumerate() {
+            match entry {
+                Ok(e) => {
+                    println!("Entry {}: {:?} (is_file={})", i, e.path(), e.path().is_file());
+                }
+                Err(err) => {
+                    println!("Entry {} error: {:?}", i, err);
+                }
+            }
+        }
+    } else {
+        println!("Pictures path does not exist!");
+    }
+
     Ok(())
 }
