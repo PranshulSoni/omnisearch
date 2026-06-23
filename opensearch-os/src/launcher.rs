@@ -233,6 +233,106 @@ fn handle_action(action: &str) {
             let hosts = r"C:\Windows\System32\drivers\etc\hosts";
             let _ = Command::new("notepad.exe").arg(hosts).spawn();
         }
+        "restart_explorer" => {
+            let _ = Command::new("cmd")
+                .args(["/c", "taskkill /F /IM explorer.exe & timeout /t 2 /nobreak >nul & start explorer.exe"])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "volume_up" => {
+            let _ = Command::new("powershell")
+                .args([
+                    "-WindowStyle", "Hidden",
+                    "-Command",
+                    "$wshShell = New-Object -ComObject WScript.Shell; 1..5 | ForEach-Object { $wshShell.SendKeys([char]175) }",
+                ])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "volume_down" => {
+            let _ = Command::new("powershell")
+                .args([
+                    "-WindowStyle", "Hidden",
+                    "-Command",
+                    "$wshShell = New-Object -ComObject WScript.Shell; 1..5 | ForEach-Object { $wshShell.SendKeys([char]174) }",
+                ])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "toggle_mute" => {
+            let _ = Command::new("powershell")
+                .args([
+                    "-WindowStyle", "Hidden",
+                    "-Command",
+                    "$wshShell = New-Object -ComObject WScript.Shell; $wshShell.SendKeys([char]173)",
+                ])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "toggle_bluetooth" => {
+            let _ = Command::new("powershell")
+                .args([
+                    "-WindowStyle", "Hidden",
+                    "-Command",
+                    "Get-Service bthserv | ForEach-Object { if ($_.Status -eq 'Running') { Stop-Service -Name 'bthserv' -Force } else { Start-Service -Name 'bthserv' } }",
+                ])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "toggle_wifi" => {
+            let _ = Command::new("powershell")
+                .args([
+                    "-WindowStyle", "Hidden",
+                    "-Command",
+                    "$adapter = Get-NetAdapter -Name 'Wi-Fi' -ErrorAction SilentlyContinue; if ($adapter) { if ($adapter.Status -eq 'Up') { Disable-NetAdapter -Name 'Wi-Fi' -Confirm:$false } else { Enable-NetAdapter -Name 'Wi-Fi' -Confirm:$false } } else { Start-Process 'ms-settings:network-wifi' }",
+                ])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "ipconfig" => {
+            let _ = Command::new("cmd")
+                .args(["/c", "start cmd /k ipconfig /all"])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "ip_release" => {
+            let _ = Command::new("cmd")
+                .args(["/c", "ipconfig /release"])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "ip_renew" => {
+            let _ = Command::new("cmd")
+                .args(["/c", "ipconfig /renew"])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "wifi_password" => {
+            let _ = Command::new("powershell")
+                .args([
+                    "-WindowStyle", "Hidden",
+                    "-Command",
+                    "Start-Process cmd -ArgumentList '/k', 'netsh', 'wlan', 'show', 'profiles' -Wait; $profiles = (netsh wlan show profiles) -join \"`n\"; Start-Process cmd -ArgumentList '/k', 'echo', 'Run:', 'netsh wlan show profile name=\"PROFILE\" key=clear'",
+                ])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "kill_process_prompt" => {
+            let _ = Command::new("cmd")
+                .args(["/c", "start cmd /k \"echo Kill a process by name && set /p pname=Process name: && taskkill /F /IM %pname%\""])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "eject_cd" => {
+            let _ = Command::new("powershell")
+                .args([
+                    "-WindowStyle", "Hidden",
+                    "-Command",
+                    "$wmp = New-Object -ComObject WMPlayer.OCX; $wmp.cdromCollection.Item(0).Eject()",
+                ])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
         folder if folder.starts_with("folder:") => {
             let which = &folder[7..];
             let path = match which {
