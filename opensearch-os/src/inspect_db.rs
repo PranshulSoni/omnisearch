@@ -60,13 +60,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     println!("Total images in 'files' table: {}", total_images);
 
-    // Total files in Pictures
-    let total_pictures_files: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM files WHERE path LIKE '%Pictures%'",
-        [],
-        |row| row.get(0),
-    )?;
-    println!("Total files containing 'Pictures' in path: {}", total_pictures_files);
+    // Let's count files by priority folder
+    let count_folder = |conn: &Connection, folder_path: &str| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM files WHERE path LIKE ?",
+            [format!("{}%", folder_path)],
+            |row| row.get(0),
+        ).unwrap_or(0)
+    };
+
+    println!("Total files in Desktop: {}", count_folder(&conn, "C:\\Users\\Pranshul Soni\\Desktop"));
+    println!("Total files in Documents: {}", count_folder(&conn, "C:\\Users\\Pranshul Soni\\Documents"));
+    println!("Total files in Downloads: {}", count_folder(&conn, "C:\\Users\\Pranshul Soni\\Downloads"));
+    println!("Total files in Pictures: {}", count_folder(&conn, "C:\\Users\\Pranshul Soni\\Pictures"));
 
     // 4. Print latest 10 images in Pictures
     println!("\n--- Latest 10 Pictures in DB ---");
