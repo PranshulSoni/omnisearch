@@ -68,24 +68,26 @@ pub fn launch(cmd: &str) {
                     "Add-Type -AssemblyName Microsoft.VisualBasic; \
                      Add-Type -AssemblyName System.Windows.Forms; \
                      for ($i = 0; $i -lt 30; $i++) { \
-                         $proc = Get-Process | Where-Object { $_.MainWindowTitle -match 'ChatGPT|OpenAI' } | Select-Object -First 1; \
+                         $proc = Get-Process | Where-Object { $_.MainWindowTitle -match 'ChatGPT|OpenAI' -and $_.ProcessName -notmatch 'notepad|code' } | Select-Object -First 1; \
                          if ($proc) { \
-                             Start-Sleep -Milliseconds 1500; \
-                             $activated = $false; \
-                             try { \
-                                 [Microsoft.VisualBasic.Interaction]::AppActivate($proc.Id); \
-                                 $activated = $true; \
-                             } catch { \
+                             for ($j = 0; $j -lt 4; $j++) { \
+                                 $activated = $false; \
                                  try { \
-                                     [Microsoft.VisualBasic.Interaction]::AppActivate($proc.MainWindowTitle); \
+                                     [Microsoft.VisualBasic.Interaction]::AppActivate($proc.Id); \
                                      $activated = $true; \
-                                 } catch {} \
+                                 } catch { \
+                                     try { \
+                                         [Microsoft.VisualBasic.Interaction]::AppActivate($proc.MainWindowTitle); \
+                                         $activated = $true; \
+                                     } catch {} \
+                                 } \
+                                 if ($activated) { \
+                                     Start-Sleep -Milliseconds 200; \
+                                     [System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); \
+                                 } \
+                                 Start-Sleep -Milliseconds 1500; \
                              } \
-                             if ($activated) { \
-                                 Start-Sleep -Milliseconds 200; \
-                                 [System.Windows.Forms.SendKeys]::SendWait('{ENTER}'); \
-                                 break; \
-                             } \
+                             break; \
                          } \
                          Start-Sleep -Milliseconds 500; \
                      }",
