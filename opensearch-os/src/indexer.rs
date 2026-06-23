@@ -45,7 +45,7 @@ fn get_priority_folders() -> Vec<PathBuf> {
     unsafe {
         use windows::Win32::UI::Shell::{
             SHGetKnownFolderPath, KF_FLAG_DEFAULT,
-            FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads,
+            FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Pictures,
         };
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::Com::CoTaskMemFree;
@@ -59,7 +59,7 @@ fn get_priority_folders() -> Vec<PathBuf> {
             Some(PathBuf::from(s))
         };
 
-        for guid in [&FOLDERID_Desktop, &FOLDERID_Documents, &FOLDERID_Downloads] {
+        for guid in [&FOLDERID_Desktop, &FOLDERID_Documents, &FOLDERID_Downloads, &FOLDERID_Pictures] {
             if let Some(p) = get_folder(guid) {
                 folders.push(p);
             }
