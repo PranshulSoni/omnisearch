@@ -68,7 +68,7 @@ AI coding agents must follow these rules without exception:
 
 ### Agent Behavior (CRITICAL)
 4. **Never run the launcher in the background**: **Do not** run `cargo run`, `cargo run --release`, or `opensearch-os.exe` as background tasks within the agent's workspace. Running the daemon blocks the workspace environment and causes access denial (`os error 5`) during subsequent builds. Allow the user to launch and run the app manually.
-5. **Keep Code Graph Current**: After modifying code files in this session, run:
-   `python -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))" | Out-File -FilePath graphify.log -Encoding utf8` (or similar redirection) in PowerShell to keep the graphify knowledge graph current, then delete `graphify.log`.
-6. **Commit and Push Changes**: Always perform a git commit and push after each task is successfully completed.
+5. **Do NOT use graphify**: Do not use graphify or run any graphify-watch/rebuild commands. Graphify is completely disabled.
+6. **Commit and Push after every edit**: Perform a git commit and push after every single edit you make to the codebase.
+7. **Kill app before build or edit**: Before building the app or editing it, make sure you kill any running instance of the app (`taskkill /F /IM opensearch-os.exe`).
 
