@@ -347,6 +347,8 @@ unsafe fn run() {
         &backdrop as *const _ as _, 4,
     );
 
+    voice::start_wake_word_listener(hwnd);
+
     // Load the search engine in a background thread so the window appears instantly.
     let hwnd_usize = hwnd.0 as usize;
     let db_path_for_thread = db_path.clone();
