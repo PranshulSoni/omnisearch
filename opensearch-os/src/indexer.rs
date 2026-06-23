@@ -51,6 +51,48 @@ fn is_ignored_file(name: &str, ext: &str) -> bool {
     }
 }
 
+struct PendingUpdate {
+    path: String,
+    name: String,
+    extension: String,
+    modified: i64,
+    content: Option<String>,
+}
+
+fn flush_updates(conn: &mut Connection, updates: &mut Vec<PendingUpdate>) -> anyhow::Result<()> {
+    if updates.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.transaction()?;
+    {
+        let mut insert_file_stmt = tx.prepare(
+            "INSERT OR REPLACE INTO files (path, name, extension, modified) VALUES (?, ?, ?, ?)"
+        )?;
+        let mut delete_fts_stmt = tx.prepare(
+            "DELETE FROM files_fts WHERE path = ?"
+        )?;
+        let mut insert_fts_stmt = tx.prepare(
+            "INSERT INTO files_fts (path, content) VALUES (?, ?)"
+        )?;
+
+        for update in updates.drain(..) {
+            insert_file_stmt.execute(params![
+                update.path,
+                update.name,
+                update.extension,
+                update.modified
+            ])?;
+
+            if let Some(content) = update.content {
+                delete_fts_stmt.execute([&update.path])?;
+                insert_fts_stmt.execute(params![update.path, content])?;
+            }
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
     let mut conn = Connection::open(db_path)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -92,6 +134,7 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
     }
 
     let mut file_count = 0;
+    let mut pending_updates = Vec::new();
 
     for folder in folders {
         if !folder.exists() { continue; }
@@ -148,11 +191,7 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
             let db_modified = db_files.get(&path_str).copied();
 
             if db_modified.is_none() || db_modified.unwrap() != modified {
-                conn.execute(
-                    "INSERT OR REPLACE INTO files (path, name, extension, modified) VALUES (?, ?, ?, ?)",
-                    params![path_str, name, ext, modified],
-                )?;
-
+                let mut content = None;
                 if is_file {
                     // Only perform content extraction for FTS5 on text documents and source code files
                     let text_extensions = [
@@ -192,28 +231,36 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
                             read_text_file(path).ok()
                         };
 
-                        if let Some(content) = extracted {
-                            conn.execute("DELETE FROM files_fts WHERE path = ?", [&path_str])?;
-                            conn.execute(
-                                "INSERT INTO files_fts (path, content) VALUES (?, ?)",
-                                params![path_str, content],
-                            )?;
-                        }
+                        content = extracted;
 
                         if is_pdf || is_docx {
                             thread::sleep(std::time::Duration::from_millis(50));
                         }
                     }
                 }
+
+                pending_updates.push(PendingUpdate {
+                    path: path_str,
+                    name,
+                    extension: ext,
+                    modified,
+                    content,
+                });
+
+                if pending_updates.len() >= 1000 {
+                    flush_updates(&mut conn, &mut pending_updates)?;
+                }
             }
 
-            // Yield CPU cycles after scanning every 100 files
+            // Yield CPU cycles after scanning every 1000 files
             file_count += 1;
-            if file_count % 100 == 0 {
+            if file_count % 1000 == 0 {
                 thread::sleep(std::time::Duration::from_millis(5));
             }
         }
     }
+
+    flush_updates(&mut conn, &mut pending_updates)?;
 
     // Clean up deleted files from the database in a single transaction
     let mut to_delete = Vec::new();
