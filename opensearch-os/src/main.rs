@@ -40,6 +40,7 @@ const WM_ICON_LOADED: u32 = WM_USER + 1;
 const WM_ENGINE_READY: u32 = WM_USER + 2;
 const WM_SEARCH_RESULTS: u32 = WM_USER + 3;
 const WM_START_EDITING: u32 = WM_USER + 4;
+const WM_REFRESH_SEARCH: u32 = WM_USER + 5;
 
 struct SearchRequest {
     query: String,
