@@ -729,6 +729,16 @@ unsafe extern "system" fn wnd_proc(
         WM_CHAR => {
             if sp.is_null() { return LRESULT(0); }
             let s = &mut *sp;
+            if s.voice_listening {
+                s.voice_listening = false;
+                let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
+                let _ = InvalidateRect(hwnd, None, FALSE);
+            }
+            if s.voice_triggered {
+                s.voice_triggered = false;
+                let _ = KillTimer(hwnd, TIMER_VOICE_AUTOEXEC);
+                let _ = InvalidateRect(hwnd, None, FALSE);
+            }
             s.submenu_active = false;
             if let Some(c) = char::from_u32(wp.0 as u32) {
                 if !c.is_control() {
