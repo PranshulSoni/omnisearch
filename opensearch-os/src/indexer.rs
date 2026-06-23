@@ -93,6 +93,8 @@ struct PendingUpdate {
     name: String,
     extension: String,
     modified: i64,
+    size: i64,
+    is_dir: i64,
     content: Option<String>,
 }
 
@@ -103,7 +105,7 @@ fn flush_updates(conn: &mut Connection, updates: &mut Vec<PendingUpdate>) -> any
     let tx = conn.transaction()?;
     {
         let mut insert_file_stmt = tx.prepare(
-            "INSERT OR REPLACE INTO files (path, name, extension, modified) VALUES (?, ?, ?, ?)"
+            "INSERT OR REPLACE INTO files (path, name, extension, modified, size, is_dir) VALUES (?, ?, ?, ?, ?, ?)"
         )?;
         let mut delete_fts_stmt = tx.prepare(
             "DELETE FROM files_fts WHERE path = ?"
@@ -113,16 +115,20 @@ fn flush_updates(conn: &mut Connection, updates: &mut Vec<PendingUpdate>) -> any
         )?;
 
         for update in updates.drain(..) {
+            // Clone path before moving into params! so FTS statements can use it afterwards
+            let path_clone = update.path.clone();
             insert_file_stmt.execute(params![
                 update.path,
                 update.name,
                 update.extension,
-                update.modified
+                update.modified,
+                update.size,
+                update.is_dir
             ])?;
 
             if let Some(content) = update.content {
-                delete_fts_stmt.execute([&update.path])?;
-                insert_fts_stmt.execute(params![update.path, content])?;
+                delete_fts_stmt.execute([&path_clone])?;
+                insert_fts_stmt.execute(params![path_clone, content])?;
             }
         }
     }
@@ -140,10 +146,16 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
             path TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             extension TEXT NOT NULL,
-            modified INTEGER NOT NULL
+            modified INTEGER NOT NULL,
+            size INTEGER NOT NULL DEFAULT 0,
+            is_dir INTEGER NOT NULL DEFAULT 0
         );",
         [],
     )?;
+
+    // Migrate existing databases that may lack the new columns
+    let _ = conn.execute("ALTER TABLE files ADD COLUMN size INTEGER NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE files ADD COLUMN is_dir INTEGER NOT NULL DEFAULT 0", []);
     
     conn.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
@@ -228,20 +240,23 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
 
             seen_paths.insert(path_str.clone());
 
-            let modified = entry.metadata()
-                .ok()
+            let metadata = entry.metadata().ok();
+            let modified = metadata.as_ref()
                 .and_then(|m| m.modified().ok())
                 .unwrap_or(SystemTime::UNIX_EPOCH)
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs() as i64;
+            let file_size = metadata.as_ref().map(|m| m.len() as i64).unwrap_or(0);
 
             let db_modified = db_files.get(&path_str).copied();
             
             let text_extensions = [
-                "txt", "md", "rs", "py", "js", "ts", "json", "html", "css",
+                "txt", "md", "rs", "py", "js", "ts", "jsx", "tsx", "json", "html", "css",
                 "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
-                "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
+                "ps1", "yaml", "yml", "toml", "ini", "sql", "xml",
+                "rb", "php", "lua", "swift", "dart", "vue", "svelte", "csv",
+                "tex", "rst", "adoc", "conf", "env"
             ];
             let is_text_or_doc = is_file && (text_extensions.contains(&ext.as_str()) || ext == "pdf" || ext == "docx");
             let needs_fts_check = is_text_or_doc && !fts_paths.contains(&path_str);
@@ -294,6 +309,8 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
                     name,
                     extension: ext,
                     modified,
+                    size: file_size,
+                    is_dir: if is_dir { 1 } else { 0 },
                     content,
                 });
 

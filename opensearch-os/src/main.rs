@@ -1068,12 +1068,14 @@ unsafe fn trigger_icon_loading(hwnd: HWND, s: &mut State) {
         let (source, key) = (res.entry.source.as_str(), res.entry.launch_command.clone());
         // For FOLDER source: only load icon if it's a real filesystem path (not virtual folders like bookmarks:)
         let is_real_folder = source == "FOLDER" && !key.ends_with(':') && std::path::Path::new(&key).exists();
-        let needs_icon = (source == "app" || source == "RECENT" || source == "FILE" || source == "CODE" || is_real_folder)
+        // For PROJECT source: load folder icon if the launch_command is a real filesystem path
+        let is_real_project = source == "PROJECT" && !key.is_empty() && !key.starts_with("http") && std::path::Path::new(&key).exists();
+        let needs_icon = (source == "app" || source == "RECENT" || source == "FILE" || source == "CODE" || is_real_folder || is_real_project)
             && !s.app_icons.contains_key(&key);
         if needs_icon {
             // Placeholder so we don't spawn multiple threads for same path
             s.app_icons.insert(key.clone(), HICON(std::ptr::null_mut()));
-            let is_recent = source == "RECENT" || source == "FILE" || source == "CODE" || is_real_folder;
+            let is_file_icon = source == "RECENT" || source == "FILE" || source == "CODE" || is_real_folder || is_real_project;
             let hwnd_clone = SendHwnd(hwnd);
             std::thread::spawn(move || {
                 let hwnd_raw = hwnd_clone;
@@ -1082,7 +1084,7 @@ unsafe fn trigger_icon_loading(hwnd: HWND, s: &mut State) {
                         None,
                         windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE
                     );
-                    let hicon = if is_recent {
+                    let hicon = if is_file_icon {
                         get_file_icon(&key)
                     } else {
                         get_app_icon(&key)

@@ -613,7 +613,15 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                 format!("{}m {}s", duration / 60, duration % 60)
             };
 
-            let launch_command = if window_title.contains(":\\") || window_title.contains(":/") || window_title.contains("http://") || window_title.contains("https://") {
+            // Determine launch command: prefer a URL or path extracted from the window title
+            let title_has_url = window_title.contains(":\\")
+                || window_title.contains(":/")
+                || window_title.contains("http://")
+                || window_title.contains("https://");
+            let title_has_meeting = ["meet.google.com", "zoom.us", "teams.microsoft.com",
+                "teams.live.com", "webex.com", "gotomeeting.com"]
+                .iter().any(|d| window_title.to_lowercase().contains(d));
+            let launch_command = if title_has_url || title_has_meeting {
                 extract_path_or_url(&window_title).unwrap_or_else(|| app_name.clone())
             } else {
                 app_name.clone()
@@ -1637,6 +1645,26 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         if q_lower_trimmed.starts_with("code:") {
             let sub_query = q_lower_trimmed.strip_prefix("code:").unwrap().trim();
             return self.search_code_only(sub_query);
+        }
+
+        // ── ChatGPT native search prefix ──────────────────────────────────
+        if q_lower_trimmed.starts_with("chatgpt ") {
+            let prompt = q["chatgpt ".len()..].trim();
+            if !prompt.is_empty() {
+                let encoded = url_encode(prompt);
+                return vec![SearchResult {
+                    entry: CatalogEntry {
+                        id: "chatgpt_search".to_string(),
+                        control_name: format!("ChatGPT: {}", prompt),
+                        breadcrumb_path: "ChatGPT > Ask AI > Opens in default browser".to_string(),
+                        launch_command: format!("https://chatgpt.com/?q={}", encoded),
+                        source: "LIVE".to_string(),
+                        description: format!("Send '{}' to ChatGPT", prompt),
+                        synonyms: "chatgpt ai openai chat gpt ask".to_string(),
+                    },
+                    score: 10.0,
+                }];
+            }
         }
 
         // ── Calculator: inject instantly if query is a math expression ──────
@@ -3214,6 +3242,41 @@ fn format_timestamp_local(timestamp: i64) -> String {
 }
 
 fn extract_path_or_url(text: &str) -> Option<String> {
+    // First check for explicit http:// or https:// links
+    if let Some(idx) = text.find("https://") {
+        let part = &text[idx..];
+        let end = part.find(|c: char| c == ' ' || c == '\t').unwrap_or(part.len());
+        return Some(part[..end].trim_end_matches(|c: char| c == '.' || c == ')' || c == ']').to_string());
+    }
+    if let Some(idx) = text.find("http://") {
+        let part = &text[idx..];
+        let end = part.find(|c: char| c == ' ' || c == '\t').unwrap_or(part.len());
+        return Some(part[..end].trim_end_matches(|c: char| c == '.' || c == ')' || c == ']').to_string());
+    }
+    // Detect well-known meeting/service domains without protocol prefix in window titles
+    let meeting_domains = [
+        "meet.google.com", "zoom.us", "teams.microsoft.com", "teams.live.com",
+        "webex.com", "gotomeeting.com", "bluejeans.com", "whereby.com",
+    ];
+    for domain in &meeting_domains {
+        if let Some(idx) = text.to_lowercase().find(domain) {
+            // Walk backwards to find 'https://' or start of token
+            let start = if idx >= 8 && &text[idx-8..idx] == "https://" {
+                idx - 8
+            } else if idx >= 7 && &text[idx-7..idx] == "http://" {
+                idx - 7
+            } else {
+                // Construct a proper URL
+                let end_of_domain = &text[idx..];
+                let end = end_of_domain.find(|c: char| c == ' ' || c == '\t' || c == '|' || c == '-').unwrap_or(end_of_domain.len());
+                return Some(format!("https://{}", end_of_domain[..end].trim()));
+            };
+            let end_text = &text[start..];
+            let end = end_text.find(|c: char| c == ' ' || c == '\t').unwrap_or(end_text.len());
+            return Some(end_text[..end].trim_end_matches(|c: char| c == '.' || c == ')' || c == ']').to_string());
+        }
+    }
+    // Windows absolute path (e.g. C:\Users\...)
     if let Some(idx) = text.find(":\\") {
         if idx >= 1 {
             let start = idx - 1;
@@ -3227,6 +3290,7 @@ fn extract_path_or_url(text: &str) -> Option<String> {
             return Some(path_part.trim().to_string());
         }
     }
+    // Unix path
     if let Some(idx) = text.find(":/") {
         if idx >= 1 {
             let start = idx - 1;
@@ -3239,20 +3303,6 @@ fn extract_path_or_url(text: &str) -> Option<String> {
             }
             return Some(path_part.trim().to_string());
         }
-    }
-    if let Some(idx) = text.find("http://") {
-        let part = &text[idx..];
-        if let Some(sep_idx) = part.find(' ') {
-            return Some(part[..sep_idx].trim().to_string());
-        }
-        return Some(part.trim().to_string());
-    }
-    if let Some(idx) = text.find("https://") {
-        let part = &text[idx..];
-        if let Some(sep_idx) = part.find(' ') {
-            return Some(part[..sep_idx].trim().to_string());
-        }
-        return Some(part.trim().to_string());
     }
     None
 }
