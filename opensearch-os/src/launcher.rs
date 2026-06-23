@@ -44,7 +44,7 @@ pub fn launch(cmd: &str) {
     }
 
     let cmd_lower = cmd.to_lowercase();
-    if cmd.starts_with("http://") || cmd.starts_with("https://") || cmd_lower.ends_with(".lnk") {
+    if cmd.starts_with("http://") || cmd.starts_with("https://") || cmd_lower.ends_with(".lnk") || std::path::Path::new(cmd).exists() {
         let cmd_wide: Vec<u16> = cmd.encode_utf16().chain(std::iter::once(0)).collect();
         unsafe {
             ShellExecuteW(

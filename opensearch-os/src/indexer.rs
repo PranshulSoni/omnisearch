@@ -133,6 +133,18 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
         }
     }
 
+    // Cache existing FTS5 indexed paths
+    let mut fts_paths = std::collections::HashSet::new();
+    {
+        let mut stmt = conn.prepare("SELECT path FROM files_fts")?;
+        let fts_iter = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for item in fts_iter {
+            if let Ok(p) = item {
+                fts_paths.insert(p);
+            }
+        }
+    }
+
     let mut file_count = 0;
     let mut pending_updates = Vec::new();
 
@@ -189,20 +201,22 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
                 .as_secs() as i64;
 
             let db_modified = db_files.get(&path_str).copied();
+            
+            let text_extensions = [
+                "txt", "md", "rs", "py", "js", "ts", "json", "html", "css",
+                "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
+                "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
+            ];
+            let is_text_or_doc = is_file && (text_extensions.contains(&ext.as_str()) || ext == "pdf" || ext == "docx");
+            let needs_fts_check = is_text_or_doc && !fts_paths.contains(&path_str);
 
-            if db_modified.is_none() || db_modified.unwrap() != modified {
+            if db_modified.is_none() || db_modified.unwrap() != modified || needs_fts_check {
                 let mut content = None;
-                if is_file {
-                    // Only perform content extraction for FTS5 on text documents and source code files
-                    let text_extensions = [
-                        "txt", "md", "rs", "py", "js", "ts", "json", "html", "css",
-                        "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
-                        "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
-                    ];
+                if is_file && is_text_or_doc {
                     let is_pdf = ext == "pdf";
                     let is_docx = ext == "docx";
 
-                    if text_extensions.contains(&ext.as_str()) || is_pdf || is_docx {
+                    if is_text_or_doc {
                         let extracted = if is_pdf {
                             match pdf_extract::extract_text(path) {
                                 Ok(text) => {

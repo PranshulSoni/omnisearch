@@ -188,6 +188,35 @@ impl SearchEngine {
         Ok(engine)
     }
 
+fn get_path_score_modifier(full_path: &str) -> f32 {
+    let path_lower = full_path.to_lowercase();
+    
+    // Penalize ignored/system/hidden folders
+    if path_lower.contains("\\node_modules\\") ||
+       path_lower.contains("\\target\\") ||
+       path_lower.contains("\\.git\\") ||
+       path_lower.contains("\\appdata\\") ||
+       path_lower.contains("\\.cargo\\") ||
+       path_lower.contains("\\.rustup\\") ||
+       path_lower.contains("\\.npm\\") ||
+       path_lower.contains("\\.antigravity") ||
+       path_lower.contains("\\bin\\") ||
+       path_lower.contains("\\obj\\") ||
+       path_lower.contains("\\temp\\") ||
+       path_lower.contains("\\tmp\\") {
+        return -2.0; // Significant penalty
+    }
+
+    // Boost user's active/primary directories
+    if path_lower.contains("\\desktop\\") ||
+       path_lower.contains("\\documents\\") ||
+       path_lower.contains("\\downloads\\") {
+        return 1.5; // Significant boost
+    }
+
+    0.0
+}
+
     fn query_everything(&self, query: &str, only_code: bool, max_results: usize) -> Option<Vec<SearchResult>> {
         use everything_ipc::wm::{EverythingClient, RequestFlags};
         
@@ -219,6 +248,12 @@ impl SearchEngine {
             let size = item.get_size(RequestFlags::Size).unwrap_or(0);
             
             let full_path = std::path::Path::new(&path).join(&filename).to_string_lossy().into_owned();
+            
+            let path_modifier = Self::get_path_score_modifier(&full_path);
+            if path_modifier < -1.0 {
+                continue; // Skip system/hidden/ignored files
+            }
+
             let is_dir = std::path::Path::new(&full_path).is_dir();
             
             let ext = if is_dir {
@@ -256,6 +291,7 @@ impl SearchEngine {
             } else {
                 score = 1.0;
             }
+            score += path_modifier;
             
             let breadcrumb = if source == "FOLDER" {
                 format!("Folder > {}", full_path)
@@ -294,6 +330,8 @@ impl SearchEngine {
         
         Some(results)
     }
+
+
 
     fn search_files_generic(&self, query: &str, only_code: bool, max_results: usize) -> Vec<SearchResult> {
         let mut results = Vec::new();
@@ -347,7 +385,7 @@ impl SearchEngine {
             let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
             params_vec.push(rusqlite::types::Value::Text(name_query));
             if only_code {
-                for ext in code_exts.iter() {
+                for ext in &code_exts {
                     params_vec.push(rusqlite::types::Value::Text(ext.to_string()));
                 }
             }
@@ -367,6 +405,11 @@ impl SearchEngine {
                 for row in rows.filter_map(|r| r.ok()) {
                     let (path, name, ext, _modified) = row;
                     
+                    let path_modifier = Self::get_path_score_modifier(&path);
+                    if path_modifier < -1.0 {
+                        continue; // Skip system/hidden/ignored files
+                    }
+
                     let name_lower = name.to_lowercase();
                     let name_no_ext = if let Some(dot) = name_lower.rfind('.') {
                         &name_lower[..dot]
@@ -388,6 +431,7 @@ impl SearchEngine {
                             score = 0.8 + 0.4 * (matched as f32 / q_words.len() as f32);
                         }
                     }
+                    score += path_modifier;
 
                     if score > 0.0 {
                         let source = if ext == "folder" {
@@ -430,14 +474,14 @@ impl SearchEngine {
         let fts_query_str = if only_code {
             let placeholders: Vec<String> = code_exts.iter().map(|_| "?".to_string()).collect();
             format!(
-                "SELECT f.path, f.name, f.extension, f.modified 
+                "SELECT f.path, f.name, f.extension, f.modified, snippet(files_fts, 1, '', '', '...', 15) 
                  FROM files f 
                  JOIN files_fts fts ON f.path = fts.path 
                  WHERE files_fts MATCH ? AND f.extension IN ({}) LIMIT ?",
                 placeholders.join(",")
             )
         } else {
-            "SELECT f.path, f.name, f.extension, f.modified 
+            "SELECT f.path, f.name, f.extension, f.modified, snippet(files_fts, 1, '', '', '...', 15) 
              FROM files f 
              JOIN files_fts fts ON f.path = fts.path 
              WHERE files_fts MATCH ? LIMIT ?".to_string()
@@ -451,7 +495,7 @@ impl SearchEngine {
         let mut fts_params_vec: Vec<rusqlite::types::Value> = Vec::new();
         fts_params_vec.push(rusqlite::types::Value::Text(clean_fts_query));
         if only_code {
-            for ext in code_exts.iter() {
+            for ext in &code_exts {
                 fts_params_vec.push(rusqlite::types::Value::Text(ext.to_string()));
             }
         }
@@ -464,29 +508,60 @@ impl SearchEngine {
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?, // snippet
             ))
         });
 
         if let Ok(rows) = fts_rows {
             for row in rows.filter_map(|r| r.ok()) {
-                let (path, name, ext, _modified) = row;
+                let (path, name, ext, _modified, snippet_raw) = row;
                 
                 if results.iter().any(|r| r.entry.launch_command == path) {
                     continue;
                 }
 
+                let path_modifier = Self::get_path_score_modifier(&path);
+                if path_modifier < -1.0 {
+                    continue; // Skip system/hidden/ignored files
+                }
+
+                // Clean snippet
+                let snippet = snippet_raw
+                    .replace('\n', " ")
+                    .replace('\r', " ")
+                    .replace('\t', " ")
+                    .split_whitespace()
+                    .collect::<Vec<&str>>()
+                    .join(" ");
+
                 let source = if only_code || code_exts.contains(&ext.as_str()) { "CODE" } else { "FILE" };
+                
+                let mut score = 1.8f32;
+                score += path_modifier;
+
+                let parent_dir = std::path::Path::new(&path)
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+
+                let breadcrumb = if parent_dir.is_empty() {
+                    format!("{} | {}", if source == "CODE" { "Code" } else { "File" }, snippet)
+                } else {
+                    format!("{} > {} | {}", if source == "CODE" { "Code" } else { "File" }, parent_dir, snippet)
+                };
+
                 results.push(SearchResult {
                     entry: CatalogEntry {
                         id: format!("{}.{}", source.to_lowercase(), path),
                         control_name: name.clone(),
-                        breadcrumb_path: format!("{} > {}", if source == "CODE" { "Code" } else { "File" }, path),
+                        breadcrumb_path: breadcrumb,
                         launch_command: path.clone(),
                         source: source.to_string(),
                         description: format!("Local {} file (matches content)", ext.to_uppercase()),
                         synonyms: name.to_lowercase(),
                     },
-                    score: 1.0,
+                    score,
                 });
             }
         }
@@ -1809,18 +1884,10 @@ mod tests {
         let mut engine = SearchEngine::new(&model_path, db_path).expect("Failed to initialize engine");
         
         println!("--- DIAGNOSTIC SEARCH TEST ---");
-        let ev_results = engine.query_everything("resume", false, 10);
-        println!("Everything Client Result: {:?}", ev_results.as_ref().map(|v| v.len()));
-        if let Some(ref list) = ev_results {
-            for (idx, r) in list.iter().enumerate() {
-                println!("  Everything [{}] Name: {}, Desc: {}, Path: {}", idx, r.entry.control_name, r.entry.description, r.entry.launch_command);
-            }
-        }
-        
         let results = engine.search("resume", 10);
         println!("Combined search results for 'resume':");
         for (idx, r) in results.iter().enumerate() {
-            println!("  [{}] ID: {}, Name: {}, Source: {}, Desc: {}, Path: {}", idx, r.entry.id, r.entry.control_name, r.entry.source, r.entry.description, r.entry.launch_command);
+            println!("  [{}] ID: {}, Name: {}, Source: {}, Breadcrumb: {}, Score: {}", idx, r.entry.id, r.entry.control_name, r.entry.source, r.entry.breadcrumb_path, r.score);
         }
     }
 }
