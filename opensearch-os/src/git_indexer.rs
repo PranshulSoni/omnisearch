@@ -57,6 +57,11 @@ fn log_git(msg: &str) {
 
 pub fn start_git_indexer(db_path: PathBuf) {
     thread::spawn(move || {
+        // Set low priority to run strictly in the background without affecting foreground apps
+        unsafe {
+            use windows::Win32::System::Threading::{SetThreadPriority, GetCurrentThread, THREAD_PRIORITY_BELOW_NORMAL};
+            let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        }
         log_git("[start_git_indexer] thread started");
         // Initial delay to let the app start up completely lag-free
         thread::sleep(std::time::Duration::from_secs(2));

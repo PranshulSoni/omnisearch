@@ -1,11 +1,18 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::thread;
+use std::collections::HashMap;
 use walkdir::WalkDir;
 use rusqlite::{Connection, params};
 
 pub fn start_indexer(db_path: PathBuf) {
     thread::spawn(move || {
+        // Set low priority to run strictly in the background without affecting foreground apps
+        unsafe {
+            use windows::Win32::System::Threading::{SetThreadPriority, GetCurrentThread, THREAD_PRIORITY_BELOW_NORMAL};
+            let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        }
+        
         // Initial delay to let the app start up completely lag-free
         thread::sleep(std::time::Duration::from_secs(5));
         loop {
@@ -18,8 +25,34 @@ pub fn start_indexer(db_path: PathBuf) {
     });
 }
 
+fn is_ignored_dir(name: &str) -> bool {
+    let name_lower = name.to_lowercase();
+    if name_lower.starts_with('$') {
+        return true;
+    }
+    match name_lower.as_str() {
+        "node_modules" | "target" | "build" | "dist" | "venv" | ".venv" | ".git" |
+        "appdata" | "obj" | "bin" | "out" | ".next" | ".nuxt" | ".cache" | "cache" |
+        ".cargo" | ".rustup" | ".npm" | ".m2" | ".nuget" | "vendor" |
+        "cmake-build-debug" | "cmake-build-release" | ".yarn" | "__pycache__" |
+        ".idea" | ".vscode" | ".gradle" | ".metadata" | "system volume information" |
+        "temp" | "tmp" => true,
+        _ => false,
+    }
+}
+
+fn is_ignored_file(name: &str, ext: &str) -> bool {
+    if name.starts_with("~$") {
+        return true;
+    }
+    match ext {
+        "tmp" | "temp" | "log" | "pdb" | "obj" | "o" | "class" | "db-wal" | "db-shm" => true,
+        _ => false,
+    }
+}
+
 fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
-    let conn = Connection::open(db_path)?;
+    let mut conn = Connection::open(db_path)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     
@@ -44,28 +77,31 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
     let folders = get_scan_folders();
     let mut seen_paths = std::collections::HashSet::new();
 
+    // Cache existing database file paths and modified times in memory to avoid query overhead
+    let mut db_files = HashMap::new();
+    {
+        let mut stmt = conn.prepare("SELECT path, modified FROM files")?;
+        let db_files_iter = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for item in db_files_iter {
+            if let Ok((p, m)) = item {
+                db_files.insert(p, m);
+            }
+        }
+    }
+
+    let mut file_count = 0;
+
     for folder in folders {
         if !folder.exists() { continue; }
         let walker = WalkDir::new(folder)
             .into_iter()
             .filter_entry(|e| {
-                let name = e.file_name().to_string_lossy().to_lowercase();
-                name != "node_modules" 
-                    && name != "target" 
-                    && name != "build" 
-                    && name != "dist" 
-                    && name != "venv" 
-                    && name != ".venv"
-                    && name != ".git"
-                    && name != "appdata"
-                    && name != "obj"
-                    && name != "bin"
-                    && name != "out"
-                    && name != ".next"
-                    && name != ".nuxt"
-                    && name != ".cache"
-                    && name != "cache"
+                let name = e.file_name().to_string_lossy();
+                !is_ignored_dir(&name)
             });
+            
         for entry in walker.filter_map(|e| e.ok()) {
             let path = entry.path();
             if !path.is_file() { continue; }
@@ -80,13 +116,12 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
                 .unwrap_or("")
                 .to_lowercase();
 
-            let allowed = [
-                "pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt",
-                "txt", "md", "rs", "py", "js", "ts", "json", "html", "css",
-                "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
-                "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
-            ];
-            if !allowed.contains(&ext.as_str()) { continue; }
+            let name = path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            if is_ignored_file(&name, &ext) { continue; }
 
             seen_paths.insert(path_str.clone());
 
@@ -98,23 +133,15 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
                 .unwrap_or_default()
                 .as_secs() as i64;
 
-            let db_modified: Option<i64> = conn.query_row(
-                "SELECT modified FROM files WHERE path = ?",
-                [&path_str],
-                |row| row.get(0),
-            ).ok();
+            let db_modified = db_files.get(&path_str).copied();
 
             if db_modified.is_none() || db_modified.unwrap() != modified {
-                let name = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string();
-
                 conn.execute(
                     "INSERT OR REPLACE INTO files (path, name, extension, modified) VALUES (?, ?, ?, ?)",
                     params![path_str, name, ext, modified],
                 )?;
 
+                // Only perform content extraction for FTS5 on text documents and source code files
                 let text_extensions = [
                     "txt", "md", "rs", "py", "js", "ts", "json", "html", "css",
                     "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
@@ -166,26 +193,29 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
                 }
             }
 
-            // Throttling: sleep 5ms between files to keep CPU at ~0%
-            thread::sleep(std::time::Duration::from_millis(5));
-        }
-    }
-
-    // Clean up deleted files from database
-    let mut stmt = conn.prepare("SELECT path FROM files")?;
-    let db_paths = stmt.query_map([], |row| row.get::<_, String>(0))?;
-    let mut to_delete = Vec::new();
-    for p in db_paths {
-        if let Ok(p_str) = p {
-            if !seen_paths.contains(&p_str) {
-                to_delete.push(p_str);
+            // Yield CPU cycles after scanning every 100 files
+            file_count += 1;
+            if file_count % 100 == 0 {
+                thread::sleep(std::time::Duration::from_millis(5));
             }
         }
     }
 
-    for p_str in to_delete {
-        conn.execute("DELETE FROM files WHERE path = ?", [&p_str])?;
-        conn.execute("DELETE FROM files_fts WHERE path = ?", [&p_str])?;
+    // Clean up deleted files from the database in a single transaction
+    let mut to_delete = Vec::new();
+    for p_str in db_files.keys() {
+        if !seen_paths.contains(p_str) {
+            to_delete.push(p_str);
+        }
+    }
+
+    if !to_delete.is_empty() {
+        let tx = conn.transaction()?;
+        for p_str in to_delete {
+            tx.execute("DELETE FROM files WHERE path = ?", [&p_str])?;
+            tx.execute("DELETE FROM files_fts WHERE path = ?", [&p_str])?;
+        }
+        tx.commit()?;
     }
 
     Ok(())
@@ -193,10 +223,14 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
 
 pub fn get_scan_folders() -> Vec<PathBuf> {
     let mut folders = Vec::new();
+    
+    let system_drive = std::env::var("SystemDrive")
+        .unwrap_or_else(|_| "C:".to_string())
+        .to_uppercase();
+
+    // 1. Get the User Profile folder
     unsafe {
-        use windows::Win32::UI::Shell::{
-            SHGetKnownFolderPath, FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, KF_FLAG_DEFAULT
-        };
+        use windows::Win32::UI::Shell::{SHGetKnownFolderPath, FOLDERID_Profile, KF_FLAG_DEFAULT};
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::Com::CoTaskMemFree;
         
@@ -209,20 +243,34 @@ pub fn get_scan_folders() -> Vec<PathBuf> {
             Some(PathBuf::from(s))
         };
 
-        if let Some(p) = get_folder(&FOLDERID_Desktop) { folders.push(p); }
-        if let Some(p) = get_folder(&FOLDERID_Documents) { folders.push(p); }
-        if let Some(p) = get_folder(&FOLDERID_Downloads) { folders.push(p); }
-    }
-    
-    if folders.is_empty() {
-        if let Ok(profile) = std::env::var("USERPROFILE") {
-            let p = PathBuf::from(profile);
-            folders.push(p.join("Desktop"));
-            folders.push(p.join("Documents"));
-            folders.push(p.join("Downloads"));
+        if let Some(p) = get_folder(&FOLDERID_Profile) {
+            folders.push(p);
         }
     }
-    
+
+    if folders.is_empty() {
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            folders.push(PathBuf::from(profile));
+        }
+    }
+
+    // 2. Discover all other fixed drives and scan them from their roots
+    for c in b'A'..=b'Z' {
+        let drive_letter = c as char;
+        let drive_path_str = format!("{}:\\", drive_letter);
+        if drive_path_str.to_uppercase().starts_with(&system_drive) {
+            continue;
+        }
+        let wide_path: Vec<u16> = drive_path_str.encode_utf16().chain(Some(0)).collect();
+        unsafe {
+            use windows::Win32::Storage::FileSystem::GetDriveTypeW;
+            let drive_type = GetDriveTypeW(windows::core::PCWSTR(wide_path.as_ptr()));
+            if drive_type == 3 { // 3 corresponds to DRIVE_FIXED in Win32
+                folders.push(PathBuf::from(drive_path_str));
+            }
+        }
+    }
+
     folders
 }
 
