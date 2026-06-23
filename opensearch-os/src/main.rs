@@ -1956,7 +1956,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     SelectObject(mdc, s.font_q);
     SetTextColor(mdc, CLR_WHITE);
 
-    if s.query.is_empty() {
+    if s.voice_listening {
+        let mut ph: Vec<u16> = "Listening...".encode_utf16().collect();
+        SetTextColor(mdc, CLR_PH);
+        let _ = DrawTextW(mdc, &mut ph, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        SetTextColor(mdc, CLR_WHITE);
+    } else if s.query.is_empty() {
         let mut ph: Vec<u16> = "Search Windows settings...".encode_utf16().collect();
         SetTextColor(mdc, CLR_PH);
         let _ = DrawTextW(mdc, &mut ph, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -1965,6 +1970,40 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let mut dw_query: Vec<u16> = s.query.encode_utf16().collect();
         let mut text_rect = tr;
         let _ = DrawTextW(mdc, &mut dw_query, &mut text_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    // Draw pulsing red dot when listening
+    if s.voice_listening {
+        let phase = (s.voice_dot_tick as f32 * 0.25).sin().abs();
+        let bg_r = 0x21 as f32;
+        let bg_g = 0x21 as f32;
+        let bg_b = 0x24 as f32;
+        let red_r = 255.0f32;
+        let red_g = 50.0f32;
+        let red_b = 50.0f32;
+        
+        let r_val = (bg_r + (red_r - bg_r) * phase) as u8;
+        let g_val = (bg_g + (red_g - bg_g) * phase) as u8;
+        let b_val = (bg_b + (red_b - bg_b) * phase) as u8;
+        let dot_color = COLORREF(r_val as u32 | ((g_val as u32) << 8) | ((b_val as u32) << 16));
+        
+        fill_circle(mdc, x + w - 32, y + SEARCH_H / 2, 6, dot_color);
+    }
+
+    // Draw "▶ Executing..." hint when auto-executing
+    if s.voice_triggered && !s.voice_listening {
+        SelectObject(mdc, s.font_c);
+        SetTextColor(mdc, COLORREF(0x00_3C_B4_00)); // green
+        let mut hint: Vec<u16> = "▶ Executing...".encode_utf16().collect();
+        let mut hint_tr = RECT {
+            left: x + w - 150,
+            top: y,
+            right: x + w - 24,
+            bottom: y + SEARCH_H,
+        };
+        let _ = DrawTextW(mdc, &mut hint, &mut hint_tr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        SetTextColor(mdc, CLR_WHITE);
+        SelectObject(mdc, s.font_q);
     }
 
     // Draw cursor
