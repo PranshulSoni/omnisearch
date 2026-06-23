@@ -184,6 +184,18 @@ impl SearchEngine {
             [],
         )?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS timeline_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                duration INTEGER NOT NULL,
+                app_name TEXT NOT NULL,
+                window_title TEXT NOT NULL
+            );",
+            [],
+        )?;
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_timeline_timestamp ON timeline_events(timestamp);", []);
+
         let _ = engine.search("settings", 1);
         Ok(engine)
     }
@@ -547,6 +559,83 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         self.db_path.clone()
     }
 
+    pub fn search_timeline(&self, start_time: i64, end_time: i64, keyword: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        let conn = match Connection::open(&self.db_path) {
+            Ok(c) => {
+                let _ = c.busy_timeout(std::time::Duration::from_secs(5));
+                c
+            }
+            Err(_) => return results,
+        };
+
+        let select_query = if keyword.is_empty() {
+            "SELECT timestamp, duration, app_name, window_title FROM timeline_events \
+             WHERE timestamp >= ? AND timestamp <= ? \
+             ORDER BY timestamp DESC LIMIT 50".to_string()
+        } else {
+            "SELECT timestamp, duration, app_name, window_title FROM timeline_events \
+             WHERE timestamp >= ? AND timestamp <= ? AND (window_title LIKE ? OR app_name LIKE ?) \
+             ORDER BY timestamp DESC LIMIT 50".to_string()
+        };
+
+        let mut stmt = match conn.prepare(&select_query) {
+            Ok(s) => s,
+            Err(_) => return results,
+        };
+
+        let rows: Vec<(i64, i64, String, String)> = if keyword.is_empty() {
+            stmt.query_map([start_time, end_time], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        } else {
+            let like_pattern = format!("%{}%", keyword.to_lowercase());
+            stmt.query_map(rusqlite::params![start_time, end_time, like_pattern, like_pattern], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        };
+
+        for (timestamp, duration, app_name, window_title) in rows {
+            let time_str = format_timestamp_local(timestamp);
+            let dur_str = if duration < 60 {
+                format!("{}s", duration)
+            } else {
+                format!("{}m {}s", duration / 60, duration % 60)
+            };
+
+            let launch_command = if window_title.contains(":\\") || window_title.contains(":/") {
+                extract_path_or_url(&window_title).unwrap_or_else(|| app_name.clone())
+            } else {
+                app_name.clone()
+            };
+
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: format!("timeline.{}", timestamp),
+                    control_name: format!("{} ({})", window_title, app_name),
+                    breadcrumb_path: format!("Timeline > {} ({})", time_str, dur_str),
+                    launch_command,
+                    source: "MEMORY".to_string(),
+                    description: format!("Active app: {} at {}", app_name, time_str),
+                    synonyms: format!("{} {} timeline memory", app_name.to_lowercase(), window_title.to_lowercase()),
+                },
+                score: 4.0,
+            });
+        }
+
+        results
+    }
+
     pub fn search_clipboard_history(&self, query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = match Connection::open(&self.db_path) {
@@ -598,10 +687,17 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     .map(|f| f.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "image.bmp".to_string());
 
+                let dims = get_bmp_dimensions(&content);
+                let control_name = if let Some((w, h)) = dims {
+                    format!("[Image] {}x{} (Copied from {})", w, h, source_app)
+                } else {
+                    format!("[Image] Copied from {}", source_app)
+                };
+
                 results.push(SearchResult {
                     entry: CatalogEntry {
                         id: format!("clip.{}", timestamp),
-                        control_name: format!("[Image] Copied from {}", source_app),
+                        control_name,
                         breadcrumb_path: format!("Clipboard > {}", source_app),
                         launch_command: format!("copy_image:{}", content),
                         source: "CLIPBOARD".to_string(),
@@ -1110,6 +1206,12 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
     pub fn search(&mut self, query: &str, top_k: usize) -> Vec<SearchResult> {
         let q = query.trim();
         let q_lower_trimmed = q.to_lowercase();
+        
+        // Intercept temporal context queries (e.g. yesterday before lunch)
+        if let Some((start_time, end_time, clean_q)) = parse_time_range(q) {
+            return self.search_timeline(start_time, end_time, &clean_q);
+        }
+
         if q.is_empty() {
             let mut results = Vec::new();
             results.push(SearchResult {
@@ -2636,4 +2738,143 @@ fn parse_primary(tokens: &[Token], pos: &mut usize) -> Option<f64> {
         }
         _ => None,
     }
+}
+
+fn get_bmp_dimensions(path: &str) -> Option<(i32, i32)> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut header = [0u8; 26];
+    file.read_exact(&mut header).ok()?;
+    if &header[0..2] != b"BM" { return None; }
+    let width = i32::from_le_bytes(header[18..22].try_into().ok()?);
+    let height = i32::from_le_bytes(header[22..26].try_into().ok()?);
+    Some((width.abs(), height.abs()))
+}
+
+fn parse_time_range(query: &str) -> Option<(i64, i64, String)> {
+    let q = query.to_lowercase();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    
+    let local_time = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    
+    let mut time_zone_info = windows::Win32::System::Time::TIME_ZONE_INFORMATION::default();
+    let _ = unsafe { windows::Win32::System::Time::GetTimeZoneInformation(&mut time_zone_info) };
+    let bias_minutes = time_zone_info.Bias;
+    
+    let seconds_since_midnight = (local_time.wHour as i64 * 3600) + (local_time.wMinute as i64 * 60) + local_time.wSecond as i64;
+    let today_start = now - seconds_since_midnight;
+    let yesterday_start = today_start - 86400;
+    
+    let mut start_time = 0;
+    let mut end_time = 0;
+    let mut time_phrase = "";
+    
+    if q.contains("yesterday before lunch") {
+        time_phrase = "yesterday before lunch";
+        start_time = yesterday_start + 8 * 3600;
+        end_time = yesterday_start + 12 * 3600;
+    } else if q.contains("yesterday after lunch") {
+        time_phrase = "yesterday after lunch";
+        start_time = yesterday_start + 13 * 3600;
+        end_time = yesterday_start + 17 * 3600;
+    } else if q.contains("yesterday") {
+        time_phrase = "yesterday";
+        start_time = yesterday_start;
+        end_time = today_start;
+    } else if q.contains("before lunch") {
+        time_phrase = "before lunch";
+        start_time = today_start + 8 * 3600;
+        end_time = today_start + 12 * 3600;
+    } else if q.contains("after lunch") {
+        time_phrase = "after lunch";
+        start_time = today_start + 13 * 3600;
+        end_time = today_start + 17 * 3600;
+    } else if q.contains("before the meeting") {
+        time_phrase = "before the meeting";
+        start_time = today_start + 8 * 3600;
+        end_time = today_start + 10 * 3600;
+    } else if q.contains("this morning") {
+        time_phrase = "this morning";
+        start_time = today_start + 6 * 3600;
+        end_time = today_start + 12 * 3600;
+    } else if q.contains("this afternoon") {
+        time_phrase = "this afternoon";
+        start_time = today_start + 12 * 3600;
+        end_time = today_start + 17 * 3600;
+    } else if q.contains("today") {
+        time_phrase = "today";
+        start_time = today_start;
+        end_time = now;
+    } else if q.contains("last week") {
+        time_phrase = "last week";
+        start_time = today_start - 7 * 86400;
+        end_time = now;
+    } else if q.contains("last month") {
+        time_phrase = "last month";
+        start_time = today_start - 30 * 86400;
+        end_time = now;
+    }
+    
+    if !time_phrase.is_empty() {
+        let clean_phrase = q.replace(time_phrase, "");
+        let mut clean_query = clean_phrase.trim().to_string();
+        
+        for word in &["opened", "edited", "visited", "used", "the", "file", "code", "before", "after", "during", "i", "at"] {
+            if clean_query.starts_with(word) {
+                clean_query = clean_query.strip_prefix(word).unwrap().trim().to_string();
+            }
+            if clean_query.ends_with(word) {
+                clean_query = clean_query.strip_suffix(word).unwrap().trim().to_string();
+            }
+        }
+        
+        return Some((start_time, end_time, clean_query));
+    }
+    
+    None
+}
+
+fn format_timestamp_local(timestamp: i64) -> String {
+    let filetime_val = (timestamp + 11644473600) * 10000000;
+    let ft = windows::Win32::Foundation::FILETIME {
+        dwLowDateTime: (filetime_val & 0xFFFFFFFF) as u32,
+        dwHighDateTime: (filetime_val >> 32) as u32,
+    };
+    let mut local_ft = windows::Win32::Foundation::FILETIME::default();
+    let mut st = windows::Win32::Foundation::SYSTEMTIME::default();
+    unsafe {
+        let _ = windows::Win32::Storage::FileSystem::FileTimeToLocalFileTime(&ft, &mut local_ft);
+        let _ = windows::Win32::System::Time::FileTimeToSystemTime(&local_ft, &mut st);
+    }
+    
+    let am_pm = if st.wHour >= 12 { "PM" } else { "AM" };
+    let hour = if st.wHour == 0 {
+        12
+    } else if st.wHour > 12 {
+        st.wHour - 12
+    } else {
+        st.wHour
+    };
+    
+    format!("{:04}-{:02}-{:02} {:02}:{:02} {}", st.wYear, st.wMonth, st.wDay, hour, st.wMinute, am_pm)
+}
+
+fn extract_path_or_url(text: &str) -> Option<String> {
+    if let Some(idx) = text.find(":\\") {
+        if idx >= 1 {
+            let start = idx - 1;
+            let path_part = &text[start..];
+            if let Some(sep_idx) = path_part.find(" - ") {
+                return Some(path_part[..sep_idx].trim().to_string());
+            }
+            if let Some(sep_idx) = path_part.find(" | ") {
+                return Some(path_part[..sep_idx].trim().to_string());
+            }
+            return Some(path_part.trim().to_string());
+        }
+    }
+    None
 }

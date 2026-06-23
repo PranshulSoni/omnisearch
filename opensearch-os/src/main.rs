@@ -79,11 +79,13 @@ struct State {
     icon_commit: HICON,
     icon_todo: HICON,
     icon_clipboard: HICON,
+    icon_memory: HICON,
     text_selected: bool,
     scroll_offset: usize,
     last_mouse_x: i32,
     last_mouse_y: i32,
     app_icons: std::collections::HashMap<String, HICON>,
+    clipboard_thumbnails: std::cell::RefCell<std::collections::HashMap<String, HBITMAP>>,
 }
 
 #[derive(PartialEq)]
@@ -165,6 +167,7 @@ unsafe fn run() {
     let icon_commit = load_icon_from_dll("shell32.dll", 22, 32);
     let icon_todo = load_icon_from_dll("shell32.dll", 270, 32);
     let icon_clipboard = load_icon_from_dll("shell32.dll", 260, 32);
+    let icon_memory = load_icon_from_dll("shell32.dll", 238, 32);
 
     let state = Box::new(State {
         engine: None,
@@ -187,11 +190,13 @@ unsafe fn run() {
         icon_commit,
         icon_todo,
         icon_clipboard,
+        icon_memory,
         text_selected: false,
         scroll_offset: 0,
         last_mouse_x: -1,
         last_mouse_y: -1,
         app_icons: std::collections::HashMap::new(),
+        clipboard_thumbnails: std::cell::RefCell::new(std::collections::HashMap::new()),
     });
 
     let class: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
@@ -252,6 +257,14 @@ unsafe fn run() {
         browser_indexer::start_browser_indexer(db_path.clone());
         git_indexer::start_git_indexer(db_path.clone());
 
+        let db_path_for_timeline = db_path.clone();
+        let hwnd_for_timeline = SendHwnd(HWND(hwnd_usize as *mut std::ffi::c_void));
+        std::thread::spawn(move || {
+            let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED) };
+            unsafe { start_timeline_tracker(db_path_for_timeline, hwnd_for_timeline); }
+            unsafe { windows::Win32::System::Com::CoUninitialize(); }
+        });
+
         let model_path = std::env::current_exe().ok()
             .and_then(|p| p.parent().map(|d| d.join("model_int8.onnx")));
         let db_path_for_engine = db_path.clone();
@@ -282,7 +295,7 @@ unsafe fn run() {
         }
     });
 
-    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+
 
     // Win+Space is reserved by Windows IME; Alt+Space is the conventional launcher hotkey.
     if RegisterHotKey(hwnd, HOTKEY_ID, MOD_ALT | MOD_NOREPEAT, VK_SPACE.0 as u32).is_err() {
@@ -458,7 +471,7 @@ unsafe extern "system" fn wnd_proc(
             let s = &mut *sp;
             match wp.0 {
                 TIMER_DEBOUNCE => {
-                    KillTimer(hwnd, TIMER_DEBOUNCE);
+                    let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
                     s.results = if let Some(ref mut engine) = s.engine {
                         engine.search(&s.query, MAX_RESULTS)
                     } else {
@@ -467,10 +480,8 @@ unsafe extern "system" fn wnd_proc(
                     trigger_icon_loading(hwnd, s);
                     s.selected = 0;
                     s.scroll_offset = 0;
-                    reposition_animated(hwnd, s, 1.0);
-                    InvalidateRect(hwnd, None, FALSE);
+                    let _ = InvalidateRect(hwnd, None, FALSE);
                 }
-                TIMER_ANIM => tick(hwnd, s),
                 _ => {}
             }
             LRESULT(0)
@@ -581,8 +592,7 @@ unsafe extern "system" fn wnd_proc(
                                 vec![]
                             };
                             trigger_icon_loading(hwnd, s);
-                            reposition_animated(hwnd, s, 1.0);
-                            InvalidateRect(hwnd, None, FALSE);
+                            let _ = InvalidateRect(hwnd, None, FALSE);
                         } else {
                             if let Some(text) = cmd.strip_prefix("copy:") {
                                 copy_to_clipboard(hwnd, text);
@@ -671,8 +681,7 @@ unsafe extern "system" fn wnd_proc(
                             vec![]
                         };
                         trigger_icon_loading(hwnd, s);
-                        reposition_animated(hwnd, s, 1.0);
-                        InvalidateRect(hwnd, None, FALSE);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
                     } else {
                         if let Some(text) = cmd.strip_prefix("copy:") {
                             copy_to_clipboard(hwnd, text);
@@ -731,6 +740,7 @@ unsafe extern "system" fn wnd_proc(
             if !sp.is_null() {
                 let s = Box::from_raw(sp);
                 if !s.icon_clipboard.0.is_null() { let _ = DestroyIcon(s.icon_clipboard); }
+                if !s.icon_memory.0.is_null() { let _ = DestroyIcon(s.icon_memory); }
                 DeleteObject(s.font_q);
                 DeleteObject(s.font_n);
                 DeleteObject(s.font_c);
@@ -748,6 +758,11 @@ unsafe extern "system" fn wnd_proc(
                         let _ = DestroyIcon(hicon);
                     }
                 }
+                for &hbmp in s.clipboard_thumbnails.borrow().values() {
+                    if !hbmp.0.is_null() {
+                        let _ = DeleteObject(hbmp);
+                    }
+                }
             }
             PostQuitMessage(0);
             LRESULT(0)
@@ -758,125 +773,120 @@ unsafe extern "system" fn wnd_proc(
 }
 
 // ── Window lifecycle ──────────────────────────────────────────────────────────
-unsafe fn do_show(hwnd: HWND, s: &mut State) {
-    s.query.clear();
-    s.selected = 0;
-    s.scroll_offset = 0;
-    s.results = if let Some(ref mut engine) = s.engine {
-        engine.search("", MAX_RESULTS)
+unsafe fn animate_window(hwnd: HWND, appearing: bool) {
+    let sp = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
+    if sp.is_null() { return; }
+    let s = &mut *sp;
+
+    static mut IN_ANIMATION: bool = false;
+    if IN_ANIMATION {
+        return;
+    }
+    IN_ANIMATION = true;
+
+    let start_time = std::time::Instant::now();
+    let duration = ANIM_DURATION_SEC;
+    let start_p = if appearing { 0.0 } else { 1.0 };
+
+    if appearing {
+        s.query.clear();
+        s.selected = 0;
+        s.scroll_offset = 0;
+        s.results = if let Some(ref mut engine) = s.engine {
+            engine.search("", MAX_RESULTS)
+        } else {
+            vec![]
+        };
+        trigger_icon_loading(hwnd, s);
+
+        let mut pt = POINT::default();
+        let _ = GetCursorPos(&mut pt);
+        let sw = GetSystemMetrics(SM_CXSCREEN);
+        let sh = GetSystemMetrics(SM_CYSCREEN);
+        s.cx = sw / 2;
+        s.cy = (sh as f32 / 2.5) as i32;
+        s.last_mouse_x = pt.x;
+        s.last_mouse_y = pt.y;
+
+        s.anim = Anim::Appearing { start_time, start_p };
+
+        let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, 0, LWA_COLORKEY | LWA_ALPHA);
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        let _ = SetForegroundWindow(hwnd);
+        let _ = SetFocus(hwnd);
     } else {
-        vec![]
-    };
-    trigger_icon_loading(hwnd, s);
-    
-    let mut pt = POINT::default();
-    let _ = GetCursorPos(&mut pt);
-    let sw = GetSystemMetrics(SM_CXSCREEN);
-    let sh = GetSystemMetrics(SM_CYSCREEN);
-    s.cx = sw / 2;
-    s.cy = (sh as f32 / 2.5) as i32; // Brought down somewhat as requested
-    s.last_mouse_x = pt.x;
-    s.last_mouse_y = pt.y;
-    
-    let current_p = s.current_p();
-    s.anim = Anim::Appearing {
-        start_time: std::time::Instant::now(),
-        start_p: current_p,
-    };
-    
-    let t = ease_out(s.current_p());
-    reposition_animated(hwnd, s, t);
-    
-    let alpha = (t * 255.0) as u8;
-    let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, alpha, LWA_COLORKEY | LWA_ALPHA);
-    
-    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-    let _ = SetForegroundWindow(hwnd);
-    let _ = SetFocus(hwnd);
-    let _ = SetTimer(hwnd, TIMER_ANIM, ANIM_TICK_MS, None);
-    let _ = InvalidateRect(hwnd, None, FALSE);
+        let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
+        s.anim = Anim::Hiding { start_time, start_p };
+    }
+
+    loop {
+        match s.anim {
+            Anim::Appearing { .. } if appearing => {}
+            Anim::Hiding { .. } if !appearing => {}
+            _ => break,
+        }
+
+        let elapsed = start_time.elapsed().as_secs_f32();
+        let p = if appearing {
+            (start_p + elapsed / duration).min(1.0)
+        } else {
+            (start_p - elapsed / duration).max(0.0)
+        };
+
+        let t = ease_out(p);
+        let alpha = (t * 255.0) as u8;
+        let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, alpha, LWA_COLORKEY | LWA_ALPHA);
+        
+        let _ = InvalidateRect(hwnd, None, FALSE);
+        let _ = UpdateWindow(hwnd);
+
+        let is_finished = if appearing { p >= 1.0 } else { p <= 0.0 };
+        if is_finished {
+            if appearing {
+                s.anim = Anim::Visible;
+                let _ = SetForegroundWindow(hwnd);
+                let _ = SetFocus(hwnd);
+            } else {
+                s.anim = Anim::Hidden;
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+            break;
+        }
+
+        let _ = DwmFlush();
+
+        let mut msg = MSG::default();
+        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            let _ = TranslateMessage(&msg);
+            let _ = DispatchMessageW(&msg);
+            if msg.message == WM_QUIT {
+                IN_ANIMATION = false;
+                PostQuitMessage(0);
+                return;
+            }
+        }
+    }
+
+    IN_ANIMATION = false;
 }
 
-unsafe fn do_hide(hwnd: HWND, s: &mut State) {
-    let _ = KillTimer(hwnd, TIMER_ANIM);
-    let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
-    
-    // Hide the window so Windows automatically returns focus to the previously active window
-    let _ = ShowWindow(hwnd, SW_HIDE);
-    s.anim = Anim::Hidden;
-    
-    // Reset alpha back to 255 (pill is fully opaque)
-    let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, 255, LWA_COLORKEY);
-    
-    // Immediately show again with SW_SHOWNOACTIVATE so the resting pill is visible on desktop, without stealing focus
-    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-    
-    // Repaint to draw only the pill
-    let _ = InvalidateRect(hwnd, None, FALSE);
+unsafe fn do_show(hwnd: HWND, s: &mut State) {
+    animate_window(hwnd, true);
 }
 
 unsafe fn start_hide(hwnd: HWND, s: &mut State) {
-    let current_p = s.current_p();
-    s.anim = Anim::Hiding {
-        start_time: std::time::Instant::now(),
-        start_p: current_p,
-    };
-    let _ = SetTimer(hwnd, TIMER_ANIM, ANIM_TICK_MS, None);
+    animate_window(hwnd, false);
 }
 
-unsafe fn reposition_animated(_hwnd: HWND, _s: &State, _t: f32) {
-    // No-op because the window is physically static!
+unsafe fn do_hide(hwnd: HWND, s: &mut State) {
+    let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
+    let _ = ShowWindow(hwnd, SW_HIDE);
+    s.anim = Anim::Hidden;
 }
 
 unsafe fn kick_debounce(hwnd: HWND) {
     let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
     let _ = SetTimer(hwnd, TIMER_DEBOUNCE, 120, None);
-}
-
-// ── Animation tick ────────────────────────────────────────────────────────────
-unsafe fn tick(hwnd: HWND, s: &mut State) {
-    let p = s.current_p();
-    let t = ease_out(p);
-    
-    let alpha = (t * 255.0) as u8;
-    let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, alpha, LWA_COLORKEY | LWA_ALPHA);
-    reposition_animated(hwnd, s, t);
-    
-    // Force immediate paint
-    let _ = InvalidateRect(hwnd, None, FALSE);
-    let _ = UpdateWindow(hwnd);
-    
-    let finished = match s.anim {
-        Anim::Appearing { .. } => {
-            if p >= 1.0 {
-                s.anim = Anim::Visible;
-                let _ = KillTimer(hwnd, TIMER_ANIM);
-                let _ = SetForegroundWindow(hwnd);
-                let _ = SetFocus(hwnd);
-                true
-            } else {
-                false
-            }
-        }
-        Anim::Hiding { .. } => {
-            if p <= 0.0 {
-                let _ = KillTimer(hwnd, TIMER_ANIM);
-                do_hide(hwnd, s);
-                true
-            } else {
-                false
-            }
-        }
-        _ => {
-            let _ = KillTimer(hwnd, TIMER_ANIM);
-            true
-        }
-    };
-    
-    if !finished {
-        // Wait for VSYNC to synchronize compositing
-        let _ = DwmFlush();
-    }
 }
 
 fn ease_out(t: f32) -> f32 { 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(4) }
@@ -1195,32 +1205,56 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let cy = ry + (RESULT_H - 40) / 2;
 
             // Draw Icon
-            let icon_to_draw = if res.entry.source == "app" || res.entry.source == "RECENT" || res.entry.source == "FILE" || res.entry.source == "CODE" {
-                s.app_icons.get(&res.entry.launch_command)
-                    .copied()
-                    .filter(|h| !h.0.is_null())
-                    .unwrap_or(s.icon_control_panel)
-            } else if res.entry.launch_command.starts_with("ms-settings:") {
-                s.icon_settings
-            } else if res.entry.source == "web" || res.entry.source == "HISTORY" {
-                s.icon_web
-            } else if res.entry.source == "BOOKMARK" {
-                s.icon_bookmark
-            } else if res.entry.source == "FOLDER" {
-                s.icon_folder
-            } else if res.entry.source == "COMMIT" {
-                s.icon_commit
-            } else if res.entry.source == "TODO" {
-                s.icon_todo
-            } else if res.entry.source == "CLIPBOARD" {
-                s.icon_clipboard
-            } else {
-                s.icon_control_panel
-            };
+            let mut drawn_custom_thumbnail = false;
+            if res.entry.source == "CLIPBOARD" {
+                if let Some(path) = res.entry.launch_command.strip_prefix("copy_image:") {
+                    let icon_y = ry + (RESULT_H - 32) / 2;
+                    let mut cache = s.clipboard_thumbnails.borrow_mut();
+                    if let Some(&hbitmap) = cache.get(path) {
+                        unsafe { draw_cached_bmp(mdc, x + PAD_L, icon_y, 32, 32, hbitmap); }
+                        drawn_custom_thumbnail = true;
+                    } else {
+                        unsafe {
+                            if let Some(hbitmap) = load_bmp_file(path) {
+                                draw_cached_bmp(mdc, x + PAD_L, icon_y, 32, 32, hbitmap);
+                                cache.insert(path.to_string(), hbitmap);
+                                drawn_custom_thumbnail = true;
+                            }
+                        }
+                    }
+                }
+            }
 
-            if !icon_to_draw.0.is_null() {
-                let icon_y = ry + (RESULT_H - 32) / 2;
-                let _ = DrawIconEx(mdc, x + PAD_L, icon_y, icon_to_draw, 32, 32, 0, HBRUSH(null_mut()), DI_NORMAL);
+            if !drawn_custom_thumbnail {
+                let icon_to_draw = if res.entry.source == "app" || res.entry.source == "RECENT" || res.entry.source == "FILE" || res.entry.source == "CODE" {
+                    s.app_icons.get(&res.entry.launch_command)
+                        .copied()
+                        .filter(|h| !h.0.is_null())
+                        .unwrap_or(s.icon_control_panel)
+                } else if res.entry.launch_command.starts_with("ms-settings:") {
+                    s.icon_settings
+                } else if res.entry.source == "web" || res.entry.source == "HISTORY" {
+                    s.icon_web
+                } else if res.entry.source == "BOOKMARK" {
+                    s.icon_bookmark
+                } else if res.entry.source == "FOLDER" {
+                    s.icon_folder
+                } else if res.entry.source == "COMMIT" {
+                    s.icon_commit
+                } else if res.entry.source == "TODO" {
+                    s.icon_todo
+                } else if res.entry.source == "CLIPBOARD" {
+                    s.icon_clipboard
+                } else if res.entry.source == "MEMORY" {
+                    s.icon_memory
+                } else {
+                    s.icon_control_panel
+                };
+
+                if !icon_to_draw.0.is_null() {
+                    let icon_y = ry + (RESULT_H - 32) / 2;
+                    let _ = unsafe { DrawIconEx(mdc, x + PAD_L, icon_y, icon_to_draw, 32, 32, 0, HBRUSH(null_mut()), DI_NORMAL) };
+                }
             }
 
             // Name
@@ -1361,6 +1395,8 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
         ("COMMIT", COLORREF(0x00_20_7A_D6), CLR_WHITE)
     } else if src_lc == "todo" {
         ("TODO", COLORREF(0x00_2A_3E_E6), CLR_WHITE)
+    } else if src_lc == "memory" {
+        ("MEMORY", COLORREF(0x00_0B_5C_2C), CLR_WHITE)
     } else if src_lc == "browser" {
         ("BROWSER", COLORREF(0x00_2A_8F_C6), CLR_WHITE)
     } else if src_lc.contains("legacy") {
@@ -1756,6 +1792,156 @@ unsafe fn paste_from_clipboard(hwnd: HWND) -> Option<String> {
         let _ = CloseClipboard();
     }
     result
+}
+
+unsafe fn start_timeline_tracker(db_path: std::path::PathBuf, launcher_hwnd: SendHwnd) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW, PROCESS_NAME_WIN32};
+    use windows::Win32::Foundation::{CloseHandle, BOOL, HWND};
+    use windows::core::PWSTR;
+
+    let launcher_hwnd = launcher_hwnd.0;
+
+    let mut last_hwnd = HWND::default();
+    let mut last_title = String::new();
+    let mut last_app = String::new();
+    let mut focus_start = std::time::Instant::now();
+    let mut focus_timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        let fg = GetForegroundWindow();
+        if fg.0.is_null() {
+            continue;
+        }
+
+        // Skip our own launcher window
+        if fg == launcher_hwnd {
+            continue;
+        }
+
+        // Get window title
+        let mut title_buf = [0u16; 512];
+        let len = GetWindowTextW(fg, &mut title_buf);
+        let title = if len > 0 {
+            String::from_utf16_lossy(&title_buf[..len as usize])
+        } else {
+            String::new()
+        };
+
+        // Get app name (process filename)
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(fg, Some(&mut pid));
+        
+        let app = if pid != 0 {
+            if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, BOOL(0), pid) {
+                let mut buffer = [0u16; 512];
+                let mut size = buffer.len() as u32;
+                let res = QueryFullProcessImageNameW(
+                    handle,
+                    PROCESS_NAME_WIN32,
+                    PWSTR(buffer.as_mut_ptr()),
+                    &mut size,
+                );
+                let _ = CloseHandle(handle);
+                if res.is_ok() && size > 0 {
+                    let path_str = String::from_utf16_lossy(&buffer[..size as usize]);
+                    if let Some(filename) = std::path::Path::new(&path_str).file_name() {
+                        filename.to_string_lossy().into_owned()
+                    } else {
+                        path_str
+                    }
+                } else {
+                    "Unknown".to_string()
+                }
+            } else {
+                "Unknown".to_string()
+            }
+        } else {
+            "Unknown".to_string()
+        };
+
+        // Check if focus changed
+        if fg != last_hwnd || title != last_title || app != last_app {
+            let duration = focus_start.elapsed().as_secs() as i64;
+            if (!last_title.is_empty() || !last_app.is_empty()) && duration >= 1 {
+                log_timeline_event(&db_path, focus_timestamp, duration, &last_app, &last_title);
+            }
+            last_hwnd = fg;
+            last_title = title;
+            last_app = app;
+            focus_start = std::time::Instant::now();
+            focus_timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+        }
+    }
+}
+
+fn log_timeline_event(db_path: &std::path::Path, timestamp: i64, duration: i64, app_name: &str, window_title: &str) {
+    if let Ok(conn) = rusqlite::Connection::open(db_path) {
+        let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+        let _ = conn.execute(
+            "INSERT INTO timeline_events (timestamp, duration, app_name, window_title) VALUES (?, ?, ?, ?);",
+            rusqlite::params![timestamp, duration, app_name, window_title],
+        );
+        let _ = conn.execute(
+            "DELETE FROM timeline_events WHERE id NOT IN (SELECT id FROM timeline_events ORDER BY timestamp DESC LIMIT 10000);",
+            [],
+        );
+    }
+}
+
+unsafe fn load_bmp_file(path: &str) -> Option<HBITMAP> {
+    use windows::Win32::UI::WindowsAndMessaging::{LoadImageW, IMAGE_BITMAP, LR_LOADFROMFILE, LR_CREATEDIBSECTION};
+    use windows::core::PCWSTR;
+
+    let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    let h_img = LoadImageW(
+        None,
+        PCWSTR(wide_path.as_ptr()),
+        IMAGE_BITMAP,
+        0,
+        0,
+        LR_LOADFROMFILE | LR_CREATEDIBSECTION,
+    );
+
+    h_img.ok().map(|h| HBITMAP(h.0))
+}
+
+unsafe fn draw_cached_bmp(hdc: HDC, x: i32, y: i32, w: i32, h: i32, hbitmap: HBITMAP) {
+    use windows::Win32::Graphics::Gdi::{CreateCompatibleDC, DeleteDC, SelectObject, StretchBlt, GetObjectW, BITMAP, COLORONCOLOR, SetStretchBltMode};
+
+    let mem_dc = CreateCompatibleDC(hdc);
+    if !mem_dc.is_invalid() {
+        let mut bmp: BITMAP = std::mem::zeroed();
+        let size = std::mem::size_of::<BITMAP>() as i32;
+        if GetObjectW(hbitmap, size, Some(&mut bmp as *mut BITMAP as *mut _)) != 0 {
+            let old_obj = SelectObject(mem_dc, hbitmap);
+            let old_mode = SetStretchBltMode(hdc, COLORONCOLOR);
+            let _ = StretchBlt(
+                hdc,
+                x,
+                y,
+                w,
+                h,
+                mem_dc,
+                0,
+                0,
+                bmp.bmWidth,
+                bmp.bmHeight,
+                SRCCOPY,
+            );
+            let _ = SetStretchBltMode(hdc, STRETCH_BLT_MODE(old_mode));
+            let _ = SelectObject(mem_dc, old_obj);
+        }
+        let _ = DeleteDC(mem_dc);
+    }
 }
 
 #[cfg(test)]
