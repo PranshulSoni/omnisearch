@@ -1279,6 +1279,16 @@ unsafe extern "system" fn wnd_proc(
         WM_LBUTTONDOWN => {
             if sp.is_null() { return LRESULT(0); }
             let s = &mut *sp;
+            if s.voice_listening {
+                s.voice_listening = false;
+                let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
+                let _ = InvalidateRect(hwnd, None, FALSE);
+            }
+            if s.voice_triggered {
+                s.voice_triggered = false;
+                let _ = KillTimer(hwnd, TIMER_VOICE_AUTOEXEC);
+                let _ = InvalidateRect(hwnd, None, FALSE);
+            }
             reset_cursor_blink(hwnd, s);
             let my = ((lp.0 >> 16) & 0xFFFF) as i16 as i32;
             let mx = (lp.0 & 0xFFFF) as i16 as i32;
