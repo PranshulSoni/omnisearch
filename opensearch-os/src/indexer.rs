@@ -6,23 +6,60 @@ use walkdir::WalkDir;
 use rusqlite::{Connection, params};
 
 pub fn start_indexer(db_path: PathBuf) {
+    let db_path_clone = db_path.clone();
     thread::spawn(move || {
-        // Set low priority to run strictly in the background without affecting foreground apps
+        // Set low priority so indexing never slows down foreground apps
         unsafe {
             use windows::Win32::System::Threading::{SetThreadPriority, GetCurrentThread, THREAD_PRIORITY_BELOW_NORMAL};
             let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
         }
-        
-        // Initial delay to let the app start up completely lag-free
-        thread::sleep(std::time::Duration::from_secs(5));
+
+        // ── Phase 1: Priority folders (Desktop, Documents, Downloads) ──────
+        // Indexed within ~1 second of launch so common files are instantly searchable.
+        thread::sleep(std::time::Duration::from_millis(500));
+        if let Err(e) = run_indexer_folders(&db_path_clone, get_priority_folders()) {
+            eprintln!("Priority indexer error: {:?}", e);
+        }
+
+        // ── Phase 2: Full crawl (entire user profile + other drives) ───────
+        // Runs 10s after launch, then every 10 minutes.
+        thread::sleep(std::time::Duration::from_secs(10));
         loop {
-            if let Err(e) = run_indexer(&db_path) {
+            if let Err(e) = run_indexer_folders(&db_path_clone, get_scan_folders()) {
                 eprintln!("Indexer error: {:?}", e);
             }
-            // Re-scan every 10 minutes
             thread::sleep(std::time::Duration::from_secs(600));
         }
     });
+}
+
+/// Returns Desktop, Documents, Downloads — fast to scan, highest value to user.
+fn get_priority_folders() -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    unsafe {
+        use windows::Win32::UI::Shell::{
+            SHGetKnownFolderPath, KF_FLAG_DEFAULT,
+            FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads,
+        };
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::Com::CoTaskMemFree;
+
+        let get_folder = |guid| -> Option<PathBuf> {
+            let result = SHGetKnownFolderPath(guid, KF_FLAG_DEFAULT, HANDLE::default()).ok()?;
+            let mut len = 0;
+            while *result.0.add(len) != 0 { len += 1; }
+            let s = String::from_utf16_lossy(std::slice::from_raw_parts(result.0, len));
+            CoTaskMemFree(Some(result.0 as *const _));
+            Some(PathBuf::from(s))
+        };
+
+        for guid in [&FOLDERID_Desktop, &FOLDERID_Documents, &FOLDERID_Downloads] {
+            if let Some(p) = get_folder(guid) {
+                folders.push(p);
+            }
+        }
+    }
+    folders
 }
 
 fn is_ignored_dir(name: &str) -> bool {
@@ -93,7 +130,7 @@ fn flush_updates(conn: &mut Connection, updates: &mut Vec<PendingUpdate>) -> any
     Ok(())
 }
 
-fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
+fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<()> {
     let mut conn = Connection::open(db_path)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
@@ -116,7 +153,6 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
         [],
     )?;
 
-    let folders = get_scan_folders();
     let mut seen_paths = std::collections::HashSet::new();
 
     // Cache existing database file paths and modified times in memory to avoid query overhead
