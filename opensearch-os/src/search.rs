@@ -3820,7 +3820,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: windows::Win32::Foundation
 
 impl SearchEngine {
     pub fn search_windows(&self, query: &str) -> Vec<SearchResult> {
-        let mut list = Vec::new();
+        let mut list: Vec<WindowInfo> = Vec::new();
         unsafe {
             let _ = windows::Win32::UI::WindowsAndMessaging::EnumWindows(
                 Some(enum_windows_callback),

@@ -1109,7 +1109,8 @@ unsafe extern "system" fn wnd_proc(
                         let cmd = r.entry.launch_command.clone();
                         let is_action_folder = r.entry.source == "FOLDER" && (
                             cmd == "bookmarks:" || cmd == "history:" || cmd == "commits:" ||
-                            cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" || cmd == "switch:" || cmd == "window:\"
+                            cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" ||
+                            cmd == "switch:" || cmd == "window:"
                         );
                         if is_action_folder {
                             s.query = cmd;
@@ -1228,7 +1229,8 @@ unsafe extern "system" fn wnd_proc(
                     let cmd = s.results[actual_idx].entry.launch_command.clone();
                     let is_action_folder = s.results[actual_idx].entry.source == "FOLDER" && (
                         cmd == "bookmarks:" || cmd == "history:" || cmd == "commits:" ||
-                        cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" || cmd == "switch:" || cmd == "window:\"
+                        cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" ||
+                        cmd == "switch:" || cmd == "window:"
                     );
                     if is_action_folder {
                         s.query = cmd;
@@ -1985,6 +1987,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     let icon_y = ry + (RESULT_H - 32) / 2;
                     let _ = unsafe { DrawIconEx(mdc, x + PAD_L, icon_y, icon_to_draw, 32, 32, 0, HBRUSH(null_mut()), DI_NORMAL) };
                 }
+                
                 if is_win_icon && !win_icon_h.0.is_null() {
                     unsafe {
                         let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(win_icon_h);
@@ -2897,8 +2900,8 @@ fn resolve_known_folder_path(path: &str) -> String {
                         windows::Win32::System::Com::CoTaskMemFree(Some(result.0 as *const _));
                         
                         let remaining = &path[close_brace_idx + 1..];
-                        let remaining = remaining.trim_start_matches('\');
-                        return format!("{}\{}", base_path, remaining);
+                        let remaining = remaining.trim_start_matches('\\');
+                        return format!("{}\\{}", base_path, remaining);
                     }
                 }
             }
@@ -2908,7 +2911,7 @@ fn resolve_known_folder_path(path: &str) -> String {
 }
 
 fn get_app_path(launch_command: &str) -> String {
-    let clean = if let Some(rest) = launch_command.strip_prefix("shell:AppsFolder\") {
+    let clean = if let Some(rest) = launch_command.strip_prefix("shell:AppsFolder\\") {
         rest
     } else {
         launch_command
@@ -2922,9 +2925,9 @@ unsafe fn get_window_icon(hwnd: HWND) -> HICON {
     };
     use windows::Win32::Foundation::WPARAM;
     
-    let mut hicon = HICON(SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_BIG as usize), None).0);
+    let mut hicon = HICON(SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_BIG as usize), None).0 as *mut std::ffi::c_void);
     if hicon.0.is_null() {
-        hicon = HICON(SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_SMALL as usize), None).0);
+        hicon = HICON(SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_SMALL as usize), None).0 as *mut std::ffi::c_void);
     }
     if hicon.0.is_null() {
         hicon = HICON(GetClassLongPtrW(hwnd, GCLP_HICON) as *mut std::ffi::c_void);
@@ -2954,10 +2957,10 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
                     let run_cmd = if parsing_name.to_lowercase().ends_with(".lnk") {
                         resolved_path.unwrap_or_else(|| parsing_name.clone())
                     } else {
-                        if parsing_name.contains('\') {
+                        if parsing_name.contains('\\') {
                             parsing_name.clone()
                         } else {
-                            format!("shell:AppsFolder\{}", parsing_name)
+                            format!("shell:AppsFolder\\{}", parsing_name)
                         }
                     };
                     

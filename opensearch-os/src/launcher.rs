@@ -43,8 +43,9 @@ pub fn launch(cmd: &str) {
             let target_hwnd = windows::Win32::Foundation::HWND(hwnd_val as *mut std::ffi::c_void);
             unsafe {
                 use windows::Win32::UI::WindowsAndMessaging::{
-                    ShowWindow, SetForegroundWindow, SetActiveWindow, SW_RESTORE, IsIconic
+                    ShowWindow, SetForegroundWindow, SW_RESTORE, IsIconic
                 };
+                use windows::Win32::UI::Input::KeyboardAndMouse::SetActiveWindow;
                 if IsIconic(target_hwnd).as_bool() {
                     let _ = ShowWindow(target_hwnd, SW_RESTORE);
                 }
