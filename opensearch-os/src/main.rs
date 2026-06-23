@@ -716,14 +716,6 @@ unsafe extern "system" fn wnd_proc(
                                 if let Some(ts_str) = parts.last() {
                                     if let Ok(ts) = ts_str.parse::<i64>() {
                                         let db_path = s.db_path.clone();
-                                        std::thread::spawn(move || {
-                                            if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-                                                let _ = conn.execute(
-                                                    "UPDATE clipboard_history SET pinned = (CASE WHEN pinned = 1 THEN 0 ELSE 1 END) WHERE timestamp = ?;",
-                                                    [ts],
-                                                );
-                                            }
-                                        });
                                         let is_pinned = id.starts_with("clip.pinned.");
                                         let new_id = if is_pinned {
                                             format!("clip.{}", ts)
@@ -732,9 +724,32 @@ unsafe extern "system" fn wnd_proc(
                                         };
                                         if s.selected_clip_ids.contains(&id) {
                                             s.selected_clip_ids.remove(&id);
-                                            s.selected_clip_ids.insert(new_id);
+                                            s.selected_clip_ids.insert(new_id.clone());
                                         }
-                                        trigger_search(hwnd, s);
+                                        if let Some(r_mut) = s.results.get_mut(s.selected) {
+                                            r_mut.entry.id = new_id;
+                                        }
+                                        let _ = InvalidateRect(hwnd, None, FALSE);
+
+                                        let hwnd_notify = SendHwnd(hwnd);
+                                        std::thread::spawn(move || {
+                                            let hwnd_notify = hwnd_notify;
+                                            if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                                                let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                                                let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+                                                if conn.execute(
+                                                    "UPDATE clipboard_history SET pinned = (CASE WHEN pinned = 1 THEN 0 ELSE 1 END) WHERE timestamp = ?;",
+                                                    [ts],
+                                                ).is_ok() {
+                                                    let _ = PostMessageW(
+                                                        hwnd_notify.0,
+                                                        WM_REFRESH_SEARCH,
+                                                        WPARAM(0),
+                                                        LPARAM(0),
+                                                    );
+                                                }
+                                            }
+                                        });
                                     }
                                 }
                              }
