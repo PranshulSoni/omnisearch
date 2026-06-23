@@ -219,12 +219,24 @@ impl SearchEngine {
             let size = item.get_size(RequestFlags::Size).unwrap_or(0);
             
             let full_path = std::path::Path::new(&path).join(&filename).to_string_lossy().into_owned();
-            let ext = std::path::Path::new(&filename)
-                .extension()
-                .map(|e| e.to_string_lossy().to_string().to_lowercase())
-                .unwrap_or_default();
+            let is_dir = std::path::Path::new(&full_path).is_dir();
+            
+            let ext = if is_dir {
+                "folder".to_string()
+            } else {
+                std::path::Path::new(&filename)
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_string().to_lowercase())
+                    .unwrap_or_default()
+            };
                 
-            let source = if only_code || code_exts.contains(&ext.as_str()) { "CODE" } else { "FILE" };
+            let source = if is_dir {
+                "FOLDER"
+            } else if only_code || code_exts.contains(&ext.as_str()) {
+                "CODE"
+            } else {
+                "FILE"
+            };
             
             let q_lower = query.to_lowercase();
             let name_lower = filename.to_lowercase();
@@ -245,24 +257,35 @@ impl SearchEngine {
                 score = 1.0;
             }
             
-            let size_str = if size < 1024 {
-                format!("{} B", size)
-            } else if size < 1024 * 1024 {
-                format!("{:.1} KB", size as f64 / 1024.0)
-            } else if size < 1024 * 1024 * 1024 {
-                format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+            let breadcrumb = if source == "FOLDER" {
+                format!("Folder > {}", full_path)
             } else {
-                format!("{:.1} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
+                format!("{} > {}", if source == "CODE" { "Code" } else { "File" }, full_path)
+            };
+            
+            let description = if source == "FOLDER" {
+                "Local folder".to_string()
+            } else {
+                let size_str = if size < 1024 {
+                    format!("{} B", size)
+                } else if size < 1024 * 1024 {
+                    format!("{:.1} KB", size as f64 / 1024.0)
+                } else if size < 1024 * 1024 * 1024 {
+                    format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+                } else {
+                    format!("{:.1} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
+                };
+                format!("Local {} file ({})", ext.to_uppercase(), size_str)
             };
             
             results.push(SearchResult {
                 entry: CatalogEntry {
                     id: format!("{}.{}", source.to_lowercase(), full_path),
                     control_name: filename.clone(),
-                    breadcrumb_path: format!("{} > {}", if source == "CODE" { "Code" } else { "File" }, full_path),
+                    breadcrumb_path: breadcrumb,
                     launch_command: full_path.clone(),
                     source: source.to_string(),
-                    description: format!("Local {} file ({})", ext.to_uppercase(), size_str),
+                    description,
                     synonyms: filename.to_lowercase(),
                 },
                 score,
@@ -292,12 +315,18 @@ impl SearchEngine {
             "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
         ];
 
-        // 1. Metadata Search (Try Everything first, fallback to SQLite if unavailable)
+        // 1. Metadata Search (Try Everything first, fallback to SQLite if unavailable or empty)
         let mut metadata_results = self.query_everything(query, only_code, max_results);
         
+        let mut got_everything_results = false;
         if let Some(ref mut ev_results) = metadata_results {
-            results.append(ev_results);
-        } else {
+            if !ev_results.is_empty() {
+                results.append(ev_results);
+                got_everything_results = true;
+            }
+        }
+        
+        if !got_everything_results {
             let name_query = format!("%{}%", q_lower);
             
             let query_str = if only_code {
@@ -361,15 +390,32 @@ impl SearchEngine {
                     }
 
                     if score > 0.0 {
-                        let source = if only_code || code_exts.contains(&ext.as_str()) { "CODE" } else { "FILE" };
+                        let source = if ext == "folder" {
+                            "FOLDER"
+                        } else if only_code || code_exts.contains(&ext.as_str()) {
+                            "CODE"
+                        } else {
+                            "FILE"
+                        };
+                        let breadcrumb = if source == "FOLDER" {
+                            format!("Folder > {}", path)
+                        } else {
+                            format!("{} > {}", if source == "CODE" { "Code" } else { "File" }, path)
+                        };
+                        let description = if source == "FOLDER" {
+                            "Local folder".to_string()
+                        } else {
+                            format!("Local {} file", ext.to_uppercase())
+                        };
+
                         results.push(SearchResult {
                             entry: CatalogEntry {
                                 id: format!("{}.{}", source.to_lowercase(), path),
                                 control_name: name.clone(),
-                                breadcrumb_path: format!("{} > {}", if source == "CODE" { "Code" } else { "File" }, path),
+                                breadcrumb_path: breadcrumb,
                                 launch_command: path.clone(),
                                 source: source.to_string(),
-                                description: format!("Local {} file", ext.to_uppercase()),
+                                description,
                                 synonyms: name.to_lowercase(),
                             },
                             score,
@@ -1744,7 +1790,41 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_search_file() {
+        let db_path = match std::env::var("APPDATA") {
+            Ok(d) => {
+                let path = std::path::PathBuf::from(d).join("opensearch-os");
+                path.join("file_index.db")
+            }
+            Err(_) => std::path::PathBuf::from("file_index.db"),
+        };
+        let exe = std::env::current_exe().expect("failed to get current exe");
+        let parent = exe.parent().expect("failed to get parent");
+        let mut model_path = parent.join("model_int8.onnx");
+        if !model_path.exists() {
+            model_path = parent.parent().expect("failed to get grandparent").join("model_int8.onnx");
+        }
+        let mut engine = SearchEngine::new(&model_path, db_path).expect("Failed to initialize engine");
+        
+        println!("--- DIAGNOSTIC SEARCH TEST ---");
+        let ev_results = engine.query_everything("resume", false, 10);
+        println!("Everything Client Result: {:?}", ev_results.as_ref().map(|v| v.len()));
+        if let Some(ref list) = ev_results {
+            for (idx, r) in list.iter().enumerate() {
+                println!("  Everything [{}] Name: {}, Desc: {}, Path: {}", idx, r.entry.control_name, r.entry.description, r.entry.launch_command);
+            }
+        }
+        
+        let results = engine.search("resume", 10);
+        println!("Combined search results for 'resume':");
+        for (idx, r) in results.iter().enumerate() {
+            println!("  [{}] ID: {}, Name: {}, Source: {}, Desc: {}, Path: {}", idx, r.entry.id, r.entry.control_name, r.entry.source, r.entry.description, r.entry.launch_command);
+        }
+    }
 }
+
 
 #[repr(C)]
 struct SYSTEM_POWER_STATUS {
