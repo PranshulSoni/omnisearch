@@ -312,29 +312,9 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
                         let is_docx = ext == "docx";
 
                         let extracted = if is_pdf {
-                            match pdf_extract::extract_text(path) {
-                                Ok(text) => {
-                                    let mut truncated = text;
-                                    truncated.truncate(50 * 1024);
-                                    Some(truncated)
-                                }
-                                Err(e) => {
-                                    eprintln!("PDF extract failed for {:?}: {:?}", path, e);
-                                    None
-                                }
-                            }
+                            safe_extract_pdf_text(path)
                         } else if is_docx {
-                            match docx_lite::extract_text(path) {
-                                Ok(text) => {
-                                    let mut truncated = text;
-                                    truncated.truncate(50 * 1024);
-                                    Some(truncated)
-                                }
-                                Err(e) => {
-                                    eprintln!("DOCX extract failed for {:?}: {:?}", path, e);
-                                    None
-                                }
-                            }
+                            safe_extract_docx_text(path)
                         } else {
                             read_text_file(path).ok()
                         };
@@ -454,6 +434,50 @@ pub fn get_scan_folders() -> Vec<PathBuf> {
     }
 
     folders
+}
+
+fn safe_extract_pdf_text(path: &Path) -> Option<String> {
+    let path_buf = path.to_path_buf();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        pdf_extract::extract_text(&path_buf)
+    }));
+    match result {
+        Ok(Ok(text)) => {
+            let mut truncated = text;
+            truncated.truncate(50 * 1024);
+            Some(truncated)
+        }
+        Ok(Err(e)) => {
+            log_indexer(&format!("PDF extract error for {:?}: {:?}", path, e));
+            None
+        }
+        Err(_) => {
+            log_indexer(&format!("PDF extract PANICKED (caught) for {:?}", path));
+            None
+        }
+    }
+}
+
+fn safe_extract_docx_text(path: &Path) -> Option<String> {
+    let path_buf = path.to_path_buf();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        docx_lite::extract_text(&path_buf)
+    }));
+    match result {
+        Ok(Ok(text)) => {
+            let mut truncated = text;
+            truncated.truncate(50 * 1024);
+            Some(truncated)
+        }
+        Ok(Err(e)) => {
+            log_indexer(&format!("DOCX extract error for {:?}: {:?}", path, e));
+            None
+        }
+        Err(_) => {
+            log_indexer(&format!("DOCX extract PANICKED (caught) for {:?}", path));
+            None
+        }
+    }
 }
 
 fn read_text_file(path: &Path) -> std::io::Result<String> {
