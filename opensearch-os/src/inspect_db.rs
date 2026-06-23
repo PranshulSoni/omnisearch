@@ -60,6 +60,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     println!("Total images in 'files' table: {}", total_images);
 
+    // Print first 20 images in DB
+    println!("\n--- First 20 Images in DB ---");
+    let mut stmt_imgs = conn.prepare(
+        "SELECT path FROM files WHERE extension IN ('png', 'jpg', 'jpeg', 'bmp', 'gif') LIMIT 20"
+    )?;
+    let img_rows = stmt_imgs.query_map([], |row| row.get::<_, String>(0))?;
+    for img in img_rows {
+        if let Ok(path) = img {
+            println!("Image Path: {}", path);
+        }
+    }
+
     // Let's count files by priority folder
     let count_folder = |conn: &Connection, folder_path: &str| -> i64 {
         conn.query_row(
