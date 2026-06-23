@@ -226,7 +226,8 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
     // Boost user's active/primary directories
     if path_lower.contains("\\desktop\\") ||
        path_lower.contains("\\documents\\") ||
-       path_lower.contains("\\downloads\\") {
+       path_lower.contains("\\downloads\\") ||
+       path_lower.contains("\\pictures\\") {
         return 1.5;
     }
 
@@ -358,7 +359,71 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
 
         let q_lower = query.to_lowercase();
         let q_words: Vec<&str> = q_lower.split_whitespace().collect();
-        if q_words.is_empty() { return Vec::new(); }
+
+        // ── Empty query: show most recently modified files from DB ──────────
+        if q_words.is_empty() {
+            let image_exts = ["png", "jpg", "jpeg", "gif", "bmp", "webp"];
+            let code_exts_local = [
+                "rs", "py", "js", "ts", "json", "html", "css",
+                "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
+                "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
+            ];
+            let mut results = Vec::new();
+            // Pull recent files sorted by modification time descending
+            let query_str = if only_code {
+                let placeholders: Vec<String> = code_exts_local.iter().map(|_| "?".to_string()).collect();
+                format!(
+                    "SELECT path, name, extension, modified FROM files WHERE is_dir=0 AND extension IN ({}) ORDER BY modified DESC LIMIT ?",
+                    placeholders.join(",")
+                )
+            } else {
+                "SELECT path, name, extension, modified FROM files WHERE is_dir=0 ORDER BY modified DESC LIMIT ?".to_string()
+            };
+            if let Ok(mut stmt) = conn.prepare(&query_str) {
+                let mut params_vec: Vec<rusqlite::types::Value> = vec![];
+                if only_code {
+                    for ext in &code_exts_local { params_vec.push(rusqlite::types::Value::Text(ext.to_string())); }
+                }
+                params_vec.push(rusqlite::types::Value::Integer(max_results as i64));
+                let params_ref = rusqlite::params_from_iter(params_vec.iter());
+                if let Ok(rows) = stmt.query_map(params_ref, |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                }) {
+                    for row in rows.filter_map(|r| r.ok()) {
+                        let (path, name, ext, _modified) = row;
+                        let path_modifier = Self::get_path_score_modifier(&path);
+                        if path_modifier < -1.0 { continue; }
+                        // Score: recent + boosted path + image bonus
+                        let image_bonus = if image_exts.contains(&ext.as_str()) { 0.5 } else { 0.0 };
+                        let recency_score = 1.0 + path_modifier + image_bonus;
+                        let source = if only_code || code_exts_local.contains(&ext.as_str()) { "CODE" }
+                            else if image_exts.contains(&ext.as_str()) { "FILE" }
+                            else { "FILE" };
+                        let breadcrumb = format!("{} > {}", if source == "CODE" { "Code" } else { "File" }, path);
+                        let description = format!("Local {} file", ext.to_uppercase());
+                        results.push(SearchResult {
+                            entry: CatalogEntry {
+                                id: format!("{}.{}", source.to_lowercase(), path),
+                                control_name: name.clone(),
+                                breadcrumb_path: breadcrumb,
+                                launch_command: path,
+                                source: source.to_string(),
+                                description,
+                                synonyms: name.to_lowercase(),
+                            },
+                            score: recency_score,
+                        });
+                    }
+                }
+            }
+            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            return results;
+        }
 
         let code_exts = [
             "rs", "py", "js", "ts", "json", "html", "css",
