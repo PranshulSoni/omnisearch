@@ -158,15 +158,17 @@ impl SearchEngine {
 
         let conn = Connection::open(&db_path)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        // Add is_image column if it doesn't exist
+        // Add columns if they don't exist
         let _ = conn.execute("ALTER TABLE clipboard_history ADD COLUMN is_image INTEGER DEFAULT 0;", []);
+        let _ = conn.execute("ALTER TABLE clipboard_history ADD COLUMN pinned INTEGER DEFAULT 0;", []);
         conn.execute(
             "CREATE TABLE IF NOT EXISTS clipboard_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 content TEXT UNIQUE,
                 timestamp INTEGER NOT NULL,
                 source_app TEXT NOT NULL,
-                is_image INTEGER DEFAULT 0
+                is_image INTEGER DEFAULT 0,
+                pinned INTEGER DEFAULT 0
             );",
             [],
         )?;
@@ -959,9 +961,9 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         let q_lower = query.to_lowercase();
         
         let select_query = if q_lower.is_empty() {
-            "SELECT content, source_app, timestamp, is_image FROM clipboard_history ORDER BY timestamp DESC LIMIT 50".to_string()
+            "SELECT content, source_app, timestamp, is_image, pinned FROM clipboard_history ORDER BY pinned DESC, timestamp DESC LIMIT 50".to_string()
         } else {
-            "SELECT content, source_app, timestamp, is_image FROM clipboard_history WHERE content LIKE ? OR source_app LIKE ? ORDER BY timestamp DESC LIMIT 50".to_string()
+            "SELECT content, source_app, timestamp, is_image, pinned FROM clipboard_history WHERE content LIKE ? OR source_app LIKE ? ORDER BY pinned DESC, timestamp DESC LIMIT 50".to_string()
         };
 
         let mut stmt = match conn.prepare(&select_query) {
@@ -969,13 +971,14 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             Err(_) => return results,
         };
 
-        let rows: Vec<(String, String, i64, i32)> = if q_lower.is_empty() {
+        let rows: Vec<(String, String, i64, i32, i32)> = if q_lower.is_empty() {
             stmt.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
                     row.get::<_, i32>(3)?,
+                    row.get::<_, i32>(4)?,
                 ))
             }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default()
         } else {
@@ -986,15 +989,22 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
                     row.get::<_, i32>(3)?,
+                    row.get::<_, i32>(4)?,
                 ))
             }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default()
         };
 
-        for (content, source_app, timestamp, is_image) in rows {
+        for (content, source_app, timestamp, is_image, pinned) in rows {
             let display_app = std::path::Path::new(&source_app)
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| source_app.clone());
+
+            let id = if pinned == 1 {
+                format!("clip.pinned.{}", timestamp)
+            } else {
+                format!("clip.{}", timestamp)
+            };
 
             if is_image == 1 {
                 let filename = std::path::Path::new(&content)
@@ -1011,7 +1021,7 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
 
                 results.push(SearchResult {
                     entry: CatalogEntry {
-                        id: format!("clip.{}", timestamp),
+                        id,
                         control_name,
                         breadcrumb_path: format!("Clipboard > {}", display_app),
                         launch_command: format!("copy_image:{}", content),
@@ -1037,7 +1047,7 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
 
                 results.push(SearchResult {
                     entry: CatalogEntry {
-                        id: format!("clip.{}", timestamp),
+                        id,
                         control_name: display_name,
                         breadcrumb_path: format!("Clipboard > {}", display_app),
                         launch_command: format!("copy:{}", content),
