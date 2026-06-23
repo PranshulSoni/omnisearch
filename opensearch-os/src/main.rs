@@ -461,6 +461,14 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
 
+        WM_REFRESH_SEARCH => {
+            if !sp.is_null() {
+                let s = unsafe { &mut *sp };
+                unsafe { trigger_search(hwnd, s); }
+            }
+            LRESULT(0)
+        }
+
         WM_KILLFOCUS => {
             if !sp.is_null() {
                 let s = &mut *sp;
