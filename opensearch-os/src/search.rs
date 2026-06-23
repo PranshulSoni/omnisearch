@@ -251,7 +251,13 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             let path = item.get_string(RequestFlags::Path).unwrap_or_else(|| "Unknown".to_string());
             let size = item.get_size(RequestFlags::Size).unwrap_or(0);
             
-            let full_path = std::path::Path::new(&path).join(&filename).to_string_lossy().into_owned();
+            // Fix: Path::new("C:").join("file") gives "C:file" not "C:\file".
+            // Always ensure a backslash separator between the parent path and filename.
+            let full_path = if path.ends_with('\\') || path.ends_with('/') {
+                format!("{}{}", path, filename)
+            } else {
+                format!("{}\\{}", path, filename)
+            };
             
             let path_modifier = Self::get_path_score_modifier(&full_path);
             if path_modifier < -1.0 {
@@ -279,22 +285,17 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             
             let q_lower = query.to_lowercase();
             let name_lower = filename.to_lowercase();
-            let name_no_ext = if let Some(dot) = name_lower.rfind('.') {
-                &name_lower[..dot]
-            } else {
-                &name_lower
-            };
+            let name_no_ext = if let Some(dot) = name_lower.rfind('.') { &name_lower[..dot] } else { &name_lower };
             
-            let mut score = 0.0f32;
-            if name_lower == q_lower || name_no_ext == q_lower {
-                score = 2.5;
+            let mut score = if name_lower == q_lower || name_no_ext == q_lower {
+                3.0  // exact match
             } else if name_lower.starts_with(&q_lower) || name_no_ext.starts_with(&q_lower) {
-                score = 2.0;
+                2.5  // prefix match
             } else if name_lower.contains(&q_lower) {
-                score = 1.5;
+                1.8  // substring match
             } else {
-                score = 1.0;
-            }
+                1.0  // fallback (Everything already knows it's relevant)
+            };
             score += path_modifier;
             
             let breadcrumb = if source == "FOLDER" {
