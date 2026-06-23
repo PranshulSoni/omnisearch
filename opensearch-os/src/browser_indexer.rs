@@ -18,6 +18,7 @@ pub fn start_browser_indexer(db_path: PathBuf) {
 
 fn run_browser_indexer(db_path: &Path) -> anyhow::Result<()> {
     let conn = Connection::open(db_path)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
 
     conn.execute(

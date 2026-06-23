@@ -20,6 +20,7 @@ pub fn start_indexer(db_path: PathBuf) {
 
 fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
     let conn = Connection::open(db_path)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     
     conn.execute(
@@ -45,7 +46,27 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
 
     for folder in folders {
         if !folder.exists() { continue; }
-        for entry in WalkDir::new(folder).into_iter().filter_map(|e| e.ok()) {
+        let walker = WalkDir::new(folder)
+            .into_iter()
+            .filter_entry(|e| {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                name != "node_modules" 
+                    && name != "target" 
+                    && name != "build" 
+                    && name != "dist" 
+                    && name != "venv" 
+                    && name != ".venv"
+                    && name != ".git"
+                    && name != "appdata"
+                    && name != "obj"
+                    && name != "bin"
+                    && name != "out"
+                    && name != ".next"
+                    && name != ".nuxt"
+                    && name != ".cache"
+                    && name != "cache"
+            });
+        for entry in walker.filter_map(|e| e.ok()) {
             let path = entry.path();
             if !path.is_file() { continue; }
             
@@ -61,7 +82,9 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
 
             let allowed = [
                 "pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt",
-                "txt", "md", "rs", "py", "js", "ts", "json", "html", "css"
+                "txt", "md", "rs", "py", "js", "ts", "json", "html", "css",
+                "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
+                "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
             ];
             if !allowed.contains(&ext.as_str()) { continue; }
 
@@ -92,14 +115,53 @@ fn run_indexer(db_path: &Path) -> anyhow::Result<()> {
                     params![path_str, name, ext, modified],
                 )?;
 
-                let text_extensions = ["txt", "md", "rs", "py", "js", "ts", "json", "html", "css"];
-                if text_extensions.contains(&ext.as_str()) {
-                    if let Ok(content) = read_text_file(path) {
+                let text_extensions = [
+                    "txt", "md", "rs", "py", "js", "ts", "json", "html", "css",
+                    "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
+                    "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
+                ];
+                let is_pdf = ext == "pdf";
+                let is_docx = ext == "docx";
+
+                if text_extensions.contains(&ext.as_str()) || is_pdf || is_docx {
+                    let extracted = if is_pdf {
+                        match pdf_extract::extract_text(path) {
+                            Ok(text) => {
+                                let mut truncated = text;
+                                truncated.truncate(50 * 1024);
+                                Some(truncated)
+                            }
+                            Err(e) => {
+                                eprintln!("PDF extract failed for {:?}: {:?}", path, e);
+                                None
+                            }
+                        }
+                    } else if is_docx {
+                        match docx_lite::extract_text(path) {
+                            Ok(text) => {
+                                let mut truncated = text;
+                                truncated.truncate(50 * 1024);
+                                Some(truncated)
+                            }
+                            Err(e) => {
+                                eprintln!("DOCX extract failed for {:?}: {:?}", path, e);
+                                None
+                            }
+                        }
+                    } else {
+                        read_text_file(path).ok()
+                    };
+
+                    if let Some(content) = extracted {
                         conn.execute("DELETE FROM files_fts WHERE path = ?", [&path_str])?;
                         conn.execute(
                             "INSERT INTO files_fts (path, content) VALUES (?, ?)",
                             params![path_str, content],
                         )?;
+                    }
+
+                    if is_pdf || is_docx {
+                        thread::sleep(std::time::Duration::from_millis(50));
                     }
                 }
             }

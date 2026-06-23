@@ -77,6 +77,7 @@ struct State {
     icon_folder: HICON,
     icon_commit: HICON,
     icon_todo: HICON,
+    icon_clipboard: HICON,
     text_selected: bool,
     scroll_offset: usize,
     last_mouse_x: i32,
@@ -141,6 +142,7 @@ unsafe fn run() {
     let icon_folder = load_icon_from_dll("shell32.dll", 3, 32);
     let icon_commit = load_icon_from_dll("shell32.dll", 22, 32);
     let icon_todo = load_icon_from_dll("shell32.dll", 270, 32);
+    let icon_clipboard = load_icon_from_dll("shell32.dll", 260, 32);
 
     let state = Box::new(State {
         engine: None,
@@ -162,6 +164,7 @@ unsafe fn run() {
         icon_folder,
         icon_commit,
         icon_todo,
+        icon_clipboard,
         text_selected: false,
         scroll_offset: 0,
         last_mouse_x: -1,
@@ -191,6 +194,8 @@ unsafe fn run() {
         HWND(null_mut()), HMENU(null_mut()), hinst,
         Some(Box::into_raw(state) as _),
     ).unwrap();
+
+    let _ = unsafe { windows::Win32::System::DataExchange::AddClipboardFormatListener(hwnd) };
 
     SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA).unwrap();
 
@@ -225,14 +230,23 @@ unsafe fn run() {
 
         let model_path = std::env::current_exe().ok()
             .and_then(|p| p.parent().map(|d| d.join("model_int8.onnx")));
+        let db_path_for_engine = db_path.clone();
         let result = match model_path {
-            Some(p) => SearchEngine::new(&p, db_path),
+            Some(p) => SearchEngine::new(&p, db_path_for_engine),
             None => Err(anyhow::anyhow!("cannot locate exe directory")),
         };
         let hwnd_bg = HWND(hwnd_usize as *mut std::ffi::c_void);
         unsafe {
             match result {
                 Ok(engine) => {
+                    // Import Windows Clipboard History in background
+                    let db_path_clone = db_path.clone();
+                    std::thread::spawn(move || {
+                        let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED) };
+                        unsafe { import_windows_clipboard_history(&db_path_clone); }
+                        unsafe { windows::Win32::System::Com::CoUninitialize(); }
+                    });
+
                     let ptr = Box::into_raw(Box::new(engine)) as isize;
                     let _ = PostMessageW(hwnd_bg, WM_ENGINE_READY, WPARAM(1), LPARAM(ptr));
                 }
@@ -315,6 +329,81 @@ unsafe extern "system" fn wnd_proc(
             }
             
             unsafe { let _ = InvalidateRect(hwnd, None, FALSE); }
+            LRESULT(0)
+        }
+
+        WM_CLIPBOARDUPDATE => {
+            if sp.is_null() { return LRESULT(0); }
+            let s = &*sp;
+
+            // Check if foreground window is the launcher itself to prevent duplicates
+            let hwnd_fg = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+            if hwnd_fg == hwnd {
+                return LRESULT(0);
+            }
+
+            let db_path = s.engine.as_ref().map(|e| e.db_path());
+            if let Some(db_path) = db_path {
+                let app_name = unsafe { get_active_app_name() };
+
+                // Try text format
+                if let Some(text) = unsafe { paste_from_clipboard(hwnd) } {
+                    let trimmed = text.trim().to_string();
+                    if !trimmed.is_empty() {
+                        let db_path_clone = db_path.clone();
+                        let app_name_clone = app_name.clone();
+                        std::thread::spawn(move || {
+                            if let Ok(conn) = rusqlite::Connection::open(&db_path_clone) {
+                                let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs() as i64;
+                                let _ = conn.execute(
+                                    "INSERT OR REPLACE INTO clipboard_history (content, timestamp, source_app, is_image) VALUES (?, ?, ?, 0);",
+                                    rusqlite::params![trimmed, now, app_name_clone],
+                                );
+                                let _ = conn.execute(
+                                    "DELETE FROM clipboard_history WHERE id NOT IN (SELECT id FROM clipboard_history ORDER BY timestamp DESC LIMIT 500);",
+                                    [],
+                                );
+                            }
+                        });
+                    }
+                } else {
+                    // Try image format (CF_BITMAP)
+                    unsafe {
+                        if let Some((buf, bih)) = capture_clipboard_image_data(hwnd) {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs() as i64;
+                            let filename = format!("image_{}.bmp", now);
+                            let img_dir = db_path.parent().unwrap().join("clipboard_images");
+                            let _ = std::fs::create_dir_all(&img_dir);
+                            let img_path = img_dir.join(&filename);
+                            let img_path_str = img_path.to_string_lossy().to_string();
+                            
+                            let db_path_clone = db_path.clone();
+                            std::thread::spawn(move || {
+                                if write_bmp_file(&img_path, &buf, bih).is_ok() {
+                                    if let Ok(conn) = rusqlite::Connection::open(&db_path_clone) {
+                                        let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                                        let _ = conn.execute(
+                                            "INSERT OR REPLACE INTO clipboard_history (content, timestamp, source_app, is_image) VALUES (?, ?, ?, 1);",
+                                            rusqlite::params![img_path_str, now, app_name],
+                                        );
+                                        let _ = conn.execute(
+                                            "DELETE FROM clipboard_history WHERE id NOT IN (SELECT id FROM clipboard_history ORDER BY timestamp DESC LIMIT 500);",
+                                            [],
+                                        );
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+            }
             LRESULT(0)
         }
 
@@ -467,6 +556,8 @@ unsafe extern "system" fn wnd_proc(
                         } else {
                             if let Some(text) = cmd.strip_prefix("copy:") {
                                 copy_to_clipboard(hwnd, text);
+                            } else if let Some(path) = cmd.strip_prefix("copy_image:") {
+                                copy_image_to_clipboard(hwnd, path);
                             } else {
                                 launcher::launch(&cmd);
                             }
@@ -551,6 +642,8 @@ unsafe extern "system" fn wnd_proc(
                     } else {
                         if let Some(text) = cmd.strip_prefix("copy:") {
                             copy_to_clipboard(hwnd, text);
+                        } else if let Some(path) = cmd.strip_prefix("copy_image:") {
+                            copy_image_to_clipboard(hwnd, path);
                         } else {
                             launcher::launch(&cmd);
                         }
@@ -600,8 +693,10 @@ unsafe extern "system" fn wnd_proc(
         }
 
         WM_DESTROY => {
+            let _ = unsafe { windows::Win32::System::DataExchange::RemoveClipboardFormatListener(hwnd) };
             if !sp.is_null() {
                 let s = Box::from_raw(sp);
+                if !s.icon_clipboard.0.is_null() { let _ = DestroyIcon(s.icon_clipboard); }
                 DeleteObject(s.font_q);
                 DeleteObject(s.font_n);
                 DeleteObject(s.font_c);
@@ -873,12 +968,12 @@ unsafe fn get_file_icon(path: &str) -> HICON {
 unsafe fn trigger_icon_loading(hwnd: HWND, s: &mut State) {
     for res in &s.results {
         let (source, key) = (res.entry.source.as_str(), res.entry.launch_command.clone());
-        let needs_icon = (source == "app" || source == "RECENT" || source == "FILE")
+        let needs_icon = (source == "app" || source == "RECENT" || source == "FILE" || source == "CODE")
             && !s.app_icons.contains_key(&key);
         if needs_icon {
             // Placeholder so we don't spawn multiple threads for same path
             s.app_icons.insert(key.clone(), HICON(std::ptr::null_mut()));
-            let is_recent = source == "RECENT" || source == "FILE";
+            let is_recent = source == "RECENT" || source == "FILE" || source == "CODE";
             let hwnd_clone = SendHwnd(hwnd);
             std::thread::spawn(move || {
                 let hwnd_raw = hwnd_clone;
@@ -1010,7 +1105,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let cy = ry + (RESULT_H - 40) / 2;
 
             // Draw Icon
-            let icon_to_draw = if res.entry.source == "app" || res.entry.source == "RECENT" || res.entry.source == "FILE" {
+            let icon_to_draw = if res.entry.source == "app" || res.entry.source == "RECENT" || res.entry.source == "FILE" || res.entry.source == "CODE" {
                 s.app_icons.get(&res.entry.launch_command)
                     .copied()
                     .filter(|h| !h.0.is_null())
@@ -1027,6 +1122,8 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 s.icon_commit
             } else if res.entry.source == "TODO" {
                 s.icon_todo
+            } else if res.entry.source == "CLIPBOARD" {
+                s.icon_clipboard
             } else {
                 s.icon_control_panel
             };
@@ -1112,6 +1209,10 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
         ("RECENT", COLORREF(0x00_7A_1F_7A), CLR_WHITE)
     } else if src_lc == "file" {
         ("FILE", COLORREF(0x00_90_40_00), CLR_WHITE)
+    } else if src_lc == "code" {
+        ("CODE", COLORREF(0x00_70_20_70), CLR_WHITE)
+    } else if src_lc == "clipboard" {
+        ("CLIP", COLORREF(0x00_A6_6A_0A), CLR_WHITE)
     } else if src_lc == "bookmark" {
         ("BOOKMARK", COLORREF(0x00_00_A5_D6), CLR_WHITE)
     } else if src_lc == "history" {
@@ -1219,6 +1320,257 @@ unsafe fn load_icon_from_memory(bytes: &[u8], size: i32) -> HICON {
     HICON(null_mut())
 }
 
+unsafe fn get_active_app_name() -> String {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_NAME_WIN32};
+    use windows::Win32::Foundation::{CloseHandle, BOOL};
+    use windows::core::PWSTR;
+
+    let hwnd_fg = GetForegroundWindow();
+    if hwnd_fg.0.is_null() {
+        return "Unknown".to_string();
+    }
+
+    let mut process_id: u32 = 0;
+    GetWindowThreadProcessId(hwnd_fg, Some(&mut process_id));
+    if process_id == 0 {
+        return "Unknown".to_string();
+    }
+
+    if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, BOOL(0), process_id) {
+        let mut buffer = [0u16; 512];
+        let mut size = buffer.len() as u32;
+        let res = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            PWSTR(buffer.as_mut_ptr()),
+            &mut size,
+        );
+        let _ = CloseHandle(handle);
+
+        if res.is_ok() && size > 0 {
+            let path_str = String::from_utf16_lossy(&buffer[..size as usize]);
+            if let Some(filename) = std::path::Path::new(&path_str).file_name() {
+                return filename.to_string_lossy().into_owned();
+            }
+            return path_str;
+        }
+    }
+
+    "Unknown".to_string()
+}
+
+unsafe fn copy_image_to_clipboard(hwnd: HWND, file_path: &str) {
+    use windows::Win32::System::DataExchange::{OpenClipboard, CloseClipboard, EmptyClipboard, SetClipboardData};
+    use windows::Win32::UI::WindowsAndMessaging::{LoadImageW, IMAGE_BITMAP, LR_LOADFROMFILE, LR_CREATEDIBSECTION};
+    use windows::Win32::Foundation::HANDLE;
+    use windows::core::PCWSTR;
+
+    let wide_path: Vec<u16> = file_path.encode_utf16().chain(std::iter::once(0)).collect();
+    let h_img = LoadImageW(
+        None,
+        PCWSTR(wide_path.as_ptr()),
+        IMAGE_BITMAP,
+        0,
+        0,
+        LR_LOADFROMFILE | LR_CREATEDIBSECTION,
+    );
+
+    if let Ok(hbitmap) = h_img {
+        if OpenClipboard(hwnd).is_ok() {
+            let _ = EmptyClipboard();
+            let _ = SetClipboardData(2, HANDLE(hbitmap.0));
+            let _ = CloseClipboard();
+        }
+    }
+}
+
+unsafe fn capture_clipboard_image_data(hwnd: HWND) -> Option<(Vec<u8>, windows::Win32::Graphics::Gdi::BITMAPINFOHEADER)> {
+    use windows::Win32::System::DataExchange::{OpenClipboard, CloseClipboard, GetClipboardData, IsClipboardFormatAvailable};
+    use windows::Win32::Graphics::Gdi::{
+        GetDC, ReleaseDC, GetObjectW, GetDIBits, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, HBITMAP
+    };
+    use windows::Win32::Foundation::HWND;
+
+    // CF_BITMAP is 2
+    if IsClipboardFormatAvailable(2).is_err() {
+        return None;
+    }
+
+    if OpenClipboard(hwnd).is_err() {
+        return None;
+    }
+
+    let mut result = None;
+    if let Ok(h_mem) = GetClipboardData(2) {
+        if !h_mem.0.is_null() {
+            let hbitmap = HBITMAP(h_mem.0);
+            let hdc_screen = GetDC(HWND(std::ptr::null_mut()));
+            if !hdc_screen.is_invalid() {
+                let mut bmp: BITMAP = std::mem::zeroed();
+                let size = std::mem::size_of::<BITMAP>() as i32;
+                if GetObjectW(hbitmap, size, Some(&mut bmp as *mut BITMAP as *mut _)) != 0 {
+                    let bih = BITMAPINFOHEADER {
+                        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                        biWidth: bmp.bmWidth,
+                        biHeight: bmp.bmHeight,
+                        biPlanes: 1,
+                        biBitCount: 32, // Convert to 32-bit BGRA
+                        biCompression: 0, // BI_RGB
+                        biSizeImage: (bmp.bmWidth * bmp.bmHeight * 4) as u32,
+                        biXPelsPerMeter: 0,
+                        biYPelsPerMeter: 0,
+                        biClrUsed: 0,
+                        biClrImportant: 0,
+                    };
+
+                    let mut bi = BITMAPINFO {
+                        bmiHeader: bih,
+                        bmiColors: [std::mem::zeroed(); 1],
+                    };
+
+                    let mut buf = vec![0u8; (bmp.bmWidth * bmp.bmHeight * 4) as usize];
+                    
+                    let res = GetDIBits(
+                        hdc_screen,
+                        hbitmap,
+                        0,
+                        bmp.bmHeight as u32,
+                        Some(buf.as_mut_ptr() as *mut _),
+                        &mut bi,
+                        DIB_RGB_COLORS,
+                    );
+
+                    if res != 0 {
+                        result = Some((buf, bih));
+                    }
+                }
+                let _ = ReleaseDC(HWND(std::ptr::null_mut()), hdc_screen);
+            }
+        }
+    }
+    let _ = CloseClipboard();
+    result
+}
+
+fn write_bmp_file(path: &std::path::Path, buf: &[u8], bih: windows::Win32::Graphics::Gdi::BITMAPINFOHEADER) -> Result<(), String> {
+    use std::fs::File;
+    use std::io::Write;
+
+    let file_size = 54 + buf.len();
+    let mut file_header = [0u8; 14];
+    file_header[0] = b'B';
+    file_header[1] = b'M';
+    file_header[2..6].copy_from_slice(&(file_size as u32).to_le_bytes());
+    file_header[10..14].copy_from_slice(&54u32.to_le_bytes());
+
+    let mut info_header = [0u8; 40];
+    info_header[0..4].copy_from_slice(&bih.biSize.to_le_bytes());
+    info_header[4..8].copy_from_slice(&bih.biWidth.to_le_bytes());
+    info_header[8..12].copy_from_slice(&bih.biHeight.to_le_bytes());
+    info_header[12..14].copy_from_slice(&bih.biPlanes.to_le_bytes());
+    info_header[14..16].copy_from_slice(&bih.biBitCount.to_le_bytes());
+    info_header[16..20].copy_from_slice(&bih.biCompression.to_le_bytes());
+    info_header[20..24].copy_from_slice(&bih.biSizeImage.to_le_bytes());
+
+    let mut file = File::create(path).map_err(|e| e.to_string())?;
+    file.write_all(&file_header).map_err(|e| e.to_string())?;
+    file.write_all(&info_header).map_err(|e| e.to_string())?;
+    file.write_all(buf).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+unsafe fn import_windows_clipboard_history(db_path: &std::path::Path) {
+    use windows::ApplicationModel::DataTransfer::{Clipboard, StandardDataFormats};
+    
+    if Clipboard::IsHistoryEnabled().unwrap_or(false) {
+        if let Ok(op) = Clipboard::GetHistoryItemsAsync() {
+            if let Ok(result) = op.get() {
+                if let Ok(items) = result.Items() {
+                    if let Ok(conn) = rusqlite::Connection::open(db_path) {
+                        let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64;
+                        let mut time_offset = 0;
+                        
+                        for item in items {
+                            if let Ok(content) = item.Content() {
+                                let is_text = if let Ok(fmt) = StandardDataFormats::Text() {
+                                    content.Contains(&fmt).unwrap_or(false)
+                                } else {
+                                    false
+                                };
+                                
+                                if is_text {
+                                    if let Ok(text_op) = content.GetTextAsync() {
+                                        if let Ok(text) = text_op.get() {
+                                            let trimmed = text.to_string().trim().to_string();
+                                            if !trimmed.is_empty() {
+                                                // Decrement timestamp to preserve original sorting order of items
+                                                let timestamp = now - time_offset;
+                                                time_offset += 1;
+                                                let _ = conn.execute(
+                                                    "INSERT OR IGNORE INTO clipboard_history (content, timestamp, source_app, is_image) VALUES (?, ?, 'Windows History', 0);",
+                                                    rusqlite::params![trimmed, timestamp],
+                                                );
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    let is_bitmap = if let Ok(fmt) = StandardDataFormats::Bitmap() {
+                                        content.Contains(&fmt).unwrap_or(false)
+                                    } else {
+                                        false
+                                    };
+                                    
+                                    if is_bitmap {
+                                        if let Ok(bitmap_op) = content.GetBitmapAsync() {
+                                            if let Ok(stream_ref) = bitmap_op.get() {
+                                                if let Ok(open_op) = stream_ref.OpenReadAsync() {
+                                                    if let Ok(stream) = open_op.get() {
+                                                        let size = stream.Size().unwrap_or(0);
+                                                        if size > 0 && size < 50 * 1024 * 1024 {
+                                                            use windows::Storage::Streams::DataReader;
+                                                            if let Ok(reader) = DataReader::CreateDataReader(&stream) {
+                                                                if reader.LoadAsync(size as u32).and_then(|l| l.get()).is_ok() {
+                                                                    let mut buf = vec![0u8; size as usize];
+                                                                    if reader.ReadBytes(&mut buf).is_ok() {
+                                                                        let timestamp = now - time_offset;
+                                                                        time_offset += 1;
+                                                                        let filename = format!("image_{}.bmp", timestamp);
+                                                                        let img_dir = db_path.parent().unwrap().join("clipboard_images");
+                                                                        let _ = std::fs::create_dir_all(&img_dir);
+                                                                        let img_path = img_dir.join(&filename);
+                                                                        let img_path_str = img_path.to_string_lossy().to_string();
+                                                                        
+                                                                        if std::fs::write(&img_path, &buf).is_ok() {
+                                                                            let _ = conn.execute(
+                                                                                "INSERT OR IGNORE INTO clipboard_history (content, timestamp, source_app, is_image) VALUES (?, ?, 'Windows History', 1);",
+                                                                                rusqlite::params![img_path_str, timestamp],
+                                                                            );
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 unsafe fn copy_to_clipboard(hwnd: HWND, text: &str) {
     use windows::Win32::System::DataExchange::{OpenClipboard, CloseClipboard, EmptyClipboard, SetClipboardData};
     use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
@@ -1271,6 +1623,23 @@ unsafe fn paste_from_clipboard(hwnd: HWND) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_winrt_clipboard() {
+        unsafe {
+            let res = windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_MULTITHREADED
+            );
+            if res.is_ok() {
+                use windows::ApplicationModel::DataTransfer::Clipboard;
+                if let Ok(enabled) = Clipboard::IsHistoryEnabled() {
+                    println!("Clipboard history enabled status: {}", enabled);
+                }
+                windows::Win32::System::Com::CoUninitialize();
+            }
+        }
+    }
 
     #[test]
     fn test_antigravity_icons() {

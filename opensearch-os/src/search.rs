@@ -167,14 +167,34 @@ impl SearchEngine {
         engine.anchor_categories = anchor_categories;
         engine.apps = scan_apps();
         engine.recent_files = scan_recent_files();
+        
+        // Initialize clipboard_history table
+        let conn = Connection::open(&engine.db_path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        // Add is_image column if it doesn't exist
+        let _ = conn.execute("ALTER TABLE clipboard_history ADD COLUMN is_image INTEGER DEFAULT 0;", []);
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS clipboard_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT UNIQUE,
+                timestamp INTEGER NOT NULL,
+                source_app TEXT NOT NULL,
+                is_image INTEGER DEFAULT 0
+            );",
+            [],
+        )?;
+
         let _ = engine.search("settings", 1);
         Ok(engine)
     }
 
-    fn search_local_files(&self, query: &str) -> Vec<SearchResult> {
+    fn search_files_generic(&self, query: &str, only_code: bool, max_results: usize) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = match Connection::open(&self.db_path) {
-            Ok(c) => c,
+            Ok(c) => {
+                let _ = c.busy_timeout(std::time::Duration::from_secs(5));
+                c
+            }
             Err(_) => return results,
         };
 
@@ -182,13 +202,41 @@ impl SearchEngine {
         let q_words: Vec<&str> = q_lower.split_whitespace().collect();
         if q_words.is_empty() { return results; }
 
+        let code_exts = [
+            "rs", "py", "js", "ts", "json", "html", "css",
+            "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
+            "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
+        ];
+
+        // 1. Metadata Search
         let name_query = format!("%{}%", q_lower);
-        let mut stmt = match conn.prepare("SELECT path, name, extension, modified FROM files WHERE name LIKE ? LIMIT 15") {
+        
+        let query_str = if only_code {
+            let placeholders: Vec<String> = code_exts.iter().map(|_| "?".to_string()).collect();
+            format!(
+                "SELECT path, name, extension, modified FROM files WHERE name LIKE ? AND extension IN ({}) LIMIT ?",
+                placeholders.join(",")
+            )
+        } else {
+            "SELECT path, name, extension, modified FROM files WHERE name LIKE ? LIMIT ?".to_string()
+        };
+
+        let mut stmt = match conn.prepare(&query_str) {
             Ok(s) => s,
             Err(_) => return results,
         };
 
-        let metadata_rows = stmt.query_map([&name_query], |row| {
+        let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+        params_vec.push(rusqlite::types::Value::Text(name_query));
+        if only_code {
+            for ext in code_exts.iter() {
+                params_vec.push(rusqlite::types::Value::Text(ext.to_string()));
+            }
+        }
+        params_vec.push(rusqlite::types::Value::Integer(max_results as i64));
+
+        let params_ref = rusqlite::params_from_iter(params_vec.iter());
+        let metadata_rows = stmt.query_map(params_ref, |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -224,13 +272,14 @@ impl SearchEngine {
                 }
 
                 if score > 0.0 {
+                    let source = if only_code || code_exts.contains(&ext.as_str()) { "CODE" } else { "FILE" };
                     results.push(SearchResult {
                         entry: CatalogEntry {
-                            id: format!("file.{}", path),
+                            id: format!("{}.{}", source.to_lowercase(), path),
                             control_name: name.clone(),
-                            breadcrumb_path: format!("File > {}", path),
+                            breadcrumb_path: format!("{} > {}", if source == "CODE" { "Code" } else { "File" }, path),
                             launch_command: path.clone(),
-                            source: "FILE".to_string(),
+                            source: source.to_string(),
                             description: format!("Local {} file", ext.to_uppercase()),
                             synonyms: name.to_lowercase(),
                         },
@@ -240,18 +289,40 @@ impl SearchEngine {
             }
         }
 
+        // 2. Full-Text Search (FTS5)
         let clean_fts_query = q_words.join(" ");
-        let mut stmt_fts = match conn.prepare(
+        let fts_query_str = if only_code {
+            let placeholders: Vec<String> = code_exts.iter().map(|_| "?".to_string()).collect();
+            format!(
+                "SELECT f.path, f.name, f.extension, f.modified 
+                 FROM files f 
+                 JOIN files_fts fts ON f.path = fts.path 
+                 WHERE files_fts MATCH ? AND f.extension IN ({}) LIMIT ?",
+                placeholders.join(",")
+            )
+        } else {
             "SELECT f.path, f.name, f.extension, f.modified 
              FROM files f 
              JOIN files_fts fts ON f.path = fts.path 
-             WHERE files_fts MATCH ? LIMIT 15"
-        ) {
+             WHERE files_fts MATCH ? LIMIT ?".to_string()
+        };
+
+        let mut stmt_fts = match conn.prepare(&fts_query_str) {
             Ok(s) => s,
             Err(_) => return results,
         };
 
-        let fts_rows = stmt_fts.query_map([&clean_fts_query], |row| {
+        let mut fts_params_vec: Vec<rusqlite::types::Value> = Vec::new();
+        fts_params_vec.push(rusqlite::types::Value::Text(clean_fts_query));
+        if only_code {
+            for ext in code_exts.iter() {
+                fts_params_vec.push(rusqlite::types::Value::Text(ext.to_string()));
+            }
+        }
+        fts_params_vec.push(rusqlite::types::Value::Integer(max_results as i64));
+
+        let fts_params_ref = rusqlite::params_from_iter(fts_params_vec.iter());
+        let fts_rows = stmt_fts.query_map(fts_params_ref, |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -268,13 +339,14 @@ impl SearchEngine {
                     continue;
                 }
 
+                let source = if only_code || code_exts.contains(&ext.as_str()) { "CODE" } else { "FILE" };
                 results.push(SearchResult {
                     entry: CatalogEntry {
-                        id: format!("file.{}", path),
+                        id: format!("{}.{}", source.to_lowercase(), path),
                         control_name: name.clone(),
-                        breadcrumb_path: format!("File > {}", path),
+                        breadcrumb_path: format!("{} > {}", if source == "CODE" { "Code" } else { "File" }, path),
                         launch_command: path.clone(),
-                        source: "FILE".to_string(),
+                        source: source.to_string(),
                         description: format!("Local {} file (matches content)", ext.to_uppercase()),
                         synonyms: name.to_lowercase(),
                     },
@@ -286,99 +358,124 @@ impl SearchEngine {
         results
     }
 
-    fn search_browser_items(&self, query: &str) -> Vec<SearchResult> {
+    fn search_local_files(&self, query: &str) -> Vec<SearchResult> {
+        self.search_files_generic(query, false, 15)
+    }
+
+    pub fn db_path(&self) -> std::path::PathBuf {
+        self.db_path.clone()
+    }
+
+    pub fn search_clipboard_history(&self, query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = match Connection::open(&self.db_path) {
-            Ok(c) => c,
+            Ok(c) => {
+                let _ = c.busy_timeout(std::time::Duration::from_secs(5));
+                c
+            }
             Err(_) => return results,
         };
 
         let q_lower = query.to_lowercase();
-        let q_words: Vec<&str> = q_lower.split_whitespace().collect();
-        if q_words.is_empty() { return results; }
+        
+        let select_query = if q_lower.is_empty() {
+            "SELECT content, source_app, timestamp, is_image FROM clipboard_history ORDER BY timestamp DESC LIMIT 50".to_string()
+        } else {
+            "SELECT content, source_app, timestamp, is_image FROM clipboard_history WHERE content LIKE ? OR source_app LIKE ? ORDER BY timestamp DESC LIMIT 50".to_string()
+        };
 
-        let name_query = format!("%{}%", q_lower);
-        let mut stmt = match conn.prepare(
-            "SELECT url, title, source, visit_count FROM browser_items 
-             WHERE title LIKE ? OR url LIKE ? 
-             ORDER BY visit_count DESC LIMIT 25"
-        ) {
+        let mut stmt = match conn.prepare(&select_query) {
             Ok(s) => s,
             Err(_) => return results,
         };
 
-        let rows = stmt.query_map([&name_query, &name_query], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-            ))
-        });
+        let rows: Vec<(String, String, i64, i32)> = if q_lower.is_empty() {
+            stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i32>(3)?,
+                ))
+            }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        } else {
+            let like_pattern = format!("%{}%", q_lower);
+            stmt.query_map([&like_pattern, &like_pattern], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i32>(3)?,
+                ))
+            }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        };
 
-        if let Ok(rows) = rows {
-            for row in rows.filter_map(|r| r.ok()) {
-                let (url, title, source, visit_count) = row;
+        for (content, source_app, timestamp, is_image) in rows {
+            if is_image == 1 {
+                let filename = std::path::Path::new(&content)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "image.bmp".to_string());
+
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("clip.{}", timestamp),
+                        control_name: format!("[Image] Copied from {}", source_app),
+                        breadcrumb_path: format!("Clipboard > {}", source_app),
+                        launch_command: format!("copy_image:{}", content),
+                        source: "CLIPBOARD".to_string(),
+                        description: format!("Image history (Saved as {})", filename),
+                        synonyms: format!("image {} clipboard copy", source_app.to_lowercase()),
+                    },
+                    score: 3.0,
+                });
+            } else {
+                let mut desc = content.replace("\r\n", " ").replace('\n', " ");
+                if desc.len() > 100 {
+                    desc.truncate(97);
+                    desc.push_str("...");
+                }
                 
-                let title_lower = title.to_lowercase();
-                let url_lower = url.to_lowercase();
-                
-                let mut score = 0.0f32;
-                
-                if title_lower == q_lower || url_lower == q_lower {
-                    score = 2.0;
-                } else if title_lower.starts_with(&q_lower) || url_lower.starts_with(&q_lower) {
-                    score = 1.6;
-                } else if title_lower.contains(&q_lower) || url_lower.contains(&q_lower) {
-                    score = 1.2;
+                let display_name = content.replace("\r\n", " ").replace('\n', " ").replace('\t', " ");
+                let display_name = if display_name.len() > 200 {
+                    format!("{}...", &display_name[..197])
                 } else {
-                    let matched = q_words.iter().filter(|w| title_lower.contains(*w) || url_lower.contains(*w)).count();
-                    if matched > 0 {
-                        score = 0.5 + 0.5 * (matched as f32 / q_words.len() as f32);
-                    }
-                }
+                    display_name
+                };
 
-                // Boost bookmarks
-                let is_bookmark = source.contains("bookmark");
-                if is_bookmark {
-                    score += 0.4;
-                }
-
-                if score > 0.0 {
-                    let browser_name = if source.contains("chrome") {
-                        "Chrome"
-                    } else if source.contains("edge") {
-                        "Edge"
-                    } else if source.contains("brave") {
-                        "Brave"
-                    } else if source.contains("firefox") {
-                        "Firefox"
-                    } else {
-                        "Browser"
-                    };
-                    results.push(SearchResult {
-                        entry: CatalogEntry {
-                            id: format!("browser.{}", url),
-                            control_name: title.clone(),
-                            breadcrumb_path: format!("Browser > {}", url),
-                            launch_command: url.clone(),
-                            source: if is_bookmark { "BOOKMARK".to_string() } else { "HISTORY".to_string() },
-                            description: format!("{} from {}", if is_bookmark { "Bookmark" } else { "History" }, browser_name),
-                            synonyms: title.to_lowercase(),
-                        },
-                        score,
-                    });
-                }
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("clip.{}", timestamp),
+                        control_name: display_name,
+                        breadcrumb_path: format!("Clipboard > {}", source_app),
+                        launch_command: format!("copy:{}", content),
+                        source: "CLIPBOARD".to_string(),
+                        description: desc,
+                        synonyms: content.to_lowercase(),
+                    },
+                    score: 3.0,
+                });
             }
         }
 
         results
     }
 
+    pub fn search_files_only(&self, query: &str) -> Vec<SearchResult> {
+        self.search_files_generic(query, false, 50)
+    }
+
+    pub fn search_code_only(&self, query: &str) -> Vec<SearchResult> {
+        self.search_files_generic(query, true, 50)
+    }
+
     pub fn search_bookmarks_only(&self, sub_query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = match Connection::open(&self.db_path) {
-            Ok(c) => c,
+            Ok(c) => {
+                let _ = c.busy_timeout(std::time::Duration::from_secs(5));
+                c
+            }
             Err(_) => return results,
         };
 
@@ -489,7 +586,10 @@ impl SearchEngine {
     pub fn search_history_only(&self, sub_query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = match Connection::open(&self.db_path) {
-            Ok(c) => c,
+            Ok(c) => {
+                let _ = c.busy_timeout(std::time::Duration::from_secs(5));
+                c
+            }
             Err(_) => return results,
         };
 
@@ -602,7 +702,10 @@ impl SearchEngine {
     pub fn search_commits_only(&self, sub_query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = match Connection::open(&self.db_path) {
-            Ok(c) => c,
+            Ok(c) => {
+                let _ = c.busy_timeout(std::time::Duration::from_secs(5));
+                c
+            }
             Err(_) => return results,
         };
 
@@ -714,7 +817,10 @@ impl SearchEngine {
     pub fn search_todos_only(&self, sub_query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = match Connection::open(&self.db_path) {
-            Ok(c) => c,
+            Ok(c) => {
+                let _ = c.busy_timeout(std::time::Duration::from_secs(5));
+                c
+            }
             Err(_) => return results,
         };
 
@@ -871,6 +977,42 @@ impl SearchEngine {
                 },
                 score: 3.5,
             });
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: "folder.clipboard".to_string(),
+                    control_name: "Clipboard History".to_string(),
+                    breadcrumb_path: "Clipboard > History".to_string(),
+                    launch_command: "clip:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Folder containing clipboard history".to_string(),
+                    synonyms: "clipboard history copy paste clip".to_string(),
+                },
+                score: 3.4,
+            });
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: "folder.files".to_string(),
+                    control_name: "Local Files".to_string(),
+                    breadcrumb_path: "Local > Files".to_string(),
+                    launch_command: "file:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Folder containing indexed documents and files".to_string(),
+                    synonyms: "files documents local downloads desktop search pdf docx".to_string(),
+                },
+                score: 3.3,
+            });
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: "folder.code".to_string(),
+                    control_name: "Source Code".to_string(),
+                    breadcrumb_path: "Local > Source Code".to_string(),
+                    launch_command: "code:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Folder containing indexed source code files".to_string(),
+                    synonyms: "code source rust python js cpp java develop program".to_string(),
+                },
+                score: 3.2,
+            });
             for rf in self.recent_files.iter().take(top_k.min(20)) {
                 let ext = rf.name.rsplit('.').next().unwrap_or("").to_uppercase();
                 results.push(SearchResult {
@@ -909,6 +1051,16 @@ impl SearchEngine {
             return results;
         }
 
+        if q_lower_trimmed.starts_with("clipboard:") {
+            let sub_query = q_lower_trimmed.strip_prefix("clipboard:").unwrap().trim();
+            return self.search_clipboard_history(sub_query);
+        }
+
+        if q_lower_trimmed.starts_with("clip:") {
+            let sub_query = q_lower_trimmed.strip_prefix("clip:").unwrap().trim();
+            return self.search_clipboard_history(sub_query);
+        }
+
         if q_lower_trimmed.starts_with("bookmarks:") {
             let sub_query = q_lower_trimmed.strip_prefix("bookmarks:").unwrap().trim();
             return self.search_bookmarks_only(sub_query);
@@ -927,6 +1079,16 @@ impl SearchEngine {
         if q_lower_trimmed.starts_with("todos:") {
             let sub_query = q_lower_trimmed.strip_prefix("todos:").unwrap().trim();
             return self.search_todos_only(sub_query);
+        }
+
+        if q_lower_trimmed.starts_with("file:") {
+            let sub_query = q_lower_trimmed.strip_prefix("file:").unwrap().trim();
+            return self.search_files_only(sub_query);
+        }
+
+        if q_lower_trimmed.starts_with("code:") {
+            let sub_query = q_lower_trimmed.strip_prefix("code:").unwrap().trim();
+            return self.search_code_only(sub_query);
         }
 
         // ── Calculator: inject instantly if query is a math expression ──────
@@ -1213,15 +1375,10 @@ impl SearchEngine {
         file_matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         file_matches.truncate(10); // Cap at 10 file results
 
-        let mut browser_matches = self.search_browser_items(q);
-        browser_matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        browser_matches.truncate(15); // Cap at 15 browser results
-
         let mut merged = Vec::new();
         merged.append(&mut app_matches);
         merged.append(&mut recent_matches);
         merged.append(&mut file_matches);
-        merged.append(&mut browser_matches);
         merged.append(&mut vec_results);
         merged.push(web_search.clone());
         merged.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
