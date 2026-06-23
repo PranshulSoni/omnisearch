@@ -434,50 +434,48 @@ fn extract_ocr_text(path: &Path) -> Option<String> {
     use windows::Graphics::Imaging::BitmapDecoder;
     use windows::Media::Ocr::OcrEngine;
 
-    unsafe {
-        let path_str = path.to_str()?;
-        let path_wide = HSTRING::from(path_str);
-        
-        let file = match StorageFile::GetFileFromPathAsync(&path_wide).ok()?.get() {
-            Ok(f) => f,
-            Err(_) => return None,
-        };
-        
-        let stream = match file.OpenAsync(windows::Storage::FileAccessMode::Read).ok()?.get() {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
-        
-        let decoder = match BitmapDecoder::CreateAsync(&stream).ok()?.get() {
-            Ok(d) => d,
-            Err(_) => return None,
-        };
-        
-        let software_bitmap = match decoder.GetSoftwareBitmapAsync().ok()?.get() {
-            Ok(b) => b,
-            Err(_) => return None,
-        };
-        
-        let ocr_engine = match OcrEngine::TryCreateFromUserProfileLanguages() {
-            Ok(engine) => engine,
-            Err(_) => return None,
-        };
-        
-        let ocr_result = match ocr_engine.RecognizeAsync(&software_bitmap).ok()?.get() {
-            Ok(res) => res,
-            Err(_) => return None,
-        };
-        
-        let text = match ocr_result.Text() {
-            Ok(t) => t.to_string(),
-            Err(_) => return None,
-        };
-        
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
+    let path_str = path.to_str()?;
+    let path_wide = HSTRING::from(path_str);
+    
+    let file = match StorageFile::GetFileFromPathAsync(&path_wide).ok()?.get() {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
+    
+    let stream = match file.OpenAsync(windows::Storage::FileAccessMode::Read).ok()?.get() {
+        Ok(s) => s,
+        Err(_) => return None,
+    };
+    
+    let decoder = match BitmapDecoder::CreateAsync(&stream).ok()?.get() {
+        Ok(d) => d,
+        Err(_) => return None,
+    };
+    
+    let software_bitmap = match decoder.GetSoftwareBitmapAsync().ok()?.get() {
+        Ok(b) => b,
+        Err(_) => return None,
+    };
+    
+    let ocr_engine = match OcrEngine::TryCreateFromUserProfileLanguages() {
+        Ok(engine) => engine,
+        Err(_) => return None,
+    };
+    
+    let ocr_result = match ocr_engine.RecognizeAsync(&software_bitmap).ok()?.get() {
+        Ok(res) => res,
+        Err(_) => return None,
+    };
+    
+    let text = match ocr_result.Text() {
+        Ok(t) => t.to_string(),
+        Err(_) => return None,
+    };
+    
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
