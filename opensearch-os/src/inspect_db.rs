@@ -8,6 +8,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("Checking database at: {:?}", db_path);
+
+    // Resolve and print priority folders
+    unsafe {
+        use windows::Win32::UI::Shell::{
+            SHGetKnownFolderPath, KF_FLAG_DEFAULT,
+            FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Pictures,
+        };
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::Com::CoTaskMemFree;
+
+        let get_folder = |guid, name: &str| {
+            let path = SHGetKnownFolderPath(guid, KF_FLAG_DEFAULT, HANDLE::default()).map(|result| {
+                let mut len = 0;
+                unsafe {
+                    while *result.0.add(len) != 0 { len += 1; }
+                    let s = String::from_utf16_lossy(std::slice::from_raw_parts(result.0, len));
+                    CoTaskMemFree(Some(result.0 as *const _));
+                    PathBuf::from(s)
+                }
+            });
+            println!("Known folder {}: {:?}", name, path);
+        };
+
+        get_folder(&FOLDERID_Desktop, "Desktop");
+        get_folder(&FOLDERID_Documents, "Documents");
+        get_folder(&FOLDERID_Downloads, "Downloads");
+        get_folder(&FOLDERID_Pictures, "Pictures");
+    }
+
     if !db_path.exists() {
         println!("Database file does not exist!");
         return Ok(());
