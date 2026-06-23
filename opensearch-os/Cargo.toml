@@ -34,12 +34,18 @@ windows = { version = "0.58", features = [
     "ApplicationModel_DataTransfer",
     "Foundation",
     "Foundation_Collections",
+    "implement",
     "Storage",
     "Storage_Streams",
     "Media_Ocr",
+    "Media_SpeechRecognition",
     "Graphics_Imaging",
 ] }
+windows-implement = "0.58"
+windows-core = "0.58"
+
 ort = { version = "2.0.0-rc.10", features = ["download-binaries", "copy-dylibs"] }
+
 tokenizers = { version = "0.20", default-features = false, features = ["progressbar", "onig"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
