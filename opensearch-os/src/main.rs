@@ -114,6 +114,7 @@ struct State {
     voice_triggered: bool,   // launcher opened via voice (auto-execute on result)
     voice_pending_exec: bool, // true = waiting for search results to auto-execute
     voice_dot_tick: u32,     // animation frame counter for pulsing mic dot
+    voice_exec_deadline: Option<std::time::Instant>, // when the auto-exec countdown fires
 }
 
 #[derive(PartialEq)]
@@ -168,12 +169,80 @@ impl State {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 fn main() {
+    accept_speech_privacy();
+    register_startup();
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
         let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE);
     }
 
     unsafe { run(); }
+}
+
+// Accept the Windows "Online speech recognition" privacy policy so the Dictation
+// recognizer can run. Without this, RecognizeAsync fails with 0x80045509
+// ("speech privacy policy was not accepted"). This is the same flag the
+// Settings → Privacy → Speech toggle sets; the user can turn it back off there.
+fn accept_speech_privacy() {
+    use windows::Win32::System::Registry::*;
+    use windows::core::PCWSTR;
+    unsafe {
+        let subkey: Vec<u16> =
+            "Software\\Microsoft\\Speech_OneCore\\Settings\\OnlineSpeechPrivacy\0"
+                .encode_utf16().collect();
+        let value_name: Vec<u16> = "HasAccepted\0".encode_utf16().collect();
+        let mut hkey = HKEY::default();
+        // RegCreateKeyW creates the subkey if missing, or opens it if it exists.
+        let r = RegCreateKeyW(HKEY_CURRENT_USER, PCWSTR(subkey.as_ptr()), &mut hkey);
+        if r.is_ok() {
+            let data: u32 = 1;
+            let _ = RegSetValueExW(
+                hkey,
+                PCWSTR(value_name.as_ptr()),
+                0,
+                REG_DWORD,
+                Some(&data.to_ne_bytes()),
+            );
+            let _ = RegCloseKey(hkey);
+        }
+    }
+}
+
+fn register_startup() {
+    // Add to HKCU Run so it launches on login and listens for wake words
+    if let Ok(exe) = std::env::current_exe() {
+        let exe_str = exe.to_string_lossy().to_string();
+        let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let hkcu = windows::Win32::System::Registry::HKEY_CURRENT_USER;
+            let subkey: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Run\0"
+                .encode_utf16().collect();
+            let value_name: Vec<u16> = "OpenSearchOS\0".encode_utf16().collect();
+            let exe_wide: Vec<u16> = format!("{}\0", exe_str).encode_utf16().collect();
+            let mut hkey = windows::Win32::System::Registry::HKEY::default();
+            unsafe {
+                let err = windows::Win32::System::Registry::RegOpenKeyExW(
+                    hkcu,
+                    windows::core::PCWSTR(subkey.as_ptr()),
+                    0,
+                    windows::Win32::System::Registry::KEY_SET_VALUE,
+                    &mut hkey,
+                );
+                if err.is_err() { return Err("open key failed".into()); }
+                windows::Win32::System::Registry::RegSetValueExW(
+                    hkey,
+                    windows::core::PCWSTR(value_name.as_ptr()),
+                    0,
+                    windows::Win32::System::Registry::REG_SZ,
+                    Some(std::slice::from_raw_parts(
+                        exe_wide.as_ptr() as *const u8,
+                        (exe_wide.len() - 1) * 2,
+                    )),
+                );
+                windows::Win32::System::Registry::RegCloseKey(hkey);
+            }
+            Ok(())
+        })();
+    }
 }
 
 unsafe fn run() {
@@ -260,6 +329,7 @@ unsafe fn run() {
         voice_triggered: false,
         voice_pending_exec: false,
         voice_dot_tick: 0,
+        voice_exec_deadline: None,
     });
 
     let class: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
@@ -492,6 +562,11 @@ unsafe extern "system" fn wnd_proc(
         WM_KILLFOCUS => {
             if !sp.is_null() {
                 let s = &mut *sp;
+                // Don't dismiss while a voice flow is mid-setup — focus briefly bounces
+                // when the launcher is summoned from the background.
+                if s.voice_triggered || s.voice_pending_exec {
+                    return LRESULT(0);
+                }
                 if !matches!(s.anim, Anim::Hidden | Anim::Hiding { .. }) {
                     start_hide(hwnd, s);
                 }
@@ -640,11 +715,14 @@ unsafe extern "system" fn wnd_proc(
                         s.selected = s.selected.min(s.results.len() - 1);
                         s.scroll_offset = s.scroll_offset.min(s.results.len().saturating_sub(VISIBLE_RESULTS));
                     }
-                    if s.voice_pending_exec && !s.results.is_empty() {
-                        s.voice_pending_exec = false;
-                        s.voice_triggered = false;
+                    if s.voice_pending_exec && !s.results.is_empty() && s.voice_exec_deadline.is_none() {
+                        // Results are in. Show them and count down ~3.5s before executing,
+                        // so the user can press Esc to cancel or arrow/type to take over.
                         let _ = KillTimer(hwnd, TIMER_VOICE_AUTOEXEC);
-                        execute_selected(hwnd, s);
+                        let _ = SetTimer(hwnd, TIMER_VOICE_AUTOEXEC, 3500, None);
+                        let _ = SetTimer(hwnd, TIMER_VOICE_ANIM, 100, None); // repaint countdown
+                        s.voice_exec_deadline =
+                            Some(std::time::Instant::now() + std::time::Duration::from_millis(3500));
                     }
                     trigger_icon_loading(hwnd, s);
                     let _ = InvalidateRect(hwnd, None, FALSE);
@@ -654,20 +732,42 @@ unsafe extern "system" fn wnd_proc(
         }
 
         WM_VOICE_WAKEWORD => {
+            // Payload (wp==1): Box<String> with the query spoken after the wake word.
+            // Empty string = bare wake word (just open the launcher).
+            let query = if wp.0 == 1 && lp.0 != 0 {
+                Some(*Box::from_raw(lp.0 as *mut String))
+            } else {
+                None
+            };
             if sp.is_null() { return LRESULT(0); }
             let s = &mut *sp;
-            if !s.voice_listening {
-                match s.anim {
-                    Anim::Hidden | Anim::Hiding { .. } => do_show(hwnd, s),
-                    _ => {}
-                }
-                s.voice_triggered = true;
-                s.voice_listening = true;
-                s.voice_dot_tick = 0;
-                let _ = SetTimer(hwnd, TIMER_VOICE_ANIM, 80, None);
-                voice::start_query_listener(hwnd);
-                let _ = InvalidateRect(hwnd, None, FALSE);
+
+            match s.anim {
+                Anim::Hidden | Anim::Hiding { .. } => do_show(hwnd, s),
+                _ => {}
             }
+            force_foreground(hwnd);
+
+            let q = query.map(|q| q.trim().to_string()).unwrap_or_default();
+            if !q.is_empty() {
+                // Single-utterance flow: type the query out now; the countdown to
+                // auto-execute starts once results arrive (see WM_SEARCH_RESULTS).
+                s.query = q;
+                s.cursor_pos = s.query.len();
+                s.selected = 0;
+                s.scroll_offset = 0;
+                s.text_selected = false;
+                s.voice_triggered = true;
+                s.voice_pending_exec = true;
+                s.voice_exec_deadline = None;
+                reset_cursor_blink(hwnd, s);
+                trigger_search(hwnd, s);
+            } else {
+                // Bare wake word: keep the window open for typing or a follow-up utterance.
+                s.voice_triggered = true;
+                s.voice_pending_exec = false;
+            }
+            let _ = InvalidateRect(hwnd, None, FALSE);
             LRESULT(0)
         }
 
@@ -726,6 +826,8 @@ unsafe extern "system" fn wnd_proc(
                 }
                 TIMER_VOICE_AUTOEXEC => {
                     let _ = KillTimer(hwnd, TIMER_VOICE_AUTOEXEC);
+                    let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
+                    s.voice_exec_deadline = None;
                     if s.voice_triggered || s.voice_pending_exec {
                         s.voice_triggered = false;
                         s.voice_pending_exec = false;
@@ -750,7 +852,9 @@ unsafe extern "system" fn wnd_proc(
             if s.voice_triggered {
                 s.voice_triggered = false;
                 s.voice_pending_exec = false;
+                s.voice_exec_deadline = None;
                 let _ = KillTimer(hwnd, TIMER_VOICE_AUTOEXEC);
+                let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
                 let _ = InvalidateRect(hwnd, None, FALSE);
             }
             s.submenu_active = false;
@@ -784,7 +888,9 @@ unsafe extern "system" fn wnd_proc(
             if s.voice_triggered {
                 s.voice_triggered = false;
                 s.voice_pending_exec = false;
+                s.voice_exec_deadline = None;
                 let _ = KillTimer(hwnd, TIMER_VOICE_AUTOEXEC);
+                let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
                 let _ = InvalidateRect(hwnd, None, FALSE);
             }
             let vk = VIRTUAL_KEY(wp.0 as u16);
@@ -1264,7 +1370,9 @@ unsafe extern "system" fn wnd_proc(
             if s.voice_triggered {
                 s.voice_triggered = false;
                 s.voice_pending_exec = false;
+                s.voice_exec_deadline = None;
                 let _ = KillTimer(hwnd, TIMER_VOICE_AUTOEXEC);
+                let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
                 let _ = InvalidateRect(hwnd, None, FALSE);
             }
             if !s.results.is_empty() {
@@ -1303,7 +1411,9 @@ unsafe extern "system" fn wnd_proc(
             if s.voice_triggered {
                 s.voice_triggered = false;
                 s.voice_pending_exec = false;
+                s.voice_exec_deadline = None;
                 let _ = KillTimer(hwnd, TIMER_VOICE_AUTOEXEC);
+                let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
                 let _ = InvalidateRect(hwnd, None, FALSE);
             }
             reset_cursor_blink(hwnd, s);
@@ -1477,8 +1587,7 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
 
         let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, 0, LWA_COLORKEY | LWA_ALPHA);
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        let _ = SetForegroundWindow(hwnd);
-        let _ = SetFocus(hwnd);
+        force_foreground(hwnd);
     } else {
         let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
         s.anim = Anim::Hiding { start_time, start_p };
@@ -1509,8 +1618,7 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
         if is_finished {
             if appearing {
                 s.anim = Anim::Visible;
-                let _ = SetForegroundWindow(hwnd);
-                let _ = SetFocus(hwnd);
+                force_foreground(hwnd);
             } else {
                 s.anim = Anim::Hidden;
                 let _ = ShowWindow(hwnd, SW_HIDE);
@@ -1535,6 +1643,24 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
     IN_ANIMATION = false;
 }
 
+// AttachThreadInput trick: allows SetForegroundWindow to succeed even from background context.
+// Needed when the launcher is shown via voice (background thread posts WM_VOICE_WAKEWORD).
+unsafe fn force_foreground(hwnd: HWND) {
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    let fore = GetForegroundWindow();
+    let fore_tid = GetWindowThreadProcessId(fore, None);
+    let my_tid = GetCurrentThreadId();
+    if fore_tid != 0 && fore_tid != my_tid {
+        let _ = AttachThreadInput(fore_tid, my_tid, TRUE);
+        let _ = SetForegroundWindow(hwnd);
+        let _ = SetFocus(hwnd);
+        let _ = AttachThreadInput(fore_tid, my_tid, FALSE);
+    } else {
+        let _ = SetForegroundWindow(hwnd);
+        let _ = SetFocus(hwnd);
+    }
+}
+
 unsafe fn reset_cursor_blink(hwnd: HWND, s: &mut State) {
     s.cursor_visible = true;
     let _ = KillTimer(hwnd, TIMER_CURSOR_BLINK);
@@ -1546,7 +1672,15 @@ unsafe fn do_show(hwnd: HWND, s: &mut State) {
     animate_window(hwnd, true);
 }
 
-unsafe fn start_hide(hwnd: HWND, _s: &mut State) {
+unsafe fn start_hide(hwnd: HWND, s: &mut State) {
+    // The continuous dictation session runs permanently in the background — no need to
+    // restart it here. Just clear voice flags so the window can dismiss normally.
+    s.voice_listening = false;
+    s.voice_triggered = false;
+    s.voice_pending_exec = false;
+    s.voice_exec_deadline = None;
+    let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
+    let _ = KillTimer(hwnd, TIMER_VOICE_AUTOEXEC);
     animate_window(hwnd, false);
 }
 
@@ -1558,6 +1692,7 @@ unsafe fn do_hide(hwnd: HWND, s: &mut State) {
     s.voice_triggered = false;
     s.voice_listening = false;
     s.voice_pending_exec = false;
+    s.voice_exec_deadline = None;
     let _ = ShowWindow(hwnd, SW_HIDE);
     s.anim = Anim::Hidden;
 }
@@ -2048,13 +2183,20 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         fill_circle(mdc, x + w - 32, y + SEARCH_H / 2, 6, dot_color);
     }
 
-    // Draw "▶ Executing..." hint when auto-executing
+    // Draw countdown hint while waiting to auto-execute a voice query.
     if (s.voice_triggered || s.voice_pending_exec) && !s.voice_listening {
+        let hint_text = if let Some(deadline) = s.voice_exec_deadline {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let secs = (remaining.as_millis() as f32 / 1000.0).ceil() as u32;
+            format!("Esc to cancel · {}s", secs.max(1))
+        } else {
+            "Listening…".to_string()
+        };
         SelectObject(mdc, s.font_c);
         SetTextColor(mdc, COLORREF(0x00_3C_B4_00)); // green
-        let mut hint: Vec<u16> = "▶ Executing...".encode_utf16().collect();
+        let mut hint: Vec<u16> = hint_text.encode_utf16().collect();
         let mut hint_tr = RECT {
-            left: x + w - 150,
+            left: x + w - 200,
             top: y,
             right: x + w - 24,
             bottom: y + SEARCH_H,
