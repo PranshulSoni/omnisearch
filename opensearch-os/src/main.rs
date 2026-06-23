@@ -1893,11 +1893,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let cursor_top = tr.top + (tr.bottom - tr.top - text_h) / 2;
         fill(mdc, cursor_x, cursor_top, 2, text_h, CLR_WHITE);
     }
-
     // ── Results ───────────────────────────────────────────────────────────
     let n = (s.results.len().saturating_sub(s.scroll_offset)).min(VISIBLE_RESULTS);
     if n > 0 {
-        fill(mdc, x, y + SEARCH_H, w, 1, CLR_DIV);
+        let list_w = if s.submenu_active { w - 240 } else { w };
+        fill(mdc, x, y + SEARCH_H, list_w, 1, CLR_DIV);
 
         for i in 0..n {
             let res_idx = s.scroll_offset + i;
@@ -1907,14 +1907,14 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let is_checked = s.selected_clip_ids.contains(&res.entry.id);
             if res_idx == s.selected {
                 if is_checked {
-                    fill(mdc, x, ry, w, RESULT_H, COLORREF(0x00_4E_45_45));
+                    fill(mdc, x, ry, list_w, RESULT_H, COLORREF(0x00_4E_45_45));
                 } else {
-                    fill(mdc, x, ry, w, RESULT_H, BG_SEL);
+                    fill(mdc, x, ry, list_w, RESULT_H, BG_SEL);
                 }
             } else if is_checked {
-                fill(mdc, x, ry, w, RESULT_H, COLORREF(0x00_25_2A_2E));
+                fill(mdc, x, ry, list_w, RESULT_H, COLORREF(0x00_25_2A_2E));
             }
-            if i > 0 { fill(mdc, x + PAD_L, ry, w - PAD_L * 2, 1, CLR_DIV); }
+            if i > 0 { fill(mdc, x + PAD_L, ry, list_w - PAD_L * 2, 1, CLR_DIV); }
 
             let cy = ry + (RESULT_H - 40) / 2;
 
@@ -1984,7 +1984,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 res.entry.control_name.clone()
             };
             let mut name: Vec<u16> = display_name.encode_utf16().collect();
-            let mut r = RECT { left: tx, top: cy, right: x + w - 96, bottom: cy + 22 };
+            let mut r = RECT { left: tx, top: cy, right: x + list_w - 96, bottom: cy + 22 };
             let _ = DrawTextW(mdc, &mut name, &mut r,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
@@ -1992,7 +1992,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             SelectObject(mdc, s.font_c);
             SetTextColor(mdc, CLR_GRAY);
             let mut crumb: Vec<u16> = res.entry.breadcrumb_path.encode_utf16().collect();
-            let mut r2 = RECT { left: tx, top: cy + 24, right: x + w - 96, bottom: cy + 40 };
+            let mut r2 = RECT { left: tx, top: cy + 24, right: x + list_w - 96, bottom: cy + 40 };
             let _ = DrawTextW(mdc, &mut crumb, &mut r2,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
@@ -2002,7 +2002,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             } else {
                 &res.entry.source
             };
-            badge(mdc, s, badge_source, x + w - 88, ry + (RESULT_H - 20) / 2);
+            badge(mdc, s, badge_source, x + list_w - 88, ry + (RESULT_H - 20) / 2);
         }
 
         // Draw scrollbar if there are more results than visible
@@ -2021,12 +2021,63 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let thumb_y = track_top + (s.scroll_offset as f32 / max_offset as f32 * (track_h - thumb_h) as f32) as i32;
             
             // Draw subtle track
-            let sb_x = x + w - 10;
+            let sb_x = x + list_w - 10;
             let sb_w = 4;
             fill(mdc, sb_x, track_top, sb_w, track_h, COLORREF(0x00_2A_2A_2A));
-            
             // Draw thumb
             fill(mdc, sb_x, thumb_y, sb_w, thumb_h, CLR_GRAY);
+        }
+
+        if s.submenu_active {
+            // Draw dividing line
+            fill(mdc, x + list_w, y + SEARCH_H, 1, h - SEARCH_H, CLR_DIV);
+
+            // Draw submenu background
+            fill(mdc, x + list_w + 1, y + SEARCH_H + 1, 238, h - SEARCH_H - 1, COLORREF(0x00_15_15_15));
+
+            let actions = [
+                "Run as Administrator",
+                "Open File Location",
+                "Copy Path",
+            ];
+
+            let action_h = 44;
+            let start_y = y + SEARCH_H + 16;
+            for idx in 0..3 {
+                let ay = start_y + idx as i32 * (action_h + 8);
+                if s.submenu_selected == idx {
+                    fill_rounded(mdc, x + list_w + 8, ay, 224, action_h, 8, BG_SEL);
+                }
+
+                SelectObject(mdc, s.font_n);
+                if s.submenu_selected == idx {
+                    SetTextColor(mdc, CLR_WHITE);
+                } else {
+                    SetTextColor(mdc, CLR_GRAY);
+                }
+
+                let mut text_wide: Vec<u16> = actions[idx].encode_utf16().collect();
+                let mut r_action = RECT {
+                    left: x + list_w + 16,
+                    top: ay,
+                    right: x + w - 16,
+                    bottom: ay + action_h,
+                };
+                let _ = DrawTextW(mdc, &mut text_wide, &mut r_action, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                if s.submenu_selected == idx {
+                    SelectObject(mdc, s.font_c);
+                    SetTextColor(mdc, COLORREF(0x00_A0_A0_A0));
+                    let mut hint_wide: Vec<u16> = "Enter".encode_utf16().collect();
+                    let mut r_hint = RECT {
+                        left: x + w - 60,
+                        top: ay,
+                        right: x + w - 16,
+                        bottom: ay + action_h,
+                    };
+                    let _ = DrawTextW(mdc, &mut hint_wide, &mut r_hint, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                }
+            }
         }
     }
 
