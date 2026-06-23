@@ -1600,6 +1600,18 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                 },
                 score: 3.2,
             });
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: "folder.switch".to_string(),
+                    control_name: "Window Switcher".to_string(),
+                    breadcrumb_path: "Window > Switcher".to_string(),
+                    launch_command: "switch:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Switch to any running application window".to_string(),
+                    synonyms: "switch windows alt tab task active running switcher".to_string(),
+                },
+                score: 3.1,
+            });
             for rf in self.recent_files.iter().take(top_k.min(20)) {
                 let ext = rf.name.rsplit('.').next().unwrap_or("").to_uppercase();
                 results.push(SearchResult {
@@ -1637,6 +1649,16 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             }
             return results;
         }
+        if q_lower_trimmed.starts_with("switch:") {
+            let sub_query = q_lower_trimmed.strip_prefix("switch:").unwrap().trim();
+            return self.search_windows(sub_query);
+        }
+
+        if q_lower_trimmed.starts_with("window:") {
+            let sub_query = q_lower_trimmed.strip_prefix("window:").unwrap().trim();
+            return self.search_windows(sub_query);
+        }
+
 
         if q_lower_trimmed.starts_with("clipboard:") {
             let sub_query = q_lower_trimmed.strip_prefix("clipboard:").unwrap().trim();
@@ -3750,4 +3772,107 @@ pub fn search_processes(query: &str) -> Vec<SearchResult> {
     results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     results.truncate(8);
     results
+}
+
+struct WindowInfo {
+    hwnd: windows::Win32::Foundation::HWND,
+    title: String,
+}
+
+unsafe extern "system" fn enum_windows_callback(hwnd: windows::Win32::Foundation::HWND, lparam: windows::Win32::Foundation::LPARAM) -> windows::Win32::Foundation::BOOL {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IsWindowVisible, GetWindowTextW, GetWindowLongW,
+        GWL_EXSTYLE, GWL_STYLE, WS_EX_TOOLWINDOW, WS_CHILD
+    };
+    
+    if IsWindowVisible(hwnd).as_bool() {
+        let mut title = [0u16; 512];
+        let len = GetWindowTextW(hwnd, &mut title);
+        if len > 0 {
+            let title_str = String::from_utf16_lossy(&title[..len as usize]);
+            let title_trimmed = title_str.trim_matches('\0').trim().to_string();
+            
+            if !title_trimmed.is_empty() {
+                let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+                let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+                
+                let is_tool = (ex_style & WS_EX_TOOLWINDOW.0) != 0;
+                let is_child = (style & WS_CHILD.0) != 0;
+                
+                // Skip common Windows/Shell system background windows
+                let is_ignored = title_trimmed == "Program Manager" 
+                    || title_trimmed == "Settings" 
+                    || title_trimmed == "Start" 
+                    || title_trimmed == "Windows Input Experience";
+                
+                if !is_tool && !is_child && !is_ignored {
+                    let list = &mut *(lparam.0 as *mut Vec<WindowInfo>);
+                    list.push(WindowInfo {
+                        hwnd,
+                        title: title_trimmed,
+                    });
+                }
+            }
+        }
+    }
+    true.into()
+}
+
+impl SearchEngine {
+    pub fn search_windows(&self, query: &str) -> Vec<SearchResult> {
+        let mut list = Vec::new();
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::EnumWindows(
+                Some(enum_windows_callback),
+                windows::Win32::Foundation::LPARAM(&mut list as *mut _ as isize),
+            );
+        }
+        
+        let q_lower = query.trim().to_lowercase();
+        let mut results = Vec::new();
+        
+        for win in list {
+            let win_lower = win.title.to_lowercase();
+            let mut score = 0.0f32;
+            
+            if q_lower.is_empty() {
+                score = 1.0;
+            } else if win_lower == q_lower {
+                score = 3.0;
+            } else if win_lower.starts_with(&q_lower) {
+                score = 2.5;
+            } else if win_lower.contains(&q_lower) {
+                score = 1.8;
+            } else {
+                let win_len = win_lower.chars().count();
+                let q_len = q_lower.chars().count();
+                if win_len > 0 && q_len > 0 {
+                    let dist = levenshtein_distance(&q_lower, &win_lower);
+                    let max_len = win_len.max(q_len);
+                    let similarity = 1.0 - (dist as f32 / max_len as f32);
+                    if similarity >= 0.5 {
+                        score = 0.5 + 1.0 * similarity;
+                    }
+                }
+            }
+            
+            if score > 0.0 {
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("window.{}", win.hwnd.0 as isize),
+                        control_name: win.title.clone(),
+                        breadcrumb_path: format!("Window Switcher > {}", win.title),
+                        launch_command: format!("window:{}", win.hwnd.0 as isize),
+                        source: "WINDOW".to_string(),
+                        description: format!("Switch to Window: {}", win.title),
+                        synonyms: win.title.to_lowercase(),
+                    },
+                    score,
+                });
+            }
+        }
+        
+        results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results
+    }
 }
