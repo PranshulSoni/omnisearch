@@ -2058,9 +2058,11 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             let mut score = 0.0f32;
             
             if app_lower == q_lower {
-                score = 3.0; // Exact match
+                score = 11.0; // Exact app name — wins over projects/files/web (issue 2)
+            } else if app_lower.starts_with(&q_lower) && q_lower.chars().count() >= 2 {
+                score = 10.5; // Strong prefix — also wins
             } else if app_lower.starts_with(&q_lower) {
-                score = 2.5; // Prefix match
+                score = 2.5; // 1-char prefix — modest, avoids single-letter domination
             } else if q_lower.starts_with(&app_lower) {
                 score = 2.2; // App name is a prefix of the query
             } else if app_lower.contains(&q_lower) {
@@ -2494,6 +2496,7 @@ mod nlp_tests {
     fn cleans_and_classifies() {
         assert_eq!(clean_prompt("Open Chrome, please"), (Intent::LaunchApp, "chrome".to_string()));
         assert_eq!(clean_prompt("can you launch spotify"), (Intent::LaunchApp, "spotify".to_string()));
+        assert_eq!(clean_prompt("can you open brave for me"), (Intent::LaunchApp, "brave".to_string()));
         assert_eq!(clean_prompt("find my budget spreadsheet"), (Intent::FindFile, "budget spreadsheet".to_string()));
         assert_eq!(clean_prompt("look up rust lifetimes"), (Intent::WebSearch, "rust lifetimes".to_string()));
         assert_eq!(clean_prompt("show me my downloads right now"), (Intent::General, "my downloads".to_string()));

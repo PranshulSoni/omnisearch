@@ -51,28 +51,52 @@ pub fn log(msg: &str) {
     log_voice(msg.to_string());
 }
 
-// ── One-shot dictation, triggered by hotkey or mic button ─────────────────────
+// ── Pre-warmed one-shot dictation, triggered by hotkey or mic button ──────────
+//
+// A single recognizer is built and compiled ONCE on a persistent worker thread,
+// then reused for every trigger. Compiling costs ~0.5–1s; paying it per-press made
+// RecognizeAsync start late and miss the front of the phrase (it would hear only the
+// trailing "for me"). The mic still opens only during a triggered RecognizeAsync —
+// nothing listens in the background.
+static TRIGGER: std::sync::OnceLock<std::sync::mpsc::SyncSender<()>> = std::sync::OnceLock::new();
 
-/// Run one-shot dictation and post the recognized (normalized) query to the launcher.
-/// The recognizer is built FRESH inside this thread (which stays alive for the whole
-/// RecognizeAsync) — reusing a recognizer built in an already-exited thread hangs.
-/// WPARAM=1 + Box<String> on success, WPARAM=0 on empty/failure.
+/// Trigger one dictation. First call spawns the persistent (pre-warmed) worker;
+/// later calls just wake it.
 pub fn start_query_listener(hwnd: HWND) {
-    let h = HwndPtr(hwnd.0 as usize);
-    std::thread::spawn(move || {
-        let _ = unsafe {
-            windows::Win32::System::Com::CoInitializeEx(
-                None,
-                windows::Win32::System::Com::COINIT_MULTITHREADED,
-            )
-        };
+    let tx = TRIGGER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<()>(8);
+        let h = HwndPtr(hwnd.0 as usize);
+        std::thread::spawn(move || dictation_worker(h, rx));
+        tx
+    });
+    let _ = tx.try_send(());
+}
 
-        // ponytail: no always-on session owns the mic anymore, so dictation can start
-        // immediately; one retry still covers a cold WinRT recognizer returning empty.
+fn dictation_worker(h: HwndPtr, rx: std::sync::mpsc::Receiver<()>) {
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_MULTITHREADED,
+        );
+    }
+
+    // Build + compile up front so the first press is instant.
+    let mut recognizer = build_recognizer();
+    log_voice(format!("worker: pre-warmed (ready={})", recognizer.is_some()));
+
+    while rx.recv().is_ok() {
+        // Collapse any double-press into one dictation.
+        while rx.try_recv().is_ok() {}
+
+        if recognizer.is_none() {
+            recognizer = build_recognizer();
+        }
+
         let mut text = None;
         for attempt in 1..=QUERY_ATTEMPTS {
-            log_voice(format!("query: building dictation recognizer (attempt={attempt})"));
-            text = run_dictation();
+            let Some(r) = recognizer.as_ref() else { break };
+            log_voice(format!("query: RecognizeAsync (attempt={attempt})"));
+            text = run_recognition(r);
             if text.is_some() {
                 break;
             }
@@ -81,26 +105,35 @@ pub fn start_query_listener(hwnd: HWND) {
                 std::thread::sleep(std::time::Duration::from_millis(QUERY_RETRY_DELAY_MS));
             }
         }
-        log_voice(format!("query: dictation done (got_text={})", text.is_some()));
 
-        unsafe {
-            match text {
-                Some(t) if !t.trim().is_empty() => {
-                    let q = crate::search::clean_prompt(&t).1;
-                    log_voice(format!("query: '{}' → '{}'", t, q));
-                    let ptr = Box::into_raw(Box::new(q)) as isize;
-                    let _ = PostMessageW(h.hwnd(), WM_VOICE_QUERY_READY, WPARAM(1), LPARAM(ptr));
-                }
-                _ => {
-                    let _ = PostMessageW(h.hwnd(), WM_VOICE_QUERY_READY, WPARAM(0), LPARAM(0));
-                }
-            }
-            windows::Win32::System::Com::CoUninitialize();
+        // A hard failure can wedge the recognizer; drop it so the next trigger
+        // rebuilds a fresh (still pre-warmed) one.
+        if text.is_none() {
+            recognizer = None;
         }
-    });
+
+        post_query(h, text);
+    }
 }
 
-fn run_dictation() -> Option<String> {
+fn post_query(h: HwndPtr, text: Option<String>) {
+    unsafe {
+        match text {
+            Some(t) if !t.trim().is_empty() => {
+                let q = crate::search::clean_prompt(&t).1;
+                log_voice(format!("query: '{}' → '{}'", t, q));
+                let ptr = Box::into_raw(Box::new(q)) as isize;
+                let _ = PostMessageW(h.hwnd(), WM_VOICE_QUERY_READY, WPARAM(1), LPARAM(ptr));
+            }
+            _ => {
+                let _ = PostMessageW(h.hwnd(), WM_VOICE_QUERY_READY, WPARAM(0), LPARAM(0));
+            }
+        }
+    }
+}
+
+/// Build + compile a dictation recognizer (the slow part — done once, kept hot).
+fn build_recognizer() -> Option<SpeechRecognizer> {
     let recognizer = SpeechRecognizer::new().ok()?;
 
     // Bound the initial-silence wait so RecognizeAsync always returns (never hangs).
@@ -115,8 +148,11 @@ fn run_dictation() -> Option<String> {
     ).ok()?;
     recognizer.Constraints().ok()?.Append(&constraint).ok()?;
     recognizer.CompileConstraintsAsync().ok()?.get().ok()?;
+    Some(recognizer)
+}
 
-    log_voice("query: RecognizeAsync (listening)".into());
+/// One RecognizeAsync on an already-compiled recognizer (starts ~instantly).
+fn run_recognition(recognizer: &SpeechRecognizer) -> Option<String> {
     let result = recognizer.RecognizeAsync().ok()?.get().ok()?;
     let status = result.Status().ok()?;
     log_voice(format!("query: result status={:?}", status));
