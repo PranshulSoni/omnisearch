@@ -34,6 +34,7 @@ const ICON_W: i32 = 36;
 
 // ── Win32 IDs ─────────────────────────────────────────────────────────────────
 const HOTKEY_ID: i32 = 1;
+const HOTKEY_VOICE_ID: i32 = 2;
 const TIMER_DEBOUNCE: usize = 1;
 const TIMER_CURSOR_BLINK: usize = 2;
 const TIMER_VOICE_AUTOEXEC: usize = 3;
@@ -44,7 +45,6 @@ const WM_ENGINE_READY: u32 = WM_USER + 2;
 const WM_SEARCH_RESULTS: u32 = WM_USER + 3;
 const WM_START_EDITING: u32 = WM_USER + 4;
 const WM_REFRESH_SEARCH: u32 = WM_USER + 5;
-const WM_VOICE_WAKEWORD: u32 = WM_USER + 100;
 const WM_VOICE_QUERY_READY: u32 = WM_USER + 101;
 
 struct SearchRequest {
@@ -87,6 +87,7 @@ struct State {
     font_n: HFONT,
     font_c: HFONT,
     font_b: HFONT,
+    font_mic: HFONT,
     icon_settings: HICON,
     icon_control_panel: HICON,
     icon_search: HICON,
@@ -257,6 +258,13 @@ unsafe fn run() {
         CLEARTYPE_QUALITY.0 as u32, (DEFAULT_PITCH.0 | FF_SWISS.0) as u32, fp,
     );
 
+    let mic_face: Vec<u16> = "Segoe MDL2 Assets\0".encode_utf16().collect();
+    let font_mic = CreateFontW(
+        -20, 0, 0, 0, 400, 0, 0, 0,
+        DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32,
+        CLEARTYPE_QUALITY.0 as u32, (DEFAULT_PITCH.0 | FF_SWISS.0) as u32, PCWSTR(mic_face.as_ptr()),
+    );
+
     let sw = GetSystemMetrics(SM_CXSCREEN);
     let sh = GetSystemMetrics(SM_CYSCREEN);
 
@@ -303,6 +311,7 @@ unsafe fn run() {
         font_n: mk_font(-17, 600),
         font_c: mk_font(-13, 400),
         font_b: mk_font(-11, 600),
+        font_mic,
         icon_settings,
         icon_control_panel,
         icon_search,
@@ -419,7 +428,6 @@ unsafe fn run() {
         &backdrop as *const _ as _, 4,
     );
 
-    voice::start_wake_word_listener(hwnd);
 
     // Load the search engine in a background thread so the window appears instantly.
     let hwnd_usize = hwnd.0 as usize;
@@ -505,6 +513,9 @@ unsafe fn run() {
         return;
     }
 
+    // Ctrl+Alt+Space starts voice dictation — no always-on background listening.
+    let _ = RegisterHotKey(hwnd, HOTKEY_VOICE_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_SPACE.0 as u32);
+
     let mut msg = MSG::default();
     while GetMessageW(&mut msg, HWND(null_mut()), 0, 0).as_bool() {
         let _ = TranslateMessage(&msg);
@@ -512,6 +523,7 @@ unsafe fn run() {
     }
 
     let _ = UnregisterHotKey(hwnd, HOTKEY_ID);
+    let _ = UnregisterHotKey(hwnd, HOTKEY_VOICE_ID);
 }
 
 // ── WndProc ───────────────────────────────────────────────────────────────────
@@ -532,6 +544,13 @@ unsafe extern "system" fn wnd_proc(
             match s.anim {
                 Anim::Hidden | Anim::Hiding { .. } => do_show(hwnd, s),
                 _ => start_hide(hwnd, s),
+            }
+            LRESULT(0)
+        }
+
+        WM_HOTKEY if wp.0 as i32 == HOTKEY_VOICE_ID => {
+            if !sp.is_null() {
+                start_voice_capture(hwnd, &mut *sp);
             }
             LRESULT(0)
         }
@@ -731,46 +750,6 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
 
-        WM_VOICE_WAKEWORD => {
-            // Payload (wp==1): Box<String> with the query spoken after the wake word.
-            // Empty string = bare wake word (just open the launcher).
-            let query = if wp.0 == 1 && lp.0 != 0 {
-                Some(*Box::from_raw(lp.0 as *mut String))
-            } else {
-                None
-            };
-            if sp.is_null() { return LRESULT(0); }
-            let s = &mut *sp;
-
-            match s.anim {
-                Anim::Hidden | Anim::Hiding { .. } => do_show(hwnd, s),
-                _ => {}
-            }
-            force_foreground(hwnd);
-
-            let q = query.map(|q| q.trim().to_string()).unwrap_or_default();
-            if !q.is_empty() {
-                // Single-utterance flow: type the query out now; the countdown to
-                // auto-execute starts once results arrive (see WM_SEARCH_RESULTS).
-                s.query = q;
-                s.cursor_pos = s.query.len();
-                s.selected = 0;
-                s.scroll_offset = 0;
-                s.text_selected = false;
-                s.voice_triggered = true;
-                s.voice_pending_exec = true;
-                s.voice_exec_deadline = None;
-                reset_cursor_blink(hwnd, s);
-                trigger_search(hwnd, s);
-            } else {
-                // Bare wake word: keep the window open for typing or a follow-up utterance.
-                s.voice_triggered = true;
-                s.voice_pending_exec = false;
-            }
-            let _ = InvalidateRect(hwnd, None, FALSE);
-            LRESULT(0)
-        }
-
         WM_VOICE_QUERY_READY => {
             if sp.is_null() {
                 if wp.0 == 1 && lp.0 != 0 {
@@ -790,15 +769,16 @@ unsafe extern "system" fn wnd_proc(
                 let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
                 let text = text.trim().to_string();
                 if !text.is_empty() {
+                    // Query already normalized in voice.rs. Type it out, search, and let
+                    // WM_SEARCH_RESULTS arm the ~3.5s "Esc to cancel" auto-exec countdown.
                     s.query = text;
                     s.cursor_pos = s.query.len();
                     s.selected = 0;
                     s.scroll_offset = 0;
                     s.voice_pending_exec = s.voice_triggered;
+                    s.voice_exec_deadline = None;
+                    reset_cursor_blink(hwnd, s);
                     trigger_search(hwnd, s);
-                    if s.voice_triggered {
-                        let _ = SetTimer(hwnd, TIMER_VOICE_AUTOEXEC, 5000, None);
-                    }
                 } else {
                     s.voice_triggered = false;
                     s.voice_pending_exec = false;
@@ -1403,6 +1383,29 @@ unsafe extern "system" fn wnd_proc(
         WM_LBUTTONDOWN => {
             if sp.is_null() { return LRESULT(0); }
             let s = &mut *sp;
+            // Mic button (search bar's right corner) toggles voice dictation.
+            {
+                let cmy = ((lp.0 >> 16) & 0xFFFF) as i16 as i32;
+                let cmx = (lp.0 & 0xFFFF) as i16 as i32;
+                let mut rcc = RECT::default();
+                let _ = GetClientRect(hwnd, &mut rcc);
+                let bx = (rcc.right - rcc.left - WIN_W) / 2;
+                let by = s.cy - s.win_h() / 2;
+                if cmx >= bx + WIN_W - 52 && cmx < bx + WIN_W - 4 && cmy >= by && cmy < by + SEARCH_H {
+                    if s.voice_listening {
+                        s.voice_listening = false;
+                        s.voice_triggered = false;
+                        s.voice_pending_exec = false;
+                        s.voice_exec_deadline = None;
+                        let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
+                        let _ = KillTimer(hwnd, TIMER_VOICE_AUTOEXEC);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                    } else {
+                        start_voice_capture(hwnd, s);
+                    }
+                    return LRESULT(0);
+                }
+            }
             if s.voice_listening {
                 s.voice_listening = false;
                 let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
@@ -1524,6 +1527,7 @@ unsafe extern "system" fn wnd_proc(
                 let _ = DeleteObject(s.font_n);
                 let _ = DeleteObject(s.font_c);
                 let _ = DeleteObject(s.font_b);
+                let _ = DeleteObject(s.font_mic);
                 if !s.icon_settings.0.is_null() { let _ = DestroyIcon(s.icon_settings); }
                 if !s.icon_control_panel.0.is_null() { let _ = DestroyIcon(s.icon_control_panel); }
                 if !s.icon_search.0.is_null() { let _ = DestroyIcon(s.icon_search); }
@@ -1644,7 +1648,7 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
 }
 
 // AttachThreadInput trick: allows SetForegroundWindow to succeed even from background context.
-// Needed when the launcher is shown via voice (background thread posts WM_VOICE_WAKEWORD).
+// Needed when the launcher is summoned by a global hotkey while another app holds focus.
 unsafe fn force_foreground(hwnd: HWND) {
     use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     let fore = GetForegroundWindow();
@@ -1672,9 +1676,35 @@ unsafe fn do_show(hwnd: HWND, s: &mut State) {
     animate_window(hwnd, true);
 }
 
+// Hotkey / mic-button entry point: open the launcher, show "Listening…", and run one
+// one-shot dictation. Mirrors the old wake-word flow (auto-exec the top result).
+unsafe fn start_voice_capture(hwnd: HWND, s: &mut State) {
+    if s.voice_listening {
+        return;
+    }
+    match s.anim {
+        Anim::Hidden | Anim::Hiding { .. } => do_show(hwnd, s),
+        _ => {}
+    }
+    force_foreground(hwnd);
+    s.query.clear();
+    s.cursor_pos = 0;
+    s.selected = 0;
+    s.scroll_offset = 0;
+    s.text_selected = false;
+    s.voice_triggered = true;
+    s.voice_listening = true;
+    s.voice_pending_exec = false;
+    s.voice_exec_deadline = None;
+    s.voice_dot_tick = 0;
+    let _ = SetTimer(hwnd, TIMER_VOICE_ANIM, 80, None);
+    voice::start_query_listener(hwnd);
+    let _ = InvalidateRect(hwnd, None, FALSE);
+}
+
 unsafe fn start_hide(hwnd: HWND, s: &mut State) {
-    // The continuous dictation session runs permanently in the background — no need to
-    // restart it here. Just clear voice flags so the window can dismiss normally.
+    // Voice is one-shot (hotkey / mic button), so there's nothing to restart here.
+    // Just clear voice flags so the window can dismiss normally.
     s.voice_listening = false;
     s.voice_triggered = false;
     s.voice_pending_exec = false;
@@ -2143,7 +2173,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
     // Text / placeholder
     let tx = x + PAD_L + ICON_W + 8;
-    let tw = w - (PAD_L + ICON_W + 8) - PAD_L;
+    let tw = w - (PAD_L + ICON_W + 8) - PAD_L - 36;
     let mut tr = RECT { left: tx, top: y, right: tx + tw, bottom: y + SEARCH_H };
 
     SelectObject(mdc, s.font_q);
@@ -2165,22 +2195,26 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let _ = DrawTextW(mdc, &mut dw_query, &mut text_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
-    // Draw pulsing red dot when listening
-    if s.voice_listening {
-        let phase = (s.voice_dot_tick as f32 * 0.25).sin().abs();
-        let bg_r = 0x21 as f32;
-        let bg_g = 0x21 as f32;
-        let bg_b = 0x24 as f32;
-        let red_r = 255.0f32;
-        let red_g = 50.0f32;
-        let red_b = 50.0f32;
-        
-        let r_val = (bg_r + (red_r - bg_r) * phase) as u8;
-        let g_val = (bg_g + (red_g - bg_g) * phase) as u8;
-        let b_val = (bg_b + (red_b - bg_b) * phase) as u8;
-        let dot_color = COLORREF(r_val as u32 | ((g_val as u32) << 8) | ((b_val as u32) << 16));
-        
-        fill_circle(mdc, x + w - 32, y + SEARCH_H / 2, 6, dot_color);
+    // Mic button at the search bar's right corner. Pulses red while listening, sits
+    // muted otherwise. Click toggles dictation (hit-test in WM_LBUTTONDOWN).
+    if w >= WIN_W - 8 {
+        let mic_color = if s.voice_listening {
+            let phase = (s.voice_dot_tick as f32 * 0.25).sin().abs();
+            let lerp = |a: f32, b: f32| (a + (b - a) * phase) as u8;
+            let r_val = lerp(0x60 as f32, 255.0);
+            let g_val = lerp(0x24 as f32, 50.0);
+            let b_val = lerp(0x24 as f32, 50.0);
+            COLORREF(r_val as u32 | ((g_val as u32) << 8) | ((b_val as u32) << 16))
+        } else {
+            CLR_PH
+        };
+        SelectObject(mdc, s.font_mic);
+        SetTextColor(mdc, mic_color);
+        let mut glyph: Vec<u16> = "\u{E720}".encode_utf16().collect();
+        let mut mr = RECT { left: x + w - 48, top: y, right: x + w - 12, bottom: y + SEARCH_H };
+        let _ = DrawTextW(mdc, &mut glyph, &mut mr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        SelectObject(mdc, s.font_q);
+        SetTextColor(mdc, CLR_WHITE);
     }
 
     // Draw countdown hint while waiting to auto-execute a voice query.
@@ -2198,7 +2232,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let mut hint_tr = RECT {
             left: x + w - 200,
             top: y,
-            right: x + w - 24,
+            right: x + w - 52,
             bottom: y + SEARCH_H,
         };
         let _ = DrawTextW(mdc, &mut hint, &mut hint_tr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -2479,20 +2513,6 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 unsafe fn fill(hdc: HDC, x: i32, y: i32, w: i32, h: i32, c: COLORREF) {
     let br = CreateSolidBrush(c);
     let _ = FillRect(hdc, &RECT { left: x, top: y, right: x + w, bottom: y + h }, br);
-    let _ = DeleteObject(br);
-}
-
-unsafe fn fill_circle(hdc: HDC, cx: i32, cy: i32, r: i32, color: COLORREF) {
-    let br = CreateSolidBrush(color);
-    let old_brush = SelectObject(hdc, br);
-    let pen = CreatePen(windows::Win32::Graphics::Gdi::PS_NULL, 0, COLORREF(0));
-    let old_pen = SelectObject(hdc, pen);
-    
-    let _ = Ellipse(hdc, cx - r, cy - r, cx + r, cy + r);
-    
-    let _ = SelectObject(hdc, old_pen);
-    let _ = DeleteObject(pen);
-    let _ = SelectObject(hdc, old_brush);
     let _ = DeleteObject(br);
 }
 

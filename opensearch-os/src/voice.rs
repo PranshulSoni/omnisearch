@@ -1,12 +1,6 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-
 use windows::{
     core::HSTRING,
     Media::SpeechRecognition::{
-        SpeechContinuousRecognitionCompletedEventArgs,
-        SpeechContinuousRecognitionResultGeneratedEventArgs,
-        SpeechContinuousRecognitionSession,
         SpeechRecognitionResultStatus,
         SpeechRecognitionScenario,
         SpeechRecognitionTopicConstraint,
@@ -18,11 +12,8 @@ use windows::{
 
 extern crate windows_core;
 
-// Must match WM_USER constants in main.rs (WM_USER = 0x0400)
-pub const WM_VOICE_WAKEWORD: u32 = 0x0400 + 100;
 pub const WM_VOICE_QUERY_READY: u32 = 0x0400 + 101;
 
-// Wrap HWND as usize so it can cross thread boundaries safely
 #[derive(Clone, Copy)]
 struct HwndPtr(usize);
 unsafe impl Send for HwndPtr {}
@@ -33,16 +24,8 @@ impl HwndPtr {
     }
 }
 
-// Wake phrases (lowercase). Dictation transcribes free-form speech, so we also
-// include a few common mis-hearings of "search".
-const WAKE_PHRASES: &[&str] = &[
-    "open search", "hey search", "hey speech", "hey open search",
-    "open surge", "open serch", "open sersh", "hi search",
-];
-
-// After a bare wake word ("open search" with nothing after it), wait briefly and
-// treat the next utterance as the query even without a wake word.
-static EXPECT_QUERY_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
+const QUERY_RETRY_DELAY_MS: u64 = 450;
+const QUERY_ATTEMPTS: usize = 2;
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -51,183 +34,140 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-// ── Simple file logger for diagnostics (voice_log.txt in cwd) ────────────────
 fn log_voice(msg: String) {
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("voice_log.txt")
-    {
+    // Always log next to the exe (cwd varies by how the app was launched).
+    let path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("voice_log.txt")))
+        .unwrap_or_else(|| std::path::PathBuf::from("voice_log.txt"));
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         use std::io::Write;
         let _ = writeln!(file, "[{}] {}", now_ms(), msg);
     }
 }
 
-// ── Always-on voice listener ──────────────────────────────────────────────────
+// ── One-shot dictation, triggered by hotkey or mic button ─────────────────────
 
-/// Spawn ONE background thread running a continuous dictation session that never
-/// stops. It detects a wake phrase and the query in a single spoken utterance,
-/// e.g. "open search what is the time" → query "what is the time".
-///
-/// This must be called exactly once at startup. The session self-restarts if it
-/// ever completes (silence timeout, transient error).
-pub fn start_wake_word_listener(hwnd: HWND) {
+/// Run one-shot dictation and post the recognized (normalized) query to the launcher.
+/// The recognizer is built FRESH inside this thread (which stays alive for the whole
+/// RecognizeAsync) — reusing a recognizer built in an already-exited thread hangs.
+/// WPARAM=1 + Box<String> on success, WPARAM=0 on empty/failure.
+pub fn start_query_listener(hwnd: HWND) {
     let h = HwndPtr(hwnd.0 as usize);
     std::thread::spawn(move || {
-        log_voice("listener thread: starting".into());
         let _ = unsafe {
             windows::Win32::System::Com::CoInitializeEx(
                 None,
                 windows::Win32::System::Com::COINIT_MULTITHREADED,
             )
         };
-        loop {
-            match run_listen_loop(h) {
-                Ok(()) => {
-                    log_voice("listen loop ended; rebuilding now".into());
-                    std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // ponytail: no always-on session owns the mic anymore, so dictation can start
+        // immediately; one retry still covers a cold WinRT recognizer returning empty.
+        let mut text = None;
+        for attempt in 1..=QUERY_ATTEMPTS {
+            log_voice(format!("query: building dictation recognizer (attempt={attempt})"));
+            text = run_dictation();
+            if text.is_some() {
+                break;
+            }
+            if attempt < QUERY_ATTEMPTS {
+                log_voice("query: retry after empty/failure".into());
+                std::thread::sleep(std::time::Duration::from_millis(QUERY_RETRY_DELAY_MS));
+            }
+        }
+        log_voice(format!("query: dictation done (got_text={})", text.is_some()));
+
+        unsafe {
+            match text {
+                Some(t) if !t.trim().is_empty() => {
+                    let q = normalize_voice_query(&t);
+                    log_voice(format!("query: '{}' → '{}'", t, q));
+                    let ptr = Box::into_raw(Box::new(q)) as isize;
+                    let _ = PostMessageW(h.hwnd(), WM_VOICE_QUERY_READY, WPARAM(1), LPARAM(ptr));
                 }
-                Err(e) => {
-                    log_voice(format!("listen loop error: {:?}; retry in 2s", e));
-                    std::thread::sleep(std::time::Duration::from_secs(2));
+                _ => {
+                    let _ = PostMessageW(h.hwnd(), WM_VOICE_QUERY_READY, WPARAM(0), LPARAM(0));
                 }
             }
+            windows::Win32::System::Com::CoUninitialize();
         }
     });
 }
 
-fn run_listen_loop(h: HwndPtr) -> windows_core::Result<()> {
-    log_voice("creating dictation recognizer".into());
-    let recognizer = SpeechRecognizer::new()?;
+fn run_dictation() -> Option<String> {
+    let recognizer = SpeechRecognizer::new().ok()?;
 
-    // The recognizer gives up after InitialSilenceTimeout (default ~5s) if no speech is
-    // heard, completing with TimeoutExceeded. For an always-on listener we never want
-    // that, so push the silence/babble timeouts way out. (Ignore errors — if a value is
-    // clamped, the session-rebuild fallback still keeps us alive.)
-    let one_hour = windows::Foundation::TimeSpan { Duration: 36_000_000_000 };
+    // Bound the initial-silence wait so RecognizeAsync always returns (never hangs).
     if let Ok(timeouts) = recognizer.Timeouts() {
-        let _ = timeouts.SetInitialSilenceTimeout(one_hour);
-        let _ = timeouts.SetBabbleTimeout(one_hour);
+        let eight_s = windows::Foundation::TimeSpan { Duration: 8 * 10_000_000 };
+        let _ = timeouts.SetInitialSilenceTimeout(eight_s);
     }
 
     let constraint = SpeechRecognitionTopicConstraint::Create(
         SpeechRecognitionScenario::Dictation,
         &HSTRING::from("dictation"),
-    )?;
-    recognizer.Constraints()?.Append(&constraint)?;
-    recognizer.CompileConstraintsAsync()?.get()?;
-    log_voice("dictation constraints compiled".into());
+    ).ok()?;
+    recognizer.Constraints().ok()?.Append(&constraint).ok()?;
+    recognizer.CompileConstraintsAsync().ok()?.get().ok()?;
 
-    let session: SpeechContinuousRecognitionSession =
-        recognizer.ContinuousRecognitionSession()?;
+    log_voice("query: RecognizeAsync (listening)".into());
+    let result = recognizer.RecognizeAsync().ok()?.get().ok()?;
+    let status = result.Status().ok()?;
+    log_voice(format!("query: result status={:?}", status));
+    if status == SpeechRecognitionResultStatus::Success {
+        result.Text().ok().map(|s| s.to_string())
+    } else {
+        None
+    }
+}
 
-    // Fire on every recognized phrase
-    let result_handler = windows::Foundation::TypedEventHandler::<
-        SpeechContinuousRecognitionSession,
-        SpeechContinuousRecognitionResultGeneratedEventArgs,
-    >::new(move |_s, args| {
-        if let Some(args) = args {
-            let result = args.Result()?;
-            if result.Status()? == SpeechRecognitionResultStatus::Success {
-                let text = result.Text()?.to_string();
-                if !text.trim().is_empty() {
-                    log_voice(format!("recognized: '{}'", text));
-                    handle_recognized(h, &text);
-                }
-            }
-        }
-        Ok(())
-    });
-    session.ResultGenerated(&result_handler)?;
+/// Clean a dictated query so search isn't thrown off by conversational filler.
+fn normalize_voice_query(raw: &str) -> String {
+    let mut q = raw.to_lowercase();
+    q = q.trim().trim_end_matches(|c: char| matches!(c, '.' | '?' | '!' | ',')).trim().to_string();
 
-    // Default continuous dictation auto-stops after ~20s of silence. Push that timeout
-    // way out so the session stays alive between commands (always-on listening).
-    let one_hour = windows::Foundation::TimeSpan { Duration: 36_000_000_000 };
-    let _ = session.SetAutoStopSilenceTimeout(one_hour);
-
-    // If the session ever completes (error/timeout), rebuild a fresh recognizer rather
-    // than reusing this one — reusing a completed session can hang on StartAsync.
-    let completed = Arc::new(AtomicBool::new(false));
-    let c = completed.clone();
-    let completed_handler = windows::Foundation::TypedEventHandler::<
-        SpeechContinuousRecognitionSession,
-        SpeechContinuousRecognitionCompletedEventArgs,
-    >::new(move |_s, args| {
-        if let Some(args) = args {
-            if let Ok(status) = args.Status() {
-                log_voice(format!("session completed: status={:?}", status));
-            }
-        }
-        c.store(true, Ordering::SeqCst);
-        Ok(())
-    });
-    session.Completed(&completed_handler)?;
-
-    session.StartAsync()?.get()?;
-    log_voice("dictation session started; listening".into());
-
+    const LEADING: &[&str] = &[
+        "please ", "can you ", "could you ", "would you ", "will you ",
+        "i want to ", "i wanna ", "i want ", "i need to ", "i need ",
+        "i would like to ", "let's ", "lets ", "go ahead and ", "just ",
+        "open up ", "open ", "launch ", "start ", "show me ", "show ", "find me ", "find ",
+    ];
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        if completed.swap(false, Ordering::SeqCst) {
-            // Try to restart the SAME session immediately (fast, ~no gap). Only fall back
-            // to a full recognizer rebuild if that fails.
-            log_voice("session completed; restarting".into());
-            match session.StartAsync() {
-                Ok(op) => {
-                    if op.get().is_err() {
-                        return Ok(());
-                    }
-                    log_voice("session restarted in place".into());
-                }
-                Err(_) => return Ok(()),
+        let before = q.clone();
+        for p in LEADING {
+            if let Some(rest) = q.strip_prefix(p) {
+                q = rest.trim_start().to_string();
             }
         }
+        if q == before { break; }
     }
-}
 
-/// Parse a recognized utterance: find the wake phrase, extract the query after it,
-/// and post it to the launcher. Handles both single-utterance and bare-wake flows.
-fn handle_recognized(h: HwndPtr, text: &str) {
-    let lower = text.to_lowercase();
-
-    // 1) Wake phrase present anywhere in the utterance
-    for wake in WAKE_PHRASES {
-        if let Some(pos) = lower.find(wake) {
-            let after = lower[pos + wake.len()..]
-                .trim_start_matches(|c: char| {
-                    c == ',' || c == '.' || c == '?' || c == '!' || c.is_whitespace()
-                })
-                .trim()
-                .to_string();
-            if after.is_empty() {
-                // Bare wake word — open empty, expect a follow-up utterance as the query
-                EXPECT_QUERY_UNTIL_MS.store(now_ms() + 7000, Ordering::SeqCst);
-                post_wake(h, String::new());
-            } else {
-                EXPECT_QUERY_UNTIL_MS.store(0, Ordering::SeqCst);
-                post_wake(h, after);
+    const TRAILING: &[&str] = &[" right now", " for me", " please", " now", " thanks", " thank you"];
+    loop {
+        let before = q.clone();
+        for s in TRAILING {
+            if let Some(stripped) = q.strip_suffix(s) {
+                q = stripped.trim_end().to_string();
             }
-            return;
         }
+        if q == before { break; }
     }
 
-    // 2) No wake phrase, but we're within the follow-up window from a bare wake
-    if now_ms() < EXPECT_QUERY_UNTIL_MS.load(Ordering::SeqCst) {
-        EXPECT_QUERY_UNTIL_MS.store(0, Ordering::SeqCst);
-        let q = lower.trim().to_string();
-        if !q.is_empty() {
-            post_wake(h, q);
-        }
-    }
+    q.trim()
+        .trim_end_matches(|c: char| matches!(c, '.' | '?' | '!' | ','))
+        .trim()
+        .to_string()
 }
 
-fn post_wake(h: HwndPtr, query: String) {
-    log_voice(format!("posting wakeword; query='{}'", query));
-    let ptr = Box::into_raw(Box::new(query)) as isize;
-    unsafe {
-        if PostMessageW(h.hwnd(), WM_VOICE_WAKEWORD, WPARAM(1), LPARAM(ptr)).is_err() {
-            // Window gone — reclaim the box to avoid a leak
-            let _ = Box::from_raw(ptr as *mut String);
-        }
+#[cfg(test)]
+mod tests {
+    use super::normalize_voice_query;
+    #[test]
+    fn strips_filler() {
+        assert_eq!(normalize_voice_query("Open Chrome, please"), "chrome");
+        assert_eq!(normalize_voice_query("can you launch spotify"), "spotify");
+        assert_eq!(normalize_voice_query("show me my downloads right now"), "my downloads");
+        assert_eq!(normalize_voice_query("settings"), "settings");
     }
 }
