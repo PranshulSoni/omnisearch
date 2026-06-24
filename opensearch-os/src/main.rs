@@ -513,8 +513,13 @@ unsafe fn run() {
         return;
     }
 
-    // Ctrl+Alt+Space starts voice dictation — no always-on background listening.
-    let _ = RegisterHotKey(hwnd, HOTKEY_VOICE_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_SPACE.0 as u32);
+    // Ctrl+Shift+Space starts voice dictation. (Ctrl+Alt is AltGr on many layouts and
+    // gets eaten, so it's deliberately avoided.) Non-fatal: the launcher works without it.
+    if RegisterHotKey(hwnd, HOTKEY_VOICE_ID, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_SPACE.0 as u32).is_err() {
+        voice::log("voice hotkey Ctrl+Shift+Space registration FAILED (already in use?)");
+    } else {
+        voice::log("voice hotkey Ctrl+Shift+Space registered");
+    }
 
     let mut msg = MSG::default();
     while GetMessageW(&mut msg, HWND(null_mut()), 0, 0).as_bool() {

@@ -46,6 +46,11 @@ fn log_voice(msg: String) {
     }
 }
 
+/// Diagnostic line into voice_log.txt (used by main.rs for hotkey registration).
+pub fn log(msg: &str) {
+    log_voice(msg.to_string());
+}
+
 // ── One-shot dictation, triggered by hotkey or mic button ─────────────────────
 
 /// Run one-shot dictation and post the recognized (normalized) query to the launcher.
