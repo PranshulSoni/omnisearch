@@ -4105,6 +4105,62 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         launch_command: "action:import_quicklinks",
         description: "Import quicklinks from quicklinks_import.json on your Desktop.",
     },
+    QuickAction {
+        triggers: &["mute", "mute sound", "silence pc", "mute volume", "turn off sound"],
+        name: "Mute Audio",
+        breadcrumb: "System > Audio > Mute sound output",
+        launch_command: "action:mute",
+        description: "Mute the master system audio volume.",
+    },
+    QuickAction {
+        triggers: &["unmute", "unmute sound", "unmute volume", "turn on sound"],
+        name: "Unmute Audio",
+        breadcrumb: "System > Audio > Unmute sound output",
+        launch_command: "action:unmute",
+        description: "Unmute the master system audio volume.",
+    },
+    QuickAction {
+        triggers: &["toggle hidden files", "show hidden files", "hide hidden files", "hidden folders"],
+        name: "Toggle Hidden Files",
+        breadcrumb: "System > Explorer > Show or hide hidden files",
+        launch_command: "action:toggle_hidden_files",
+        description: "Toggle visibility of hidden files and folders in Windows Explorer.",
+    },
+    QuickAction {
+        triggers: &["play", "pause", "play/pause", "music pause", "resume play"],
+        name: "Play/Pause Media",
+        breadcrumb: "System > Media > Media playback control",
+        launch_command: "action:media:play_pause",
+        description: "Toggle playback state of background media players.",
+    },
+    QuickAction {
+        triggers: &["next track", "skip track", "next song", "skip song"],
+        name: "Next Track",
+        breadcrumb: "System > Media > Media playback control",
+        launch_command: "action:media:next",
+        description: "Skip to the next media track.",
+    },
+    QuickAction {
+        triggers: &["previous track", "prev track", "previous song", "prev song"],
+        name: "Previous Track",
+        breadcrumb: "System > Media > Media playback control",
+        launch_command: "action:media:prev",
+        description: "Return to the previous media track.",
+    },
+    QuickAction {
+        triggers: &["stop playback", "stop music", "stop video"],
+        name: "Stop Playback",
+        breadcrumb: "System > Media > Media playback control",
+        launch_command: "action:media:stop",
+        description: "Stop media playback.",
+    },
+    QuickAction {
+        triggers: &["night light", "nightlight", "blue light settings", "screen warmth"],
+        name: "Night Light Settings",
+        breadcrumb: "System > Display > Night Light settings",
+        launch_command: "ms-settings:nightlight",
+        description: "Open the Display settings page to toggle or configure Night Light.",
+    },
 ];
 
 
