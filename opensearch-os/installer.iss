@@ -22,3 +22,10 @@ Name: "{userdesktop}\OpenSearch OS"; Filename: "{app}\opensearch-os.exe"
 
 [Run]
 Filename: "{app}\opensearch-os.exe"; Description: "Launch OpenSearch OS"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "taskkill"; Parameters: "/F /IM opensearch-os.exe"; Flags: runhidden; RunOnceId: "KillApp"
+Filename: "taskkill"; Parameters: "/F /IM hermes.exe"; Flags: runhidden; RunOnceId: "KillHermes"
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{userappdata}\opensearch-os"
