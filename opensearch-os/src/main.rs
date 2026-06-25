@@ -2342,11 +2342,26 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             let hwnd_ai = SendHwnd(hwnd);
             let db_path = s.db_path.clone();
             let title = s.ai_title.clone();
+            let msg_clone = msg.clone();
+
+            // Store chat in DB immediately to get a chat ID
+            let chat_id = store_ai_chat(&db_path, "agent", &title, &msg_clone, "");
+            s.active_chat_id = chat_id;
+            s.query.clear(); // Clear input box so they can immediately type follow-up
+            s.cursor_pos = 0;
+
             std::thread::spawn(move || {
                 let hwnd_ai = hwnd_ai;
-                let result = ai::complete(&sys, &msg);
+                let result = ai::complete(&sys, &msg_clone);
                 if let Ok(ref text) = result {
-                    store_ai_chat(&db_path, "agent", &title, &msg, text);
+                    if let Some(id) = chat_id {
+                        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                            let _ = conn.execute(
+                                "UPDATE ai_chats SET response = ? WHERE id = ?",
+                                rusqlite::params![text, id],
+                            );
+                        }
+                    }
                 }
                 let payload: (bool, String) = match result {
                     Ok(text) => (true, text),
