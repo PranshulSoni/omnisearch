@@ -324,6 +324,12 @@ mod tests {
 
     #[test]
     fn test_config_resolution() {
+        // Isolate APPDATA to a temporary path to avoid reading host DB/configs
+        let old_appdata = std::env::var("APPDATA").ok();
+        let temp_dir = std::env::temp_dir().join("opensearch-os-test-appdata");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        std::env::set_var("APPDATA", &temp_dir);
+
         // Clear environment variables that might interfere
         std::env::remove_var("OPENCODE_API_KEY");
         std::env::remove_var("DEEPSEEK_API_KEY");
@@ -350,5 +356,13 @@ mod tests {
 
         // Cleanup
         std::env::remove_var("DEEPSEEK_API_KEY");
+
+        // Restore APPDATA
+        if let Some(val) = old_appdata {
+            std::env::set_var("APPDATA", val);
+        } else {
+            std::env::remove_var("APPDATA");
+        }
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
