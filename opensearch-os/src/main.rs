@@ -978,21 +978,43 @@ unsafe extern "system" fn wnd_proc(
                 return LRESULT(0);
             }
 
-            // AI answer panel captures keys: Esc closes, Enter copies, arrows scroll.
-            if s.ai_pending || s.ai_answer.is_some() {
+            // AI answer panel captures keys: Esc/Backspace closes, Enter submits follow-up.
+            if s.ai_pending {
                 match vk {
                     VK_ESCAPE => close_ai_panel(hwnd, s),
-                    VK_RETURN => {
-                        if let Some(ans) = s.ai_answer.clone() {
-                            copy_to_clipboard(hwnd, &ans);
-                        }
-                        close_ai_panel(hwnd, s);
-                    }
                     VK_DOWN => { s.ai_scroll += 40; let _ = InvalidateRect(hwnd, None, FALSE); }
                     VK_UP => { s.ai_scroll = (s.ai_scroll - 40).max(0); let _ = InvalidateRect(hwnd, None, FALSE); }
                     _ => {}
                 }
                 return LRESULT(0);
+            }
+
+            if s.ai_answer.is_some() {
+                match vk {
+                    VK_ESCAPE => {
+                        close_ai_panel(hwnd, s);
+                        return LRESULT(0);
+                    }
+                    VK_BACK => {
+                        close_ai_panel(hwnd, s);
+                        return LRESULT(0);
+                    }
+                    VK_RETURN => {
+                        let q_trim = s.query.trim().to_string();
+                        if q_trim.is_empty() {
+                            if let Some(ans) = s.ai_answer.clone() {
+                                copy_to_clipboard(hwnd, &ans);
+                            }
+                            close_ai_panel(hwnd, s);
+                        } else {
+                            start_follow_up_chat(hwnd, s, q_trim);
+                        }
+                        return LRESULT(0);
+                    }
+                    VK_DOWN => { s.ai_scroll += 40; let _ = InvalidateRect(hwnd, None, FALSE); return LRESULT(0); }
+                    VK_UP => { s.ai_scroll = (s.ai_scroll - 40).max(0); let _ = InvalidateRect(hwnd, None, FALSE); return LRESULT(0); }
+                    _ => {} // Let other keys fall through to let user type!
+                }
             }
 
             if s.form_state != FormState::None {
