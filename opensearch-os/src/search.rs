@@ -247,6 +247,15 @@ impl SearchEngine {
             [],
         )?;
 
+        // Create AI settings table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ai_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
+            [],
+        )?;
+
         // Pre-populate snippets if empty
         let sn_count: i64 = conn.query_row("SELECT COUNT(*) FROM snippets", [], |row| row.get(0)).unwrap_or(0);
         if sn_count == 0 {
