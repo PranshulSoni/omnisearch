@@ -310,21 +310,7 @@ fn get_hermes_config() -> AiConfig {
     }
 }
 
-fn is_hermes_sentinel_key(key: &str) -> bool {
-    key.trim().eq_ignore_ascii_case("hermes")
-}
 
-fn fallback_config_from_key(key: &str) -> Option<AiConfig> {
-    let key = key.trim();
-    if key.is_empty() || is_hermes_sentinel_key(key) {
-        return None;
-    }
-    Some(AiConfig {
-        endpoint: "https://opencode.ai/zen/v1/chat/completions".to_string(),
-        model: "deepseek-v4-flash-free".to_string(),
-        api_key: key.to_string(),
-    })
-}
 
 fn get_agent_config() -> AiConfig {
     get_hermes_config()
