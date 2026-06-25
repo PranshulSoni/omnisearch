@@ -41,6 +41,8 @@ windows = { version = "0.58", features = [
     "Media_Ocr",
     "Media_SpeechRecognition",
     "Graphics_Imaging",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
 ] }
 windows-implement = "0.58"
 windows-core = "0.58"
