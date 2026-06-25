@@ -1392,7 +1392,7 @@ fn format_relative_time(ts: i64) -> String {
 
             let cmd_upper = command.to_uppercase();
             let breadcrumb = format!("AI Chat [{}] > {}", cmd_upper, response_snippet);
-            let time_str = format_relative_time(ts);
+            let time_str = Self::format_relative_time(ts);
 
             results.push(SearchResult {
                 entry: CatalogEntry {
