@@ -3195,6 +3195,32 @@ fn format_relative_time(ts: i64) -> String {
             final_results.push(web_search);
         }
 
+        if looks_like_agent_task(q) && !final_results.iter().any(|r| r.entry.id == "agent.nlp_task") {
+            let launch_command = if let Some((id, _)) = self.find_agent_by_name("Hermes") {
+                format!("agent:{}\u{1f}{}", id, q)
+            } else {
+                format!("query:@Hermes: {}", q)
+            };
+            let task_result = SearchResult {
+                entry: CatalogEntry {
+                    id: "agent.nlp_task".to_string(),
+                    control_name: format!("Execute with Hermes: {}", q),
+                    breadcrumb_path: "Agent > Natural language task".to_string(),
+                    launch_command,
+                    source: "AI".to_string(),
+                    description: "Run this as an agent task".to_string(),
+                    synonyms: "agent hermes execute task command action".to_string(),
+                },
+                score: 1.09,
+            };
+            if let Some(web_idx) = final_results.iter().position(|r| r.entry.id == "web_search") {
+                final_results.insert(web_idx + 1, task_result);
+            } else {
+                final_results.push(task_result);
+            }
+            final_results.truncate(top_k);
+        }
+
         final_results
     }
 
@@ -3372,9 +3398,25 @@ fn strip_any_prefix(q: &str, prefixes: &[&str]) -> Option<String> {
     None
 }
 
+fn looks_like_agent_task(raw: &str) -> bool {
+    let q = raw.trim().to_lowercase();
+    if q.len() < 4 || q.starts_with('@') || q.starts_with("ai ") || q.starts_with("ask ") {
+        return false;
+    }
+    // ponytail: simple verb heuristic; upgrade to an intent model only if this misclassifies real usage.
+    const TASK_WORDS: &[&str] = &[
+        "clear", "flush", "restart", "stop", "kill", "delete", "remove", "clean",
+        "enable", "disable", "install", "uninstall", "update", "fix", "repair",
+        "configure", "set", "create", "make", "move", "rename", "run", "execute",
+    ];
+    q.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .any(|w| TASK_WORDS.contains(&w))
+}
+
 #[cfg(test)]
 mod nlp_tests {
-    use super::{clean_prompt, Intent};
+    use super::{clean_prompt, looks_like_agent_task, Intent};
     #[test]
     fn cleans_and_classifies() {
         assert_eq!(clean_prompt("Open Chrome, please"), (Intent::LaunchApp, "chrome".to_string()));
@@ -3388,6 +3430,14 @@ mod nlp_tests {
         assert_eq!(clean_prompt("google chrome"), (Intent::General, "google chrome".to_string()));
         // question-word framing exposes a math expression for the calc fallback.
         assert_eq!(clean_prompt("what is 2+2"), (Intent::General, "2+2".to_string()));
+    }
+
+    #[test]
+    fn detects_agent_tasks_without_stealing_plain_searches() {
+        assert!(looks_like_agent_task("ipconfig flush dns"));
+        assert!(looks_like_agent_task("can you clear my dns cache"));
+        assert!(!looks_like_agent_task("google chrome"));
+        assert!(!looks_like_agent_task("ask why dns is slow"));
     }
 }
 
