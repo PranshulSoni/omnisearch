@@ -1654,30 +1654,8 @@ unsafe extern "system" fn wnd_proc(
             for i in 0..n {
                 let r = s.result_rect(i);
                 if my >= r.top && my < r.bottom {
-                    let actual_idx = s.scroll_offset + i;
-                    let cmd = s.results[actual_idx].entry.launch_command.clone();
-                    let is_action_folder = s.results[actual_idx].entry.source == "FOLDER" && (
-                        cmd == "bookmarks:" || cmd == "history:" || cmd == "commits:" ||
-                        cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" ||
-                        cmd == "switch:" || cmd == "window:"
-                    );
-                    if is_action_folder {
-                        s.query = cmd;
-                        s.cursor_pos = s.query.len();
-                        s.selected = 0;
-                        s.scroll_offset = 0;
-                        s.text_selected = false;
-                        trigger_search(hwnd, s);
-                    } else {
-                        if let Some(text) = cmd.strip_prefix("copy:") {
-                            copy_to_clipboard(hwnd, text);
-                        } else if let Some(path) = cmd.strip_prefix("copy_image:") {
-                            copy_image_to_clipboard(hwnd, path);
-                        } else {
-                            launcher::launch(&cmd);
-                        }
-                        do_hide(hwnd, s);
-                    }
+                    s.selected = s.scroll_offset + i;
+                    execute_selected(hwnd, s);
                     break;
                 }
             }
