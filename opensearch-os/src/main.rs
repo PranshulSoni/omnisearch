@@ -2212,7 +2212,7 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
     s.selected = 0;
     let _ = unsafe { InvalidateRect(hwnd, None, FALSE) };
 
-    let hwnd_ai = SendHwnd(hwnd);
+    let hwnd_raw = hwnd.0 as isize;
     let db_path = s.db_path.clone();
     let chat_id = s.active_chat_id;
     let new_prompt = follow_up;
@@ -2293,7 +2293,7 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
         };
         let ptr = Box::into_raw(Box::new(payload)) as isize;
         unsafe {
-            let _ = PostMessageW(hwnd_ai.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
+            let _ = PostMessageW(HWND(hwnd_raw as *mut _), WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
         }
     });
 }
