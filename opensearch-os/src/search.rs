@@ -1235,6 +1235,90 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         self.search_files_generic(query, true, 50, true)
     }
 
+    /// img: / screenshots: prefix — search images by OCR'd text content and filename.
+    pub fn search_images_only(&self, query: &str) -> Vec<SearchResult> {
+        const IMG_FILTER: &str =
+            "f.extension IN ('png','jpg','jpeg','bmp','gif','webp')";
+        let conn = &self.conn;
+        let q_lower = query.trim().to_lowercase();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut results = Vec::new();
+
+        let mut push_img = |path: String, name: String, ext: String, snippet: String, score: f32| {
+            let parent = std::path::Path::new(&path)
+                .parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
+            let breadcrumb = if snippet.is_empty() {
+                format!("Image > {}", path)
+            } else {
+                format!("Image > {} | {}", parent, snippet)
+            };
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: format!("file.{}", path),
+                    control_name: name.clone(),
+                    breadcrumb_path: breadcrumb,
+                    launch_command: path,
+                    source: "FILE".to_string(),
+                    description: format!("{} image — Enter to open", ext.to_uppercase()),
+                    synonyms: name.to_lowercase(),
+                },
+                score,
+            });
+        };
+
+        // Empty query → most recent images
+        if q_lower.is_empty() {
+            if let Ok(mut stmt) = conn.prepare(
+                &format!("SELECT f.path, f.name, f.extension FROM files f WHERE f.is_dir=0 AND {IMG_FILTER} ORDER BY f.modified DESC LIMIT 50")
+            ) {
+                if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?))) {
+                    for (path, name, ext) in rows.filter_map(|r| r.ok()) {
+                        if seen.insert(path.clone()) { push_img(path, name, ext, String::new(), 1.0); }
+                    }
+                }
+            }
+            return results;
+        }
+
+        // Filename match
+        let like = format!("%{}%", q_lower);
+        if let Ok(mut stmt) = conn.prepare(
+            &format!("SELECT f.path, f.name, f.extension FROM files f WHERE f.is_dir=0 AND {IMG_FILTER} AND f.name LIKE ? LIMIT 50")
+        ) {
+            if let Ok(rows) = stmt.query_map([&like], |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?))) {
+                for (path, name, ext) in rows.filter_map(|r| r.ok()) {
+                    if seen.insert(path.clone()) { push_img(path, name, ext, String::new(), 2.0); }
+                }
+            }
+        }
+
+        // OCR content match via FTS5 (each word as a prefix term)
+        let fts_q = q_lower.split_whitespace()
+            .map(|w| { let c: String = w.chars().filter(|ch| ch.is_alphanumeric()).collect(); format!("{}*", c) })
+            .filter(|w| w.len() > 1)
+            .collect::<Vec<_>>().join(" ");
+        if !fts_q.is_empty() {
+            if let Ok(mut stmt) = conn.prepare(
+                &format!("SELECT f.path, f.name, f.extension, snippet(files_fts, 1, '', '', '...', 12) \
+                          FROM files f JOIN files_fts fts ON f.path = fts.path \
+                          WHERE files_fts MATCH ? AND {IMG_FILTER} LIMIT 50")
+            ) {
+                if let Ok(rows) = stmt.query_map([&fts_q], |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?, r.get::<_,String>(3)?))) {
+                    for (path, name, ext, snip) in rows.filter_map(|r| r.ok()) {
+                        if seen.insert(path.clone()) {
+                            let snippet = snip.replace('\n', " ").replace('\r', " ").replace('\t', " ")
+                                .split_whitespace().collect::<Vec<&str>>().join(" ");
+                            push_img(path, name, ext, snippet, 1.5);
+                        }
+                    }
+                }
+            }
+        }
+
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results
+    }
+
     pub fn search_bookmarks_only(&self, sub_query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = &self.conn;
@@ -1917,6 +2001,18 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             });
             results.push(SearchResult {
                 entry: CatalogEntry {
+                    id: "folder.images".to_string(),
+                    control_name: "Search Screenshots".to_string(),
+                    breadcrumb_path: "Local > Image Text (OCR)".to_string(),
+                    launch_command: "img:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Search text inside images and screenshots (OCR)".to_string(),
+                    synonyms: "image images screenshot screenshots ocr photo picture text inside".to_string(),
+                },
+                score: 3.15,
+            });
+            results.push(SearchResult {
+                entry: CatalogEntry {
                     id: "folder.switch".to_string(),
                     control_name: "Window Switcher".to_string(),
                     breadcrumb_path: "Window > Switcher".to_string(),
@@ -2085,24 +2181,71 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             return self.search_code_only(sub_query);
         }
 
-        // ── ChatGPT native search prefix ──────────────────────────────────
-        if q_lower_trimmed.starts_with("chatgpt ") {
-            let prompt = q["chatgpt ".len()..].trim();
-            if !prompt.is_empty() {
-                let encoded = url_encode(prompt);
-                return vec![SearchResult {
-                    entry: CatalogEntry {
-                        id: "chatgpt_search".to_string(),
-                        control_name: format!("ChatGPT: {}", prompt),
-                        breadcrumb_path: "ChatGPT > Ask AI > Opens in default browser".to_string(),
-                        launch_command: format!("https://chatgpt.com/?q={}", encoded),
-                        source: "LIVE".to_string(),
-                        description: format!("Send '{}' to ChatGPT", prompt),
-                        synonyms: "chatgpt ai openai chat gpt ask".to_string(),
-                    },
-                    score: 10.0,
-                }];
+        for p in ["img:", "image:", "screenshots:", "screenshot:"] {
+            if let Some(sub) = q_lower_trimmed.strip_prefix(p) {
+                return self.search_images_only(sub.trim());
             }
+        }
+
+        // ── AI browser prefixes: "<provider> <prompt>" opens the AI with the ──
+        // prompt prefilled via ?q=. (prefix, label, url-before-encoded-prompt)
+        const AI_PREFIXES: &[(&str, &str, &str)] = &[
+            ("chatgpt", "ChatGPT", "https://chatgpt.com/?q="),
+            ("claude", "Claude", "https://claude.ai/new?q="),
+            ("perplexity", "Perplexity", "https://www.perplexity.ai/search?q="),
+            ("gemini", "Gemini", "https://gemini.google.com/app?q="),
+            ("deepseek", "DeepSeek", "https://chat.deepseek.com/?q="),
+            ("grok", "Grok", "https://grok.com/?q="),
+        ];
+        for (prefix, label, url) in AI_PREFIXES {
+            let lead = format!("{} ", prefix);
+            if q_lower_trimmed.starts_with(&lead) {
+                let prompt = q.trim()[lead.len()..].trim();
+                if !prompt.is_empty() {
+                    let encoded = url_encode(prompt);
+                    return vec![SearchResult {
+                        entry: CatalogEntry {
+                            id: format!("{}_search", prefix),
+                            control_name: format!("{}: {}", label, prompt),
+                            breadcrumb_path: format!("{} > Ask AI > Opens in default browser", label),
+                            launch_command: format!("{}{}", url, encoded),
+                            source: "LIVE".to_string(),
+                            description: format!("Send '{}' to {}", prompt, label),
+                            synonyms: format!("{} ai chat ask", prefix),
+                        },
+                        score: 10.0,
+                    }];
+                }
+            }
+        }
+
+        // ── AI commands: Enter sends to DeepSeek (handled via "ai:" launch cmd) ─
+        {
+            let qt = q.trim();
+            let lt = q_lower_trimmed.as_str();
+            let mk = |label: String, cmd: &str, input: &str| -> Vec<SearchResult> {
+                vec![SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("ai.{cmd}"),
+                        control_name: label,
+                        breadcrumb_path: "AI > Press Enter to ask DeepSeek".to_string(),
+                        launch_command: format!("ai:{}:{}", cmd, input),
+                        source: "AI".to_string(),
+                        description: "Runs on DeepSeek (free)".to_string(),
+                        synonyms: "ai ask chat assistant deepseek".to_string(),
+                    },
+                    score: 12.0,
+                }]
+            };
+            if let Some(r) = lt.strip_prefix("ask ")       { return mk(format!("Ask AI: {}", r.trim()), "ask", qt[4..].trim()); }
+            if let Some(r) = lt.strip_prefix("chat ")      { return mk(format!("Ask AI: {}", r.trim()), "ask", qt[5..].trim()); }
+            if let Some(r) = lt.strip_prefix("translate ") { return mk(format!("Translate: {}", r.trim()), "translate", qt[10..].trim()); }
+            if let Some(r) = lt.strip_prefix("explain ")   { return mk(format!("Explain: {}", r.trim()), "explain", qt[8..].trim()); }
+            if let Some(r) = lt.strip_prefix("summarize ") { return mk(format!("Summarize: {}", r.trim()), "summarize", qt[10..].trim()); }
+            if lt == "explain"                              { return mk("Explain clipboard".into(), "explain", ""); }
+            if lt == "fix grammar" || lt == "grammar" || lt == "fix spelling" { return mk("Fix grammar of clipboard".into(), "grammar", ""); }
+            if lt == "find bugs" || lt == "bugs"            { return mk("Find bugs in clipboard code".into(), "bugs", ""); }
+            if lt == "summarize"                            { return mk("Summarize clipboard".into(), "summarize", ""); }
         }
 
         // Clean conversational filler + detect command intent (typed or dictated).

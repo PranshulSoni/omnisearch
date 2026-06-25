@@ -6,6 +6,7 @@ mod indexer;
 mod browser_indexer;
 mod git_indexer;
 mod voice;
+mod ai;
 
 use std::ptr::null_mut;
 use search::{SearchEngine, SearchResult};
@@ -48,6 +49,10 @@ const WM_SEARCH_RESULTS: u32 = WM_USER + 3;
 const WM_START_EDITING: u32 = WM_USER + 4;
 const WM_REFRESH_SEARCH: u32 = WM_USER + 5;
 const WM_VOICE_QUERY_READY: u32 = WM_USER + 101;
+const WM_AI_RESULT: u32 = WM_USER + 6;
+
+// AI answer panel height (below the search bar) when showing an AI response.
+const AI_PANEL_H: i32 = 360;
 
 struct SearchRequest {
     query: String,
@@ -134,6 +139,11 @@ struct State {
     color_picker_mx: i32,
     color_picker_my: i32,
     prev_foreground: HWND,  // Window that had focus before launcher appeared (for snippet auto-paste)
+    // AI answer panel
+    ai_pending: bool,            // true while waiting on the AI response
+    ai_answer: Option<String>,   // the response text to render
+    ai_title: String,            // command label shown above the answer
+    ai_scroll: i32,              // vertical pixel scroll offset in the answer panel
 }
 
 #[derive(PartialEq)]
@@ -156,6 +166,9 @@ struct IconRequest {
 
 impl State {
     fn win_h(&self) -> i32 {
+        if self.ai_pending || self.ai_answer.is_some() {
+            return SEARCH_H + 1 + AI_PANEL_H;
+        }
         if self.form_state != FormState::None {
             return SEARCH_H + 24;
         }
@@ -369,6 +382,10 @@ unsafe fn run() {
         color_picker_mx: 0,
         color_picker_my: 0,
         prev_foreground: HWND(null_mut()),
+        ai_pending: false,
+        ai_answer: None,
+        ai_title: String::new(),
+        ai_scroll: 0,
     });
 
     let class: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
@@ -638,6 +655,10 @@ unsafe extern "system" fn wnd_proc(
                 if s.voice_triggered || s.voice_pending_exec {
                     return LRESULT(0);
                 }
+                // Keep the launcher open while an AI request is running / its answer is shown.
+                if s.ai_pending || s.ai_answer.is_some() {
+                    return LRESULT(0);
+                }
                 if !matches!(s.anim, Anim::Hidden | Anim::Hiding { .. }) {
                     start_hide(hwnd, s);
                 }
@@ -806,6 +827,19 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
 
+        WM_AI_RESULT => {
+            let payload = unsafe { *Box::from_raw(lp.0 as *mut (bool, String)) };
+            if !sp.is_null() {
+                let s = &mut *sp;
+                let (ok, text) = payload;
+                s.ai_pending = false;
+                s.ai_scroll = 0;
+                s.ai_answer = Some(if ok { text } else { format!("⚠ {}", text) });
+                let _ = InvalidateRect(hwnd, None, FALSE);
+            }
+            LRESULT(0)
+        }
+
         WM_VOICE_QUERY_READY => {
             if sp.is_null() {
                 if wp.0 == 1 && lp.0 != 0 {
@@ -938,6 +972,23 @@ unsafe extern "system" fn wnd_proc(
             if s.color_picker_active {
                 if vk == VK_ESCAPE {
                     stop_color_picker(hwnd, s);
+                }
+                return LRESULT(0);
+            }
+
+            // AI answer panel captures keys: Esc closes, Enter copies, arrows scroll.
+            if s.ai_pending || s.ai_answer.is_some() {
+                match vk {
+                    VK_ESCAPE => close_ai_panel(hwnd, s),
+                    VK_RETURN => {
+                        if let Some(ans) = s.ai_answer.clone() {
+                            copy_to_clipboard(hwnd, &ans);
+                        }
+                        close_ai_panel(hwnd, s);
+                    }
+                    VK_DOWN => { s.ai_scroll += 40; let _ = InvalidateRect(hwnd, None, FALSE); }
+                    VK_UP => { s.ai_scroll = (s.ai_scroll - 40).max(0); let _ = InvalidateRect(hwnd, None, FALSE); }
+                    _ => {}
                 }
                 return LRESULT(0);
             }
@@ -1534,6 +1585,12 @@ unsafe extern "system" fn wnd_proc(
         WM_MOUSEWHEEL => {
             if sp.is_null() { return LRESULT(0); }
             let s = &mut *sp;
+            if s.ai_answer.is_some() {
+                let delta = (wp.0 >> 16) as i16;
+                s.ai_scroll = (s.ai_scroll - (delta as i32) / 2).max(0);
+                let _ = InvalidateRect(hwnd, None, FALSE);
+                return LRESULT(0);
+            }
             if s.voice_listening {
                 s.voice_listening = false;
                 let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
@@ -1787,6 +1844,9 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
         s.cursor_pos = 0;
         s.selected = 0;
         s.scroll_offset = 0;
+        s.ai_pending = false;
+        s.ai_answer = None;
+        s.ai_scroll = 0;
         trigger_search(hwnd, s);
 
         let mut pt = POINT::default();
@@ -2067,13 +2127,23 @@ unsafe fn do_hide(hwnd: HWND, s: &mut State) {
     s.anim = Anim::Hidden;
 }
 
+unsafe fn close_ai_panel(hwnd: HWND, s: &mut State) {
+    s.ai_pending = false;
+    s.ai_answer = None;
+    s.ai_title.clear();
+    s.ai_scroll = 0;
+    trigger_search(hwnd, s); // restore normal results for the current query
+    let _ = InvalidateRect(hwnd, None, FALSE);
+}
+
 unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
     if let Some(r) = s.results.get(s.selected) {
         let cmd = r.entry.launch_command.clone();
+        let ctrl_name = r.entry.control_name.clone();
         let is_action_folder = r.entry.source == "FOLDER" && (
             cmd == "bookmarks:" || cmd == "history:" || cmd == "commits:" ||
             cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" ||
-            cmd == "switch:" || cmd == "window:" || cmd == "ql:" || cmd == "snip:"
+            cmd == "switch:" || cmd == "window:" || cmd == "ql:" || cmd == "snip:" || cmd == "img:"
         );
         if is_action_folder {
             s.query = cmd;
@@ -2083,6 +2153,36 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             s.text_selected = false;
             reset_cursor_blink(hwnd, s);
             trigger_search(hwnd, s);
+        } else if let Some(rest) = cmd.strip_prefix("ai:") {
+            // Run an AI command on a worker thread; show the answer in the AI panel.
+            let (aicmd, inline) = rest.split_once(':').unwrap_or((rest, ""));
+            let aicmd = aicmd.to_string();
+            let input = if inline.trim().is_empty() {
+                paste_from_clipboard(hwnd).unwrap_or_default()
+            } else {
+                inline.to_string()
+            };
+            s.ai_pending = true;
+            s.ai_answer = None;
+            s.ai_scroll = 0;
+            s.ai_title = ctrl_name;
+            s.results.clear();
+            s.selected = 0;
+            let _ = InvalidateRect(hwnd, None, FALSE);
+
+            let hwnd_ai = SendHwnd(hwnd);
+            std::thread::spawn(move || {
+                let hwnd_ai = hwnd_ai;
+                let payload: (bool, String) = match ai::run(&aicmd, &input) {
+                    Ok(text) => (true, text),
+                    Err(e) => (false, e.to_string()),
+                };
+                let ptr = Box::into_raw(Box::new(payload)) as isize;
+                unsafe {
+                    let _ = PostMessageW(hwnd_ai.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
+                }
+            });
+            return;
         } else {
             if let Some(text) = cmd.strip_prefix("copy:") {
                 copy_to_clipboard(hwnd, text);
@@ -2822,6 +2922,57 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let cursor_top = tr.top + (tr.bottom - tr.top - text_h) / 2;
         fill(mdc, cursor_x, cursor_top, 2, text_h, CLR_WHITE);
     }
+    // ── AI answer panel ────────────────────────────────────────────────────
+    if s.ai_pending || s.ai_answer.is_some() {
+        let pad = 24;
+        let body_top = y + SEARCH_H + 1;
+        fill(mdc, x, y + SEARCH_H, w, 1, CLR_DIV);
+
+        // Title (the command label)
+        SelectObject(mdc, s.font_n);
+        SetTextColor(mdc, CLR_WHITE);
+        let mut title: Vec<u16> = s.ai_title.encode_utf16().collect();
+        let mut title_rc = RECT { left: x + pad, top: body_top + 12, right: x + w - pad, bottom: body_top + 42 };
+        let _ = DrawTextW(mdc, &mut title, &mut title_rc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        let content_top = body_top + 48;
+        let footer_h = 30;
+        let content_bottom = y + SEARCH_H + 1 + AI_PANEL_H - footer_h;
+
+        if s.ai_pending {
+            SelectObject(mdc, s.font_q);
+            SetTextColor(mdc, CLR_GRAY);
+            let mut th: Vec<u16> = "Thinking…".encode_utf16().collect();
+            let mut th_rc = RECT { left: x + pad, top: content_top, right: x + w - pad, bottom: content_bottom };
+            let _ = DrawTextW(mdc, &mut th, &mut th_rc, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+        } else if let Some(ans) = &s.ai_answer {
+            SelectObject(mdc, s.font_c);
+            SetTextColor(mdc, CLR_WHITE);
+            let mut body: Vec<u16> = ans.encode_utf16().collect();
+            // Measure wrapped height, then draw shifted by the (clamped) scroll offset.
+            let mut calc = RECT { left: x + pad, top: 0, right: x + w - pad, bottom: 0 };
+            let _ = DrawTextW(mdc, &mut body.clone(), &mut calc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+            let total_h = calc.bottom - calc.top;
+            let view_h = content_bottom - content_top;
+            let max_scroll = (total_h - view_h).max(0);
+            let scroll = s.ai_scroll.clamp(0, max_scroll);
+            let mut body_rc = RECT { left: x + pad, top: content_top - scroll, right: x + w - pad, bottom: content_top - scroll + total_h };
+            let _ = DrawTextW(mdc, &mut body, &mut body_rc, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        }
+
+        // Footer hint (painted over any text overflow)
+        fill(mdc, x, content_bottom, w, footer_h + 4, BG);
+        fill(mdc, x, content_bottom, w, 1, CLR_DIV);
+        SelectObject(mdc, s.font_b);
+        SetTextColor(mdc, CLR_GRAY);
+        let hint = if s.ai_pending { "Esc: cancel" } else { "Enter: copy    ·    Esc: close    ·    ↑ ↓ / scroll" };
+        let mut hint_w: Vec<u16> = hint.encode_utf16().collect();
+        let mut hint_rc = RECT { left: x + pad, top: content_bottom + 2, right: x + w - pad, bottom: content_bottom + footer_h };
+        let _ = DrawTextW(mdc, &mut hint_w, &mut hint_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        SelectObject(mdc, s.font_q);
+    }
+
     // ── Results ───────────────────────────────────────────────────────────
     let n = (s.results.len().saturating_sub(s.scroll_offset)).min(VISIBLE_RESULTS);
     if n > 0 {
