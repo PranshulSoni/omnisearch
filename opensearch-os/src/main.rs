@@ -544,6 +544,18 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
 
+        WM_SETCURSOR => {
+            unsafe {
+                use windows::Win32::UI::WindowsAndMessaging::{LoadCursorW, SetCursor, IDC_ARROW};
+                use windows::Win32::Foundation::HINSTANCE;
+                if let Ok(cursor) = LoadCursorW(HINSTANCE(std::ptr::null_mut()), IDC_ARROW) {
+                    SetCursor(cursor);
+                    return LRESULT(1);
+                }
+            }
+            DefWindowProcW(hwnd, msg, wp, lp)
+        }
+
         WM_HOTKEY if wp.0 as i32 == HOTKEY_ID => {
             let s = &mut *sp;
             match s.anim {
