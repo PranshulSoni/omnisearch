@@ -3465,7 +3465,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 }
             }
 
-            RestoreDC(mdc, dc_state);
+            let _ = RestoreDC(mdc, dc_state);
         }
 
         // Footer hint (painted over any text overflow)
