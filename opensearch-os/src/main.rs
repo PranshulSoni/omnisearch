@@ -857,6 +857,22 @@ unsafe extern "system" fn wnd_proc(
         WM_CHAR => {
             if sp.is_null() { return LRESULT(0); }
             let s = &mut *sp;
+            if s.form_state != FormState::None {
+                if let Some(c) = char::from_u32(wp.0 as u32) {
+                    if !c.is_control() {
+                        if s.text_selected {
+                            s.query.clear();
+                            s.cursor_pos = 0;
+                            s.text_selected = false;
+                        }
+                        s.query.insert(s.cursor_pos, c);
+                        s.cursor_pos += c.len_utf8();
+                        reset_cursor_blink(hwnd, s);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                    }
+                }
+                return LRESULT(0);
+            }
             if s.voice_listening {
                 s.voice_listening = false;
                 let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
@@ -893,6 +909,119 @@ unsafe extern "system" fn wnd_proc(
         WM_KEYDOWN => {
             if sp.is_null() { return LRESULT(0); }
             let s = &mut *sp;
+            let vk = VIRTUAL_KEY(wp.0 as u16);
+            let ctrl_down = (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
+
+            if s.form_state != FormState::None {
+                match vk {
+                    VK_ESCAPE => {
+                        s.form_state = FormState::None;
+                        s.query.clear();
+                        s.cursor_pos = 0;
+                        s.results.clear();
+                        s.selected = 0;
+                        s.scroll_offset = 0;
+                        reset_cursor_blink(hwnd, s);
+                        trigger_search(hwnd, s);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                        return LRESULT(0);
+                    }
+                    VK_RETURN => {
+                        handle_form_enter(hwnd, s);
+                        return LRESULT(0);
+                    }
+                    VK_BACK => {
+                        if ctrl_down {
+                            if s.text_selected {
+                                s.query.clear();
+                                s.cursor_pos = 0;
+                                s.text_selected = false;
+                            } else {
+                                delete_word_before(s);
+                            }
+                        } else if s.text_selected {
+                            s.query.clear();
+                            s.cursor_pos = 0;
+                            s.text_selected = false;
+                        } else if s.cursor_pos > 0 {
+                            let mut p = s.cursor_pos - 1;
+                            while p > 0 && !s.query.is_char_boundary(p) {
+                                p -= 1;
+                            }
+                            s.query.remove(p);
+                            s.cursor_pos = p;
+                        }
+                        reset_cursor_blink(hwnd, s);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                        return LRESULT(0);
+                    }
+                    VK_LEFT => {
+                        if ctrl_down {
+                            s.cursor_pos = word_left(&s.query, s.cursor_pos);
+                        } else if s.cursor_pos > 0 {
+                            let mut p = s.cursor_pos - 1;
+                            while p > 0 && !s.query.is_char_boundary(p) {
+                                p -= 1;
+                            }
+                            s.cursor_pos = p;
+                        }
+                        reset_cursor_blink(hwnd, s);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                        return LRESULT(0);
+                    }
+                    VK_RIGHT => {
+                        if ctrl_down {
+                            s.cursor_pos = word_right(&s.query, s.cursor_pos);
+                        } else if s.cursor_pos < s.query.len() {
+                            let mut p = s.cursor_pos + 1;
+                            while p < s.query.len() && !s.query.is_char_boundary(p) {
+                                p += 1;
+                            }
+                            s.cursor_pos = p;
+                        }
+                        reset_cursor_blink(hwnd, s);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                        return LRESULT(0);
+                    }
+                    _ => {
+                        if ctrl_down {
+                            match vk.0 as u32 {
+                                0x41 => { // Ctrl + A
+                                    if !s.query.is_empty() {
+                                        s.text_selected = true;
+                                        let _ = InvalidateRect(hwnd, None, FALSE);
+                                    }
+                                    return LRESULT(0);
+                                }
+                                0x43 => { // Ctrl + C
+                                    if !s.query.is_empty() {
+                                        copy_to_clipboard(hwnd, &s.query);
+                                    }
+                                    return LRESULT(0);
+                                }
+                                0x56 => { // Ctrl + V
+                                    if let Some(text) = paste_from_clipboard(hwnd) {
+                                        let clean_text: String = text.chars().filter(|c| !c.is_control()).collect();
+                                        if s.text_selected {
+                                            s.query = clean_text;
+                                            s.cursor_pos = s.query.len();
+                                            s.text_selected = false;
+                                        } else {
+                                            s.query.insert_str(s.cursor_pos, &clean_text);
+                                            s.cursor_pos += clean_text.len();
+                                        }
+                                        reset_cursor_blink(hwnd, s);
+                                        let _ = InvalidateRect(hwnd, None, FALSE);
+                                    }
+                                    return LRESULT(0);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                return LRESULT(0);
+            }
             if s.voice_listening {
                 s.voice_listening = false;
                 let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
@@ -1756,6 +1885,7 @@ unsafe fn do_hide(hwnd: HWND, s: &mut State) {
     s.voice_listening = false;
     s.voice_pending_exec = false;
     s.voice_exec_deadline = None;
+    s.form_state = FormState::None;
     let _ = ShowWindow(hwnd, SW_HIDE);
     s.anim = Anim::Hidden;
 }
@@ -1766,7 +1896,7 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
         let is_action_folder = r.entry.source == "FOLDER" && (
             cmd == "bookmarks:" || cmd == "history:" || cmd == "commits:" ||
             cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" ||
-            cmd == "switch:" || cmd == "window:"
+            cmd == "switch:" || cmd == "window:" || cmd == "ql:" || cmd == "snip:"
         );
         if is_action_folder {
             s.query = cmd;
@@ -1781,6 +1911,57 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 copy_to_clipboard(hwnd, text);
             } else if let Some(path) = cmd.strip_prefix("copy_image:") {
                 copy_image_to_clipboard(hwnd, path);
+            } else if cmd == "action:create_snippet" {
+                s.form_state = FormState::CreateSnippetName;
+                s.query.clear();
+                s.cursor_pos = 0;
+                s.results.clear();
+                s.selected = 0;
+                reset_cursor_blink(hwnd, s);
+                let _ = InvalidateRect(hwnd, None, FALSE);
+                return;
+            } else if cmd == "action:create_quicklink" {
+                s.form_state = FormState::CreateQuicklinkName;
+                s.query.clear();
+                s.cursor_pos = 0;
+                s.results.clear();
+                s.selected = 0;
+                reset_cursor_blink(hwnd, s);
+                let _ = InvalidateRect(hwnd, None, FALSE);
+                return;
+            } else if let Some(content) = cmd.strip_prefix("copy_snippet:") {
+                copy_to_clipboard(hwnd, content);
+                do_hide(hwnd, s);
+                return;
+            } else if let Some(url) = cmd.strip_prefix("open_quicklink:") {
+                let url_w = format!("{}\0", url).encode_utf16().collect::<Vec<u16>>();
+                let open_w = "open\0".encode_utf16().collect::<Vec<u16>>();
+                windows::Win32::UI::Shell::ShellExecuteW(
+                    None,
+                    windows::core::PCWSTR(open_w.as_ptr()),
+                    windows::core::PCWSTR(url_w.as_ptr()),
+                    None,
+                    None,
+                    windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+                );
+                do_hide(hwnd, s);
+                return;
+            } else if cmd == "action:export_snippets" {
+                export_snippets(hwnd, s);
+                do_hide(hwnd, s);
+                return;
+            } else if cmd == "action:import_snippets" {
+                import_snippets(hwnd, s);
+                do_hide(hwnd, s);
+                return;
+            } else if cmd == "action:export_quicklinks" {
+                export_quicklinks(hwnd, s);
+                do_hide(hwnd, s);
+                return;
+            } else if cmd == "action:import_quicklinks" {
+                import_quicklinks(hwnd, s);
+                do_hide(hwnd, s);
+                return;
             } else {
                 launcher::launch(&cmd);
             }
@@ -2218,7 +2399,16 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let _ = DrawTextW(mdc, &mut ph, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         SetTextColor(mdc, CLR_WHITE);
     } else if s.query.is_empty() {
-        let mut ph: Vec<u16> = "Search Windows settings...".encode_utf16().collect();
+        let ph_str = match &s.form_state {
+            FormState::CreateSnippetName => "Create Snippet: Enter Name...",
+            FormState::CreateSnippetContent { .. } => "Create Snippet: Enter Content...",
+            FormState::CreateSnippetKeyword { .. } => "Create Snippet: Enter Keyword (optional)...",
+            FormState::CreateQuicklinkName => "Create Quicklink: Enter Name...",
+            FormState::CreateQuicklinkUrl { .. } => "Create Quicklink: Enter URL (use {query} placeholder)...",
+            FormState::CreateQuicklinkKeyword { .. } => "Create Quicklink: Enter Keyword...",
+            FormState::None => "Search Windows settings...",
+        };
+        let mut ph: Vec<u16> = ph_str.encode_utf16().collect();
         SetTextColor(mdc, CLR_PH);
         let _ = DrawTextW(mdc, &mut ph, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         SetTextColor(mdc, CLR_WHITE);
@@ -2530,6 +2720,20 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let mut r_inst = RECT { left: x + PAD_L, top: footer_y, right: x + w - PAD_L, bottom: y + h };
             let _ = DrawTextW(mdc, &mut inst_wide, &mut r_inst, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
+    }
+
+    // Draw footer instructions if showing snippet/quicklink creation form
+    if s.form_state != FormState::None {
+        let footer_y = y + h - 24;
+        fill(mdc, x, footer_y, w, 24, COLORREF(0x00_15_15_15));
+        fill(mdc, x, footer_y, w, 1, CLR_DIV);
+        
+        SelectObject(mdc, s.font_c);
+        SetTextColor(mdc, CLR_GRAY);
+        let inst_text = " Enter: Next / Save  |  Escape: Cancel creation".to_string();
+        let mut inst_wide: Vec<u16> = inst_text.encode_utf16().collect();
+        let mut r_inst = RECT { left: x + PAD_L, top: footer_y, right: x + w - PAD_L, bottom: y + h };
+        let _ = DrawTextW(mdc, &mut inst_wide, &mut r_inst, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
     // Restore clipping
@@ -3411,6 +3615,266 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
                     do_hide(hwnd, s);
                 }
                 _ => {}
+            }
+        }
+    }
+}
+
+unsafe fn handle_form_enter(hwnd: HWND, s: &mut State) {
+    let input = s.query.trim().to_string();
+    match &s.form_state {
+        FormState::CreateSnippetName => {
+            if !input.is_empty() {
+                s.form_state = FormState::CreateSnippetContent { name: input };
+                s.query.clear();
+                s.cursor_pos = 0;
+            }
+        }
+        FormState::CreateSnippetContent { name } => {
+            if !input.is_empty() {
+                s.form_state = FormState::CreateSnippetKeyword { name: name.clone(), content: input };
+                s.query.clear();
+                s.cursor_pos = 0;
+            }
+        }
+        FormState::CreateSnippetKeyword { name, content } => {
+            let keyword = if input.is_empty() { None } else { Some(input) };
+            let db_path = s.db_path.clone();
+            let name = name.clone();
+            let content = content.clone();
+            std::thread::spawn(move || {
+                if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                    let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO snippets (name, content, keyword) VALUES (?, ?, ?);",
+                        rusqlite::params![name, content, keyword],
+                    );
+                }
+            });
+            s.form_state = FormState::None;
+            s.query.clear();
+            s.cursor_pos = 0;
+            trigger_search(hwnd, s);
+        }
+        FormState::CreateQuicklinkName => {
+            if !input.is_empty() {
+                s.form_state = FormState::CreateQuicklinkUrl { name: input };
+                s.query.clear();
+                s.cursor_pos = 0;
+            }
+        }
+        FormState::CreateQuicklinkUrl { name } => {
+            if !input.is_empty() {
+                s.form_state = FormState::CreateQuicklinkKeyword { name: name.clone(), url: input };
+                s.query.clear();
+                s.cursor_pos = 0;
+            }
+        }
+        FormState::CreateQuicklinkKeyword { name, url } => {
+            if !input.is_empty() {
+                let db_path = s.db_path.clone();
+                let name = name.clone();
+                let url = url.clone();
+                let keyword = input;
+                std::thread::spawn(move || {
+                    if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                        let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                        let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+                        let _ = conn.execute(
+                            "INSERT OR REPLACE INTO quicklinks (name, url, keyword) VALUES (?, ?, ?);",
+                            rusqlite::params![name, url, keyword],
+                        );
+                    }
+                });
+                s.form_state = FormState::None;
+                s.query.clear();
+                s.cursor_pos = 0;
+                trigger_search(hwnd, s);
+            }
+        }
+        FormState::None => {}
+    }
+    let _ = InvalidateRect(hwnd, None, FALSE);
+}
+
+unsafe fn export_snippets(hwnd: HWND, s: &State) {
+    if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
+        let mut stmt = match conn.prepare("SELECT name, content, keyword FROM snippets") {
+            Ok(st) => st,
+            Err(_) => return,
+        };
+        let iter = match stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
+        }) {
+            Ok(it) => it,
+            Err(_) => return,
+        };
+        let mut list = Vec::new();
+        for item in iter {
+            if let Ok((name, content, keyword)) = item {
+                list.push(serde_json::json!({
+                    "name": name,
+                    "content": content,
+                    "keyword": keyword,
+                }));
+            }
+        }
+        let json_data = serde_json::to_string_pretty(&list).unwrap_or_default();
+        if let Some(desktop) = launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop) {
+            let path = std::path::PathBuf::from(desktop).join("snippets_export.json");
+            if std::fs::write(&path, json_data).is_ok() {
+                copy_to_clipboard(hwnd, &path.to_string_lossy().to_string());
+                let msg = format!("Snippets exported successfully to:\n{:?}\n\nPath copied to clipboard.", path);
+                let title = "Export Snippets\0".encode_utf16().collect::<Vec<u16>>();
+                let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
+                windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
+                    hwnd,
+                    windows::core::PCWSTR(msg_w.as_ptr()),
+                    windows::core::PCWSTR(title.as_ptr()),
+                    windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
+                );
+            }
+        }
+    }
+}
+
+unsafe fn import_snippets(hwnd: HWND, s: &State) {
+    if let Some(desktop) = launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop) {
+        let path = std::path::PathBuf::from(desktop).join("snippets_import.json");
+        if !path.exists() {
+            let msg = format!("Import file not found!\n\nPlease place a file named 'snippets_import.json' on your Desktop and try again.\n\nTemplate format:\n[\n  {{\n    \"name\": \"example\",\n    \"content\": \"text\",\n    \"keyword\": \"optional\"\n  }}\n]");
+            let title = "Import Snippets Error\0".encode_utf16().collect::<Vec<u16>>();
+            let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
+            windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
+                hwnd,
+                windows::core::PCWSTR(msg_w.as_ptr()),
+                windows::core::PCWSTR(title.as_ptr()),
+                windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONWARNING,
+            );
+            return;
+        }
+
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(list) = serde_json::from_str::<Vec<serde_json::Value>>(&data) {
+                if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
+                    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                    let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+                    let mut count = 0;
+                    for val in list {
+                        let name = val.get("name").and_then(|v| v.as_str());
+                        let content = val.get("content").and_then(|v| v.as_str());
+                        let keyword = val.get("keyword").and_then(|v| v.as_str());
+                        if let (Some(n), Some(c)) = (name, content) {
+                            if conn.execute(
+                                "INSERT OR REPLACE INTO snippets (name, content, keyword) VALUES (?, ?, ?);",
+                                rusqlite::params![n, c, keyword],
+                            ).is_ok() {
+                                count += 1;
+                            }
+                        }
+                    }
+                    let msg = format!("Successfully imported {} snippets from snippets_import.json!", count);
+                    let title = "Import Snippets\0".encode_utf16().collect::<Vec<u16>>();
+                    let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
+                    windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
+                        hwnd,
+                        windows::core::PCWSTR(msg_w.as_ptr()),
+                        windows::core::PCWSTR(title.as_ptr()),
+                        windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
+                    );
+                }
+            }
+        }
+    }
+}
+
+unsafe fn export_quicklinks(hwnd: HWND, s: &State) {
+    if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
+        let mut stmt = match conn.prepare("SELECT name, url, keyword FROM quicklinks") {
+            Ok(st) => st,
+            Err(_) => return,
+        };
+        let iter = match stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        }) {
+            Ok(it) => it,
+            Err(_) => return,
+        };
+        let mut list = Vec::new();
+        for item in iter {
+            if let Ok((name, url, keyword)) = item {
+                list.push(serde_json::json!({
+                    "name": name,
+                    "url": url,
+                    "keyword": keyword,
+                }));
+            }
+        }
+        let json_data = serde_json::to_string_pretty(&list).unwrap_or_default();
+        if let Some(desktop) = launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop) {
+            let path = std::path::PathBuf::from(desktop).join("quicklinks_export.json");
+            if std::fs::write(&path, json_data).is_ok() {
+                copy_to_clipboard(hwnd, &path.to_string_lossy().to_string());
+                let msg = format!("Quicklinks exported successfully to:\n{:?}\n\nPath copied to clipboard.", path);
+                let title = "Export Quicklinks\0".encode_utf16().collect::<Vec<u16>>();
+                let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
+                windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
+                    hwnd,
+                    windows::core::PCWSTR(msg_w.as_ptr()),
+                    windows::core::PCWSTR(title.as_ptr()),
+                    windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
+                );
+            }
+        }
+    }
+}
+
+unsafe fn import_quicklinks(hwnd: HWND, s: &State) {
+    if let Some(desktop) = launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop) {
+        let path = std::path::PathBuf::from(desktop).join("quicklinks_import.json");
+        if !path.exists() {
+            let msg = format!("Import file not found!\n\nPlease place a file named 'quicklinks_import.json' on your Desktop and try again.\n\nTemplate format:\n[\n  {{\n    \"name\": \"example\",\n    \"url\": \"https://example.com/?q={{query}}\",\n    \"keyword\": \"ex\"\n  }}\n]");
+            let title = "Import Quicklinks Error\0".encode_utf16().collect::<Vec<u16>>();
+            let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
+            windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
+                hwnd,
+                windows::core::PCWSTR(msg_w.as_ptr()),
+                windows::core::PCWSTR(title.as_ptr()),
+                windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONWARNING,
+            );
+            return;
+        }
+
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(list) = serde_json::from_str::<Vec<serde_json::Value>>(&data) {
+                if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
+                    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                    let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+                    let mut count = 0;
+                    for val in list {
+                        let name = val.get("name").and_then(|v| v.as_str());
+                        let url = val.get("url").and_then(|v| v.as_str());
+                        let keyword = val.get("keyword").and_then(|v| v.as_str());
+                        if let (Some(n), Some(u), Some(kw)) = (name, url, keyword) {
+                            if conn.execute(
+                                "INSERT OR REPLACE INTO quicklinks (name, url, keyword) VALUES (?, ?, ?);",
+                                rusqlite::params![n, u, kw],
+                            ).is_ok() {
+                                count += 1;
+                            }
+                        }
+                    }
+                    let msg = format!("Successfully imported {} quicklinks from quicklinks_import.json!", count);
+                    let title = "Import Quicklinks\0".encode_utf16().collect::<Vec<u16>>();
+                    let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
+                    windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
+                        hwnd,
+                        windows::core::PCWSTR(msg_w.as_ptr()),
+                        windows::core::PCWSTR(title.as_ptr()),
+                        windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
+                    );
+                }
             }
         }
     }
