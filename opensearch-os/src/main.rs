@@ -2329,16 +2329,7 @@ fn configure_hermes_llm(endpoint: &str, model: &str, api_key: &str) {
     }
 
     std::thread::spawn(move || {
-        let hermes_cmd = if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
-            let path = std::path::Path::new(&localappdata).join("hermes").join("bin").join("hermes.cmd");
-            if path.exists() {
-                path.to_string_lossy().to_string()
-            } else {
-                "hermes".to_string()
-            }
-        } else {
-            "hermes".to_string()
-        };
+        let hermes_cmd = ai::get_hermes_executable();
 
         let _ = std::process::Command::new(&hermes_cmd)
             .args(["config", "set", "model.default", &model])
