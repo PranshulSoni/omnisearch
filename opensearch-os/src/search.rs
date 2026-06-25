@@ -2388,6 +2388,79 @@ fn format_relative_time(ts: i64) -> String {
             }
         }
 
+        // ── Hermes gateway controls ──────────────────────────────────────────
+        {
+            let lt = q_lower_trimmed.as_str();
+            if lt.starts_with("hermes") {
+                let is_running = crate::ai::HERMES_GATEWAY_RUNNING.load(Ordering::Relaxed);
+                let status_label = if is_running { "Hermes Gateway: Running" } else { "Hermes Gateway: Stopped" };
+                let status_desc = if is_running { "Local gateway is active on port 8642." } else { "Local gateway is inactive. Start it to use Hermes Agent." };
+
+                return vec![
+                    SearchResult {
+                        entry: CatalogEntry {
+                            id: "hermes.status".to_string(),
+                            control_name: status_label.to_string(),
+                            breadcrumb_path: "AI > Hermes Agent Local Gateway".to_string(),
+                            launch_command: "query:hermes".to_string(),
+                            source: "AI".to_string(),
+                            description: status_desc.to_string(),
+                            synonyms: "hermes status gateway running stopped".to_string(),
+                        },
+                        score: 105.0,
+                    },
+                    SearchResult {
+                        entry: CatalogEntry {
+                            id: "hermes.start".to_string(),
+                            control_name: "Start Hermes Gateway".to_string(),
+                            breadcrumb_path: "AI > Start background gateway".to_string(),
+                            launch_command: "action:hermes:start".to_string(),
+                            source: "AI".to_string(),
+                            description: "Launch 'hermes gateway' silently in the background".to_string(),
+                            synonyms: "hermes start run launch gateway".to_string(),
+                        },
+                        score: 104.0,
+                    },
+                    SearchResult {
+                        entry: CatalogEntry {
+                            id: "hermes.stop".to_string(),
+                            control_name: "Stop Hermes Gateway".to_string(),
+                            breadcrumb_path: "AI > Stop background gateway".to_string(),
+                            launch_command: "action:hermes:stop".to_string(),
+                            source: "AI".to_string(),
+                            description: "Terminate local hermes-agent gateway process".to_string(),
+                            synonyms: "hermes stop kill exit gateway".to_string(),
+                        },
+                        score: 103.0,
+                    },
+                    SearchResult {
+                        entry: CatalogEntry {
+                            id: "hermes.install".to_string(),
+                            control_name: "Install Hermes Agent".to_string(),
+                            breadcrumb_path: "AI > Run native Windows installer".to_string(),
+                            launch_command: "action:hermes:install".to_string(),
+                            source: "AI".to_string(),
+                            description: "Download and run the hermes-agent installation script".to_string(),
+                            synonyms: "hermes install setup download".to_string(),
+                        },
+                        score: 102.0,
+                    },
+                    SearchResult {
+                        entry: CatalogEntry {
+                            id: "hermes.message".to_string(),
+                            control_name: "@Hermes: <message>".to_string(),
+                            breadcrumb_path: "Agent > Message the Hermes Agent".to_string(),
+                            launch_command: "query:@Hermes: ".to_string(),
+                            source: "AI".to_string(),
+                            description: "Start an autonomous task or execute a command".to_string(),
+                            synonyms: "hermes chat query run message".to_string(),
+                        },
+                        score: 101.0,
+                    },
+                ];
+            }
+        }
+
         // ── AI config: Settings and credentials ──────────────────────────────────────
         {
             let lt = q_lower_trimmed.as_str();
@@ -2422,6 +2495,18 @@ fn format_relative_time(ts: i64) -> String {
                             synonyms: "ai config preset opencode".to_string(),
                         },
                         score: 101.0,
+                    },
+                    SearchResult {
+                        entry: CatalogEntry {
+                            id: "ai.config.preset.hermes".to_string(),
+                            control_name: "Apply Hermes Agent Preset".to_string(),
+                            breadcrumb_path: "AI Config > Set endpoint and model for Hermes Agent (Local)".to_string(),
+                            launch_command: "action:ai_config:preset:hermes".to_string(),
+                            source: "AI".to_string(),
+                            description: "Press Enter to configure endpoint/model for local hermes-agent gateway".to_string(),
+                            synonyms: "ai config preset hermes agent gateway local".to_string(),
+                        },
+                        score: 100.8,
                     },
                     SearchResult {
                         entry: CatalogEntry {
@@ -2513,8 +2598,8 @@ fn format_relative_time(ts: i64) -> String {
                             score: 100.0,
                         }];
                     } else if subcmd == "preset" {
-                        if val == "opencode" || val == "deepseek" {
-                            let label = format!("Apply {} Preset", if val == "opencode" { "OpenCode Zen" } else { "DeepSeek" });
+                        if val == "opencode" || val == "deepseek" || val == "hermes" {
+                            let label = format!("Apply {} Preset", if val == "opencode" { "OpenCode Zen" } else if val == "hermes" { "Hermes Agent" } else { "DeepSeek" });
                             return vec![SearchResult {
                                 entry: CatalogEntry {
                                     id: format!("ai.config.preset.{}", val),
@@ -2604,11 +2689,17 @@ fn format_relative_time(ts: i64) -> String {
                     let (name, msg) = (name.trim(), msg.trim());
                     if let Some((id, real_name)) = self.find_agent_by_name(name) {
                         if !msg.is_empty() {
+                            let mut model_name = "AI".to_string();
+                            if let Ok(val) = self.conn.query_row("SELECT value FROM ai_settings WHERE key = 'model'", [], |row| row.get::<_, String>(0)) {
+                                if !val.is_empty() {
+                                    model_name = val;
+                                }
+                            }
                             return vec![SearchResult {
                                 entry: CatalogEntry {
                                     id: "agent.msg".into(),
                                     control_name: format!("Ask {}: {}", real_name, msg),
-                                    breadcrumb_path: "Agent > Press Enter (DeepSeek)".into(),
+                                    breadcrumb_path: format!("Agent > Press Enter ({})", model_name),
                                     launch_command: format!("agent:{}\u{1f}{}", id, msg),
                                     source: "AI".into(),
                                     description: format!("Message agent {}", real_name),
