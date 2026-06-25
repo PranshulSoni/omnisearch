@@ -2213,11 +2213,14 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             // Run an AI command on a worker thread; show the answer in the AI panel.
             let (aicmd, inline) = rest.split_once(':').unwrap_or((rest, ""));
             let aicmd = aicmd.to_string();
-            let input = if inline.trim().is_empty() {
+            let mut input = if inline.trim().is_empty() {
                 paste_from_clipboard(hwnd).unwrap_or_default()
             } else {
                 inline.to_string()
             };
+            if input.len() > 30000 {
+                input = input.chars().take(30000).collect::<String>() + "\n\n[Truncated for length...]";
+            }
             s.ai_pending = true;
             s.ai_answer = None;
             s.ai_scroll = 0;
@@ -2229,11 +2232,27 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             let hwnd_ai = SendHwnd(hwnd);
             let db_path = s.db_path.clone();
             let title = s.ai_title.clone();
+            let aicmd_clone = aicmd.clone();
+            let input_clone = input.clone();
+
+            // Store chat in DB immediately to get a chat ID
+            let chat_id = store_ai_chat(&db_path, &aicmd_clone, &title, &input_clone, "");
+            s.active_chat_id = chat_id;
+            s.query.clear(); // Clear input box so they can immediately type follow-up
+            s.cursor_pos = 0;
+
             std::thread::spawn(move || {
                 let hwnd_ai = hwnd_ai;
-                let result = ai::run(&aicmd, &input);
+                let result = ai::run(&aicmd_clone, &input_clone);
                 if let Ok(ref text) = result {
-                    store_ai_chat(&db_path, &aicmd, &title, &input, text);
+                    if let Some(id) = chat_id {
+                        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                            let _ = conn.execute(
+                                "UPDATE ai_chats SET response = ? WHERE id = ?",
+                                rusqlite::params![text, id],
+                            );
+                        }
+                    }
                 }
                 let payload: (bool, String) = match result {
                     Ok(text) => (true, text),
