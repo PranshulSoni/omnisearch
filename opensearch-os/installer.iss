@@ -19,6 +19,8 @@ Source: "target\release\DirectML.dll"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{group}\OpenSearch OS"; Filename: "{app}\opensearch-os.exe"
 Name: "{userstartup}\OpenSearch OS"; Filename: "{app}\opensearch-os.exe"
 Name: "{userdesktop}\OpenSearch OS"; Filename: "{app}\opensearch-os.exe"
+Name: "{group}\Uninstall OpenSearch OS"; Filename: "{uninstallexe}"
+
 
 [Run]
 Filename: "{app}\opensearch-os.exe"; Description: "Launch OpenSearch OS"; Flags: nowait postinstall skipifsilent
