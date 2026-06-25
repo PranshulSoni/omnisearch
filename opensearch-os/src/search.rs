@@ -1360,6 +1360,51 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         results
     }
 
+    fn find_agent_by_name(&self, name: &str) -> Option<(i64, String)> {
+        self.conn.query_row(
+            "SELECT id, name FROM agents WHERE lower(name) = lower(?) LIMIT 1",
+            [name],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        ).ok()
+    }
+
+    /// agents: prefix — browse AI agents. Enter on one starts a message to it.
+    pub fn search_agents(&self, query: &str) -> Vec<SearchResult> {
+        let conn = &self.conn;
+        let q = query.trim().to_lowercase();
+        let mut results = Vec::new();
+        let sql = if q.is_empty() {
+            "SELECT id, name, goal FROM agents ORDER BY ts DESC LIMIT 50".to_string()
+        } else {
+            "SELECT id, name, goal FROM agents WHERE lower(name) LIKE ?1 OR lower(goal) LIKE ?1 ORDER BY ts DESC LIMIT 50".to_string()
+        };
+        let mut stmt = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return results };
+        let like = format!("%{}%", q);
+        let map = |row: &rusqlite::Row| -> rusqlite::Result<(i64, String, String)> {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        };
+        let rows = if q.is_empty() { stmt.query_map([], map) } else { stmt.query_map([&like], map) };
+        let rows = match rows { Ok(r) => r, Err(_) => return results };
+        let mut score = 100.0f32;
+        for row in rows.filter_map(|r| r.ok()) {
+            let (id, name, goal) = row;
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: format!("agent.{}", id),
+                    control_name: name.clone(),
+                    breadcrumb_path: if goal.is_empty() { "Agent > Enter to message".into() } else { format!("Agent > {}", goal) },
+                    launch_command: format!("openagent:{}\u{1f}{}", id, name),
+                    source: "AI".into(),
+                    description: "AI agent — Enter to message".into(),
+                    synonyms: format!("agent {}", name.to_lowercase()),
+                },
+                score,
+            });
+            score -= 0.01;
+        }
+        results
+    }
+
     pub fn search_bookmarks_only(&self, sub_query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = &self.conn;
@@ -2066,6 +2111,18 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             });
             results.push(SearchResult {
                 entry: CatalogEntry {
+                    id: "folder.agents".to_string(),
+                    control_name: "AI Agents".to_string(),
+                    breadcrumb_path: "AI > Agents".to_string(),
+                    launch_command: "agents:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Create and message persistent AI agents".to_string(),
+                    synonyms: "ai agents agent bot assistant hermes create".to_string(),
+                },
+                score: 3.05,
+            });
+            results.push(SearchResult {
+                entry: CatalogEntry {
                     id: "folder.switch".to_string(),
                     control_name: "Window Switcher".to_string(),
                     breadcrumb_path: "Window > Switcher".to_string(),
@@ -2244,6 +2301,10 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             return self.search_ai_chats(sub.trim());
         }
 
+        if let Some(sub) = q_lower_trimmed.strip_prefix("agents:") {
+            return self.search_agents(sub.trim());
+        }
+
         // ── AI browser prefixes: "<provider> <prompt>" opens the AI with the ──
         // prompt prefilled via ?q=. (prefix, label, url-before-encoded-prompt)
         const AI_PREFIXES: &[(&str, &str, &str)] = &[
@@ -2303,6 +2364,53 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             if lt == "fix grammar" || lt == "grammar" || lt == "fix spelling" { return mk("Fix grammar of clipboard".into(), "grammar", ""); }
             if lt == "find bugs" || lt == "bugs"            { return mk("Find bugs in clipboard code".into(), "bugs", ""); }
             if lt == "summarize"                            { return mk("Summarize clipboard".into(), "summarize", ""); }
+        }
+
+        // ── AI Agents: "create agent <name>: <goal>" and "@<name>: <message>" ─
+        {
+            let qt = q.trim();
+            let lt = q_lower_trimmed.as_str();
+            if lt.starts_with("create agent ") {
+                let raw = qt["create agent ".len()..].trim();
+                let mut parts = raw.splitn(2, |c| c == ':' || c == '|');
+                let name = parts.next().unwrap_or("").trim();
+                let goal = parts.next().unwrap_or("").trim();
+                if !name.is_empty() {
+                    return vec![SearchResult {
+                        entry: CatalogEntry {
+                            id: "agent.create".into(),
+                            control_name: format!("Create agent: {}", name),
+                            breadcrumb_path: if goal.is_empty() { "Agent > Press Enter to create".into() } else { format!("Agent > Goal: {}", goal) },
+                            launch_command: format!("mkagent:{}\u{1f}{}", name, goal),
+                            source: "AI".into(),
+                            description: "Create a persistent AI agent".into(),
+                            synonyms: "agent create new bot assistant".into(),
+                        },
+                        score: 12.0,
+                    }];
+                }
+            }
+            if let Some(after) = qt.strip_prefix('@') {
+                if let Some((name, msg)) = after.split_once(':') {
+                    let (name, msg) = (name.trim(), msg.trim());
+                    if let Some((id, real_name)) = self.find_agent_by_name(name) {
+                        if !msg.is_empty() {
+                            return vec![SearchResult {
+                                entry: CatalogEntry {
+                                    id: "agent.msg".into(),
+                                    control_name: format!("Ask {}: {}", real_name, msg),
+                                    breadcrumb_path: "Agent > Press Enter (DeepSeek)".into(),
+                                    launch_command: format!("agent:{}\u{1f}{}", id, msg),
+                                    source: "AI".into(),
+                                    description: format!("Message agent {}", real_name),
+                                    synonyms: "agent message ask".into(),
+                                },
+                                score: 12.0,
+                            }];
+                        }
+                    }
+                }
+            }
         }
 
         // Clean conversational filler + detect command intent (typed or dictated).

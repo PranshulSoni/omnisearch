@@ -2153,6 +2153,30 @@ fn store_ai_chat(db_path: &std::path::Path, command: &str, title: &str, prompt: 
     }
 }
 
+fn create_agent(db_path: &std::path::Path, name: &str, goal: &str) {
+    if let Ok(conn) = rusqlite::Connection::open(db_path) {
+        let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+        let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS agents (\
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, goal TEXT, \
+                system_prompt TEXT, ts INTEGER);",
+            [],
+        );
+        let system_prompt = if goal.is_empty() {
+            format!("You are {name}, a helpful AI assistant. Be concise and proactive.")
+        } else {
+            format!("You are {name}, an AI assistant. Your goal: {goal}. Be concise, helpful, and proactive in pursuing this goal.")
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+        let _ = conn.execute(
+            "INSERT INTO agents (name, goal, system_prompt, ts) VALUES (?,?,?,?);",
+            rusqlite::params![name, goal, system_prompt, now],
+        );
+    }
+}
+
 unsafe fn close_ai_panel(hwnd: HWND, s: &mut State) {
     s.ai_pending = false;
     s.ai_answer = None;
@@ -2170,7 +2194,7 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             cmd == "bookmarks:" || cmd == "history:" || cmd == "commits:" ||
             cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" ||
             cmd == "switch:" || cmd == "window:" || cmd == "ql:" || cmd == "snip:" || cmd == "img:" ||
-            cmd == "chats:"
+            cmd == "chats:" || cmd == "agents:"
         );
         if is_action_folder {
             s.query = cmd;
@@ -2235,6 +2259,77 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                     }
                 }
             }
+            return;
+        } else if let Some(rest) = cmd.strip_prefix("mkagent:") {
+            // Create a new agent, then jump to the agents list.
+            let mut it = rest.splitn(2, '\u{1f}');
+            let name = it.next().unwrap_or("").to_string();
+            let goal = it.next().unwrap_or("").to_string();
+            if !name.is_empty() {
+                create_agent(&s.db_path, &name, &goal);
+            }
+            s.query = "agents:".to_string();
+            s.cursor_pos = s.query.len();
+            s.selected = 0;
+            s.scroll_offset = 0;
+            reset_cursor_blink(hwnd, s);
+            trigger_search(hwnd, s);
+            return;
+        } else if let Some(rest) = cmd.strip_prefix("openagent:") {
+            // Selecting an agent seeds the query so the user can type a message.
+            let name = rest.splitn(2, '\u{1f}').nth(1).unwrap_or("").to_string();
+            s.query = format!("@{}: ", name);
+            s.cursor_pos = s.query.len();
+            s.selected = 0;
+            s.scroll_offset = 0;
+            reset_cursor_blink(hwnd, s);
+            trigger_search(hwnd, s);
+            return;
+        } else if let Some(rest) = cmd.strip_prefix("agent:") {
+            // Message an agent: run the AI with the agent's persona, show in the panel.
+            let mut it = rest.splitn(2, '\u{1f}');
+            let id: i64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(-1);
+            let msg = it.next().unwrap_or("").to_string();
+            let (mut aname, mut sys) = (String::new(), String::new());
+            if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
+                if let Ok((n, sp)) = conn.query_row(
+                    "SELECT name, system_prompt FROM agents WHERE id = ?",
+                    [id],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                ) {
+                    aname = n;
+                    sys = sp;
+                }
+            }
+            if sys.is_empty() || msg.is_empty() {
+                return;
+            }
+            s.ai_pending = true;
+            s.ai_answer = None;
+            s.ai_scroll = 0;
+            s.ai_title = format!("@{}: {}", aname, msg);
+            s.results.clear();
+            s.selected = 0;
+            let _ = InvalidateRect(hwnd, None, FALSE);
+
+            let hwnd_ai = SendHwnd(hwnd);
+            let db_path = s.db_path.clone();
+            let title = s.ai_title.clone();
+            std::thread::spawn(move || {
+                let hwnd_ai = hwnd_ai;
+                let result = ai::complete(&sys, &msg);
+                if let Ok(ref text) = result {
+                    store_ai_chat(&db_path, "agent", &title, &msg, text);
+                }
+                let payload: (bool, String) = match result {
+                    Ok(text) => (true, text),
+                    Err(e) => (false, e.to_string()),
+                };
+                let ptr = Box::into_raw(Box::new(payload)) as isize;
+                unsafe {
+                    let _ = PostMessageW(hwnd_ai.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
+                }
+            });
             return;
         } else {
             if let Some(text) = cmd.strip_prefix("copy:") {
