@@ -2494,7 +2494,7 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             cmd == "bookmarks:" || cmd == "history:" || cmd == "commits:" ||
             cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" ||
             cmd == "switch:" || cmd == "window:" || cmd == "ql:" || cmd == "snip:" || cmd == "img:" ||
-            cmd == "chats:" || cmd == "agents:"
+            cmd == "chats:" || cmd == "agents:" || cmd == "agentchats:"
         );
         if is_action_folder {
             s.query = cmd;
