@@ -283,6 +283,97 @@ pub fn complete_chat(system: &str, prev_user: &str, prev_assistant: &str, user: 
     Ok(text.trim().to_string())
 }
 
+fn get_hermes_config() -> AiConfig {
+    let mut api_key = "hermes".to_string();
+    if let Ok(k) = std::env::var("API_SERVER_KEY") {
+        if !k.trim().is_empty() {
+            api_key = k.trim().to_string();
+        }
+    }
+    if let Ok(k) = std::env::var("HERMES_API_KEY") {
+        if !k.trim().is_empty() {
+            api_key = k.trim().to_string();
+        }
+    }
+    if let Some(conn) = get_db_conn() {
+        if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'hermes_api_key'", [], |row| row.get::<_, String>(0)) {
+            let val_trimmed = val.trim().to_string();
+            if !val_trimmed.is_empty() {
+                api_key = val_trimmed;
+            }
+        }
+    }
+    AiConfig {
+        endpoint: "http://127.0.0.1:8642/v1/chat/completions".to_string(),
+        model: "hermes-agent".to_string(),
+        api_key,
+    }
+}
+
+pub fn complete_agent(system: &str, user: &str) -> Result<String> {
+    let cfg = get_hermes_config();
+    let body = serde_json::json!({
+        "model": cfg.model,
+        "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": user }
+        ],
+        "stream": false,
+        "temperature": 0.3,
+    });
+    let resp = ureq::post(&cfg.endpoint)
+        .set("Authorization", &format!("Bearer {}", cfg.api_key))
+        .set("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(300))
+        .send_json(body);
+    let resp = match resp {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, r)) => {
+            let msg = r.into_string().unwrap_or_default();
+            return Err(anyhow!("Hermes error {code}: {}", msg.chars().take(300).collect::<String>()));
+        }
+        Err(e) => return Err(anyhow!("Hermes request failed: {e}")),
+    };
+    let v: serde_json::Value = resp.into_json().map_err(|e| anyhow!("bad Hermes response: {e}"))?;
+    let text = v["choices"][0]["message"]["content"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Hermes response had no content"))?;
+    Ok(text.trim().to_string())
+}
+
+pub fn complete_chat_agent(system: &str, prev_user: &str, prev_assistant: &str, user: &str) -> Result<String> {
+    let cfg = get_hermes_config();
+    let body = serde_json::json!({
+        "model": cfg.model,
+        "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": prev_user },
+            { "role": "assistant", "content": prev_assistant },
+            { "role": "user", "content": user }
+        ],
+        "stream": false,
+        "temperature": 0.3,
+    });
+    let resp = ureq::post(&cfg.endpoint)
+        .set("Authorization", &format!("Bearer {}", cfg.api_key))
+        .set("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(300))
+        .send_json(body);
+    let resp = match resp {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, r)) => {
+            let msg = r.into_string().unwrap_or_default();
+            return Err(anyhow!("Hermes error {code}: {}", msg.chars().take(300).collect::<String>()));
+        }
+        Err(e) => return Err(anyhow!("Hermes request failed: {e}")),
+    };
+    let v: serde_json::Value = resp.into_json().map_err(|e| anyhow!("bad Hermes response: {e}"))?;
+    let text = v["choices"][0]["message"]["content"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Hermes response had no content"))?;
+    Ok(text.trim().to_string())
+}
+
 /// Map a command + input to a (system prompt, user content) and run it.
 /// Commands: ask, explain, grammar, translate, summarize.
 pub fn run(cmd: &str, input: &str) -> Result<String> {

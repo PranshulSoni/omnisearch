@@ -2689,17 +2689,11 @@ fn format_relative_time(ts: i64) -> String {
                     let (name, msg) = (name.trim(), msg.trim());
                     if let Some((id, real_name)) = self.find_agent_by_name(name) {
                         if !msg.is_empty() {
-                            let mut model_name = "AI".to_string();
-                            if let Ok(val) = self.conn.query_row("SELECT value FROM ai_settings WHERE key = 'model'", [], |row| row.get::<_, String>(0)) {
-                                if !val.is_empty() {
-                                    model_name = val;
-                                }
-                            }
                             return vec![SearchResult {
                                 entry: CatalogEntry {
                                     id: "agent.msg".into(),
                                     control_name: format!("Ask {}: {}", real_name, msg),
-                                    breadcrumb_path: format!("Agent > Press Enter ({})", model_name),
+                                    breadcrumb_path: "Agent > Press Enter (Hermes)".into(),
                                     launch_command: format!("agent:{}\u{1f}{}", id, msg),
                                     source: "AI".into(),
                                     description: format!("Message agent {}", real_name),
