@@ -3840,6 +3840,62 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         launch_command: "action:window:toggle_always_on_top",
         description: "Toggle whether the active window is always on top.",
     },
+    QuickAction {
+        triggers: &["create quicklink", "new quicklink", "add quicklink"],
+        name: "Create Quicklink",
+        breadcrumb: "Quicklinks > Add custom web shortcut",
+        launch_command: "action:create_quicklink",
+        description: "Configure a new keyword-based search engine shortcut.",
+    },
+    QuickAction {
+        triggers: &["create snippet", "new snippet", "add snippet"],
+        name: "Create Snippet",
+        breadcrumb: "Snippets > Add custom text template",
+        launch_command: "action:create_snippet",
+        description: "Create a new text snippet template.",
+    },
+    QuickAction {
+        triggers: &["search quicklinks"],
+        name: "Search Quicklinks",
+        breadcrumb: "Quicklinks > Manage and search",
+        launch_command: "ql:",
+        description: "Browse and search all web search shortcuts.",
+    },
+    QuickAction {
+        triggers: &["search snippets"],
+        name: "Search Snippets",
+        breadcrumb: "Snippets > Manage and search",
+        launch_command: "snip:",
+        description: "Browse and search all text snippets.",
+    },
+    QuickAction {
+        triggers: &["export snippets"],
+        name: "Export Snippets",
+        breadcrumb: "Snippets > Export to Desktop",
+        launch_command: "action:export_snippets",
+        description: "Export all snippets to snippets_export.json on your Desktop.",
+    },
+    QuickAction {
+        triggers: &["import snippets"],
+        name: "Import Snippets",
+        breadcrumb: "Snippets > Import from Desktop",
+        launch_command: "action:import_snippets",
+        description: "Import snippets from snippets_import.json on your Desktop.",
+    },
+    QuickAction {
+        triggers: &["export quicklinks"],
+        name: "Export Quicklinks",
+        breadcrumb: "Quicklinks > Export to Desktop",
+        launch_command: "action:export_quicklinks",
+        description: "Export all quicklinks to quicklinks_export.json on your Desktop.",
+    },
+    QuickAction {
+        triggers: &["import quicklinks"],
+        name: "Import Quicklinks",
+        breadcrumb: "Quicklinks > Import from Desktop",
+        launch_command: "action:import_quicklinks",
+        description: "Import quicklinks from quicklinks_import.json on your Desktop.",
+    },
 ];
 
 
