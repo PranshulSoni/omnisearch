@@ -403,6 +403,10 @@ unsafe fn run() {
         }
     });
 
+    if let Ok(cfg) = ai::get_config() {
+        configure_hermes_llm(&cfg.endpoint, &cfg.model, &cfg.api_key);
+    }
+
     let class: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
     let wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -2255,6 +2259,52 @@ fn create_agent(db_path: &std::path::Path, name: &str, goal: &str) {
     }
 }
 
+fn configure_hermes_llm(endpoint: &str, model: &str, api_key: &str) {
+    let base_url = endpoint
+        .replace("/chat/completions", "")
+        .replace("/completions", "");
+    let base_url = base_url.trim().to_string();
+    let model = model.trim().to_string();
+    let api_key = api_key.trim().to_string();
+
+    if base_url.is_empty() || model.is_empty() || api_key.is_empty() {
+        return;
+    }
+
+    std::thread::spawn(move || {
+        let hermes_cmd = if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            let path = std::path::Path::new(&localappdata).join("hermes").join("bin").join("hermes.cmd");
+            if path.exists() {
+                path.to_string_lossy().to_string()
+            } else {
+                "hermes".to_string()
+            }
+        } else {
+            "hermes".to_string()
+        };
+
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", &format!("\"{}\" config set model.default {}", hermes_cmd, model)])
+            .creation_flags(0x08000000)
+            .status();
+
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", &format!("\"{}\" config set model.provider custom", hermes_cmd)])
+            .creation_flags(0x08000000)
+            .status();
+
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", &format!("\"{}\" config set model.base_url {}", hermes_cmd, base_url)])
+            .creation_flags(0x08000000)
+            .status();
+
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", &format!("\"{}\" config set model.api_key {}", hermes_cmd, api_key)])
+            .creation_flags(0x08000000)
+            .status();
+    });
+}
+
 fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
     s.ai_pending = true;
     let prev_ans = s.ai_answer.clone().unwrap_or_default();
@@ -2326,7 +2376,11 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
             };
         }
 
-        let result = ai::complete_chat(&system_prompt, &original_prompt, &original_response, &new_prompt);
+        let result = if command == "agent" {
+            ai::complete_chat_agent(&system_prompt, &original_prompt, &original_response, &new_prompt)
+        } else {
+            ai::complete_chat(&system_prompt, &original_prompt, &original_response, &new_prompt)
+        };
 
         if let Ok(ref new_response) = result {
             if let Some(id) = chat_id {
@@ -2527,7 +2581,7 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
 
             std::thread::spawn(move || {
                 let hwnd_ai = hwnd_ai;
-                let result = ai::complete(&sys, &msg_clone);
+                let result = ai::complete_agent(&sys, &msg_clone);
                 if let Ok(ref text) = result {
                     if let Some(id) = chat_id {
                         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
@@ -2597,6 +2651,9 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                             s.query = format!("AI {} Saved!", k.to_uppercase());
                         }
                     }
+                }
+                if let Ok(cfg) = ai::get_config() {
+                    configure_hermes_llm(&cfg.endpoint, &cfg.model, &cfg.api_key);
                 }
                 s.cursor_pos = s.query.len();
                 s.results.clear();
