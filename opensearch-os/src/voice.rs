@@ -88,7 +88,7 @@ fn dictation_worker(h: HwndPtr, rx: std::sync::mpsc::Receiver<()>) {
         while rx.try_recv().is_ok() {}
 
         log_voice("query: building dictation recognizer on-demand".into());
-        let mut recognizer = build_recognizer();
+        let recognizer = build_recognizer();
 
         let mut text = None;
         for attempt in 1..=QUERY_ATTEMPTS {
