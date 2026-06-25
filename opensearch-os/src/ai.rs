@@ -279,3 +279,38 @@ pub fn run(cmd: &str, input: &str) -> Result<String> {
     };
     complete(system, &user)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_resolution() {
+        // Clear environment variables that might interfere
+        std::env::remove_var("OPENCODE_API_KEY");
+        std::env::remove_var("DEEPSEEK_API_KEY");
+        std::env::remove_var("OPENSEARCH_AI_KEY");
+        std::env::remove_var("OPENSEARCH_AI_ENDPOINT");
+        std::env::remove_var("OPENSEARCH_AI_MODEL");
+
+        // Temporarily set OPENCODE_API_KEY env to test fallback
+        std::env::set_var("OPENCODE_API_KEY", "sk-oc-test-key-12345");
+        let cfg = get_config().unwrap();
+        assert_eq!(cfg.api_key, "sk-oc-test-key-12345");
+        assert_eq!(cfg.endpoint, "https://opencode.ai/zen/v1/chat/completions");
+        assert_eq!(cfg.model, "deepseek-v4-flash-free");
+
+        // Cleanup
+        std::env::remove_var("OPENCODE_API_KEY");
+
+        // Now set DEEPSEEK_API_KEY
+        std::env::set_var("DEEPSEEK_API_KEY", "sk-ds-test-key-12345");
+        let cfg2 = get_config().unwrap();
+        assert_eq!(cfg2.api_key, "sk-ds-test-key-12345");
+        assert_eq!(cfg2.endpoint, "https://api.deepseek.com/chat/completions");
+        assert_eq!(cfg2.model, "deepseek-chat");
+
+        // Cleanup
+        std::env::remove_var("DEEPSEEK_API_KEY");
+    }
+}
