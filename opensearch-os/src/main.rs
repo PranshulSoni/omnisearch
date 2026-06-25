@@ -144,6 +144,7 @@ struct State {
     ai_answer: Option<String>,   // the response text to render
     ai_title: String,            // command label shown above the answer
     ai_scroll: i32,              // vertical pixel scroll offset in the answer panel
+    active_chat_id: Option<i64>, // persistent chat thread ID in ai_chats table
 }
 
 #[derive(PartialEq)]
@@ -386,6 +387,7 @@ unsafe fn run() {
         ai_answer: None,
         ai_title: String::new(),
         ai_scroll: 0,
+        active_chat_id: None,
     });
 
     let class: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
