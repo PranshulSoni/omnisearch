@@ -3395,9 +3395,6 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             } else {
                 s.ai_scroll.clamp(0, max_scroll)
             };
-            if s.ai_pending {
-                s.ai_scroll = scroll;
-            }
 
             // 2. Paint Pass
             let dc_state = SaveDC(mdc);
