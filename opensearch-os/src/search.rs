@@ -4583,4 +4583,195 @@ impl SearchEngine {
         results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         results
     }
+
+    pub fn check_quicklink_keyword(&self, first_word: &str) -> Option<(String, String)> {
+        let conn = &self.conn;
+        let mut stmt = conn.prepare("SELECT name, url FROM quicklinks WHERE keyword = ?1 LIMIT 1").ok()?;
+        let mut rows = stmt.query(rusqlite::params![first_word.to_lowercase()]).ok()?;
+        if let Some(row) = rows.next().ok()? {
+            let name: String = row.get(0).ok()?;
+            let url: String = row.get(1).ok()?;
+            Some((name, url))
+        } else {
+            None
+        }
+    }
+
+    pub fn search_quicklinks_name_matches(&self, query: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        let conn = &self.conn;
+        let q = query.trim();
+        if q.is_empty() { return results; }
+        
+        let q_lower = q.to_lowercase();
+        let mut stmt = match conn.prepare("SELECT name, url, keyword FROM quicklinks WHERE name LIKE ?1 OR keyword = ?2 LIMIT 5") {
+            Ok(s) => s,
+            Err(_) => return results,
+        };
+        let iter = match stmt.query_map(rusqlite::params![format!("%{}%", q), q_lower.clone()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        }) {
+            Ok(it) => it,
+            Err(_) => return results,
+        };
+        for item in iter {
+            if let Ok((name, url, keyword)) = item {
+                let display_keyword = if keyword.is_empty() { "".to_string() } else { format!(" [{}]", keyword) };
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("quicklink.{}", name.to_lowercase().replace(' ', "_")),
+                        control_name: name.clone(),
+                        breadcrumb_path: format!("Quicklink{} > {}", display_keyword, url),
+                        launch_command: format!("open_quicklink:{}", url),
+                        source: "QUICKLINK".to_string(),
+                        description: format!("Open quicklink '{}' ({})", name, url),
+                        synonyms: format!("{} {}", name.to_lowercase(), keyword),
+                    },
+                    score: 4.0,
+                });
+            }
+        }
+        results
+    }
+
+    pub fn search_snippets_name_matches(&self, query: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        let conn = &self.conn;
+        let q = query.trim();
+        if q.is_empty() { return results; }
+        
+        let q_lower = q.to_lowercase();
+        let mut stmt = match conn.prepare("SELECT name, content, keyword FROM snippets WHERE name LIKE ?1 OR keyword = ?2 LIMIT 5") {
+            Ok(s) => s,
+            Err(_) => return results,
+        };
+        let iter = match stmt.query_map(rusqlite::params![format!("%{}%", q), q_lower.clone()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
+        }) {
+            Ok(it) => it,
+            Err(_) => return results,
+        };
+        for item in iter {
+            if let Ok((name, content, keyword)) = item {
+                let kw_str = keyword.clone().unwrap_or_default();
+                let display_keyword = if kw_str.is_empty() { "".to_string() } else { format!(" [{}]", kw_str) };
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("snippet.{}", name.to_lowercase().replace(' ', "_")),
+                        control_name: name.clone(),
+                        breadcrumb_path: format!("Snippet{} > Copy to Clipboard", display_keyword),
+                        launch_command: format!("copy_snippet:{}", content),
+                        source: "SNIPPET".to_string(),
+                        description: if content.len() > 60 { format!("{}...", &content[..60]) } else { content.clone() },
+                        synonyms: format!("{} {}", name.to_lowercase(), kw_str),
+                    },
+                    score: 3.9,
+                });
+            }
+        }
+        results
+    }
+
+    pub fn search_quicklinks_only(&self, query: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        let conn = &self.conn;
+        let q = query.trim();
+        let q_lower = q.to_lowercase();
+
+        let mut stmt = if q.is_empty() {
+            match conn.prepare("SELECT name, url, keyword FROM quicklinks ORDER BY name ASC") {
+                Ok(s) => s,
+                Err(_) => return results,
+            }
+        } else {
+            match conn.prepare("SELECT name, url, keyword FROM quicklinks WHERE name LIKE ?1 OR keyword = ?2 ORDER BY name ASC") {
+                Ok(s) => s,
+                Err(_) => return results,
+            }
+        };
+
+        let params: Vec<String> = if q.is_empty() {
+            vec![]
+        } else {
+            vec![format!("%{}%", q), q_lower.clone()]
+        };
+
+        let iter = match stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        }) {
+            Ok(it) => it,
+            Err(_) => return results,
+        };
+
+        for item in iter {
+            if let Ok((name, url, keyword)) = item {
+                let display_keyword = if keyword.is_empty() { "".to_string() } else { format!(" [{}]", keyword) };
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("quicklink.{}", name.to_lowercase().replace(' ', "_")),
+                        control_name: name.clone(),
+                        breadcrumb_path: format!("Quicklink{} > {}", display_keyword, url),
+                        launch_command: format!("open_quicklink:{}", url),
+                        source: "QUICKLINK".to_string(),
+                        description: format!("Open quicklink '{}' ({})", name, url),
+                        synonyms: format!("{} {}", name.to_lowercase(), keyword),
+                    },
+                    score: 8.0,
+                });
+            }
+        }
+        results
+    }
+
+    pub fn search_snippets_only(&self, query: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        let conn = &self.conn;
+        let q = query.trim();
+        let q_lower = q.to_lowercase();
+
+        let mut stmt = if q.is_empty() {
+            match conn.prepare("SELECT name, content, keyword FROM snippets ORDER BY name ASC") {
+                Ok(s) => s,
+                Err(_) => return results,
+            }
+        } else {
+            match conn.prepare("SELECT name, content, keyword FROM snippets WHERE name LIKE ?1 OR content LIKE ?2 OR keyword = ?3 ORDER BY name ASC") {
+                Ok(s) => s,
+                Err(_) => return results,
+            }
+        };
+
+        let params: Vec<String> = if q.is_empty() {
+            vec![]
+        } else {
+            vec![format!("%{}%", q), format!("%{}%", q), q_lower.clone()]
+        };
+
+        let iter = match stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
+        }) {
+            Ok(it) => it,
+            Err(_) => return results,
+        };
+
+        for item in iter {
+            if let Ok((name, content, keyword)) = item {
+                let kw_str = keyword.clone().unwrap_or_default();
+                let display_keyword = if kw_str.is_empty() { "".to_string() } else { format!(" [{}]", kw_str) };
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("snippet.{}", name.to_lowercase().replace(' ', "_")),
+                        control_name: name.clone(),
+                        breadcrumb_path: format!("Snippet{} > Copy to Clipboard", display_keyword),
+                        launch_command: format!("copy_snippet:{}", content),
+                        source: "SNIPPET".to_string(),
+                        description: if content.len() > 60 { format!("{}...", &content[..60]) } else { content.clone() },
+                        synonyms: format!("{} {}", name.to_lowercase(), kw_str),
+                    },
+                    score: 8.0,
+                });
+            }
+        }
+        results
+    }
 }
