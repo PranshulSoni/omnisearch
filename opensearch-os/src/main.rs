@@ -3748,6 +3748,8 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     s.icon_todo
                 } else if res.entry.source == "CLIPBOARD" {
                     s.icon_clipboard
+                } else if res.entry.source == "AI" {
+                    s.icon_memory
                 } else if res.entry.source == "MEMORY" {
                     s.icon_memory
                 } else {
@@ -3994,6 +3996,12 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
         ("WEB", CLR_BDGBG, CLR_BDGTX)
     } else if src_lc == "app" {
         ("APP", CLR_BDGBG, CLR_BDGTX)
+    } else if src_lc == "ai" {
+        ("AI", COLORREF(0x00_3A_37_46), COLORREF(0x00_D6_D0_F0))
+    } else if src_lc == "quicklink" {
+        ("LINK", CLR_BDGBG, CLR_BDGTX)
+    } else if src_lc == "snippet" {
+        ("SNIP", CLR_BDGBG, CLR_BDGTX)
     } else if src_lc == "calc" {
         ("CALC", CLR_BDGBG, CLR_BDGTX)
     } else if src_lc == "recent" {
