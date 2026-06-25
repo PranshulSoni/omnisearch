@@ -186,6 +186,15 @@ pub fn launch(cmd: &str) {
 }
 
 fn handle_action(action: &str) {
+    if action.starts_with("volume:") {
+        if let Some(num_str) = action.strip_prefix("volume:") {
+            if let Ok(pct) = num_str.parse::<u32>() {
+                let percent = pct as f32 / 100.0;
+                let _ = set_master_volume(percent);
+            }
+        }
+        return;
+    }
     match action {
         "lock" => {
             unsafe {
@@ -264,14 +273,30 @@ fn handle_action(action: &str) {
                 .spawn();
         }
         "toggle_mute" => {
-            let _ = Command::new("powershell")
-                .args([
-                    "-WindowStyle", "Hidden",
-                    "-Command",
-                    "$wshShell = New-Object -ComObject WScript.Shell; $wshShell.SendKeys([char]173)",
-                ])
-                .creation_flags(0x08000000)
-                .spawn();
+            if let Ok(m) = get_mute() {
+                let _ = set_mute(!m);
+            }
+        }
+        "mute" => {
+            let _ = set_mute(true);
+        }
+        "unmute" => {
+            let _ = set_mute(false);
+        }
+        "toggle_hidden_files" => {
+            let _ = toggle_hidden_files();
+        }
+        "media:play_pause" => {
+            send_media_key(windows::Win32::UI::Input::KeyboardAndMouse::VK_MEDIA_PLAY_PAUSE);
+        }
+        "media:next" => {
+            send_media_key(windows::Win32::UI::Input::KeyboardAndMouse::VK_MEDIA_NEXT_TRACK);
+        }
+        "media:prev" => {
+            send_media_key(windows::Win32::UI::Input::KeyboardAndMouse::VK_MEDIA_PREV_TRACK);
+        }
+        "media:stop" => {
+            send_media_key(windows::Win32::UI::Input::KeyboardAndMouse::VK_MEDIA_STOP);
         }
         "toggle_bluetooth" => {
             let _ = Command::new("powershell")
@@ -607,5 +632,167 @@ fn handle_window_action(action: &str) {
             x, y, w, h,
             SWP_NOZORDER | SWP_NOACTIVATE,
         );
+    }
+}
+
+pub fn set_master_volume(percent: f32) -> Result<(), windows::core::Error> {
+    unsafe {
+        use windows::Win32::System::Com::*;
+        use windows::Win32::Media::Audio::*;
+        use windows::Win32::Media::Audio::Endpoints::*;
+        
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+            &MMDeviceEnumerator,
+            None,
+            CLSCTX_ALL,
+        )?;
+        
+        let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+        let volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None)?;
+        
+        volume.SetMasterVolumeLevelScalar(percent, std::ptr::null())?;
+        Ok(())
+    }
+}
+
+pub fn set_mute(muted: bool) -> Result<(), windows::core::Error> {
+    unsafe {
+        use windows::Win32::System::Com::*;
+        use windows::Win32::Media::Audio::*;
+        use windows::Win32::Media::Audio::Endpoints::*;
+        
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+            &MMDeviceEnumerator,
+            None,
+            CLSCTX_ALL,
+        )?;
+        
+        let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+        let volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None)?;
+        
+        volume.SetMute(muted, std::ptr::null())?;
+        Ok(())
+    }
+}
+
+pub fn get_mute() -> Result<bool, windows::core::Error> {
+    unsafe {
+        use windows::Win32::System::Com::*;
+        use windows::Win32::Media::Audio::*;
+        use windows::Win32::Media::Audio::Endpoints::*;
+        
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(
+            &MMDeviceEnumerator,
+            None,
+            CLSCTX_ALL,
+        )?;
+        
+        let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+        let volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None)?;
+        
+        let val = volume.GetMute()?;
+        Ok(val.as_bool())
+    }
+}
+
+pub fn toggle_hidden_files() -> Result<bool, windows::core::Error> {
+    unsafe {
+        use windows::Win32::System::Registry::*;
+        use windows::Win32::UI::Shell::SHChangeNotify;
+        use windows::Win32::UI::Shell::SHCNE_ASSOCCHANGED;
+        use windows::Win32::UI::Shell::SHCNF_IDLIST;
+        use windows::core::PCWSTR;
+        
+        let subkey = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\0"
+            .encode_utf16()
+            .collect::<Vec<u16>>();
+        let value_name = "Hidden\0"
+            .encode_utf16()
+            .collect::<Vec<u16>>();
+            
+        let mut hkey = HKEY::default();
+        let status = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            0,
+            KEY_READ | KEY_WRITE,
+            &mut hkey,
+        );
+        
+        if status.is_err() {
+            return Err(status.into());
+        }
+        
+        let mut value_type = REG_VALUE_TYPE::default();
+        let mut data = 0u32;
+        let mut data_size = std::mem::size_of::<u32>() as u32;
+        
+        let status = RegQueryValueExW(
+            hkey,
+            PCWSTR(value_name.as_ptr()),
+            None,
+            Some(&mut value_type),
+            Some(&mut data as *mut u32 as *mut u8),
+            Some(&mut data_size),
+        );
+        
+        let new_val = if status.is_ok() && data == 1 {
+            2u32 // change to hide
+        } else {
+            1u32 // change to show
+        };
+        
+        let status = RegSetValueExW(
+            hkey,
+            PCWSTR(value_name.as_ptr()),
+            0,
+            REG_DWORD,
+            Some(&new_val as *const u32 as *const u8),
+            std::mem::size_of::<u32>() as u32,
+        );
+        
+        let _ = RegCloseKey(hkey);
+        
+        if status.is_ok() {
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+            Ok(new_val == 1)
+        } else {
+            Err(status.into())
+        }
+    }
+}
+
+pub fn send_media_key(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) {
+    unsafe {
+        use windows::Win32::UI::Input::KeyboardAndMouse::*;
+        
+        let inputs = [
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_ANONYMOUS {
+                    ki: KEYBDINPUT {
+                        wVk: vk,
+                        wScan: 0,
+                        dwFlags: KEYEVENTF_EXTENDEDKEY,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_ANONYMOUS {
+                    ki: KEYBDINPUT {
+                        wVk: vk,
+                        wScan: 0,
+                        dwFlags: KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+        ];
+        
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }
 }
