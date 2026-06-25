@@ -1348,15 +1348,15 @@ fn format_relative_time(ts: i64) -> String {
 }
 
     /// chats: prefix — browse stored AI chat history (newest first).
-    pub fn search_ai_chats(&self, query: &str) -> Vec<SearchResult> {
+    pub fn search_ai_chats_only(&self, query: &str) -> Vec<SearchResult> {
         let conn = &self.conn;
         let q = query.trim().to_lowercase();
         let mut results = Vec::new();
         let sql = if q.is_empty() {
-            "SELECT id, title, prompt, response, ts, command FROM ai_chats ORDER BY ts DESC LIMIT 50".to_string()
+            "SELECT id, title, prompt, response, ts, command FROM ai_chats WHERE command != 'agent' ORDER BY ts DESC LIMIT 50".to_string()
         } else {
             "SELECT id, title, prompt, response, ts, command FROM ai_chats \
-             WHERE lower(title) LIKE ?1 OR lower(prompt) LIKE ?1 OR lower(response) LIKE ?1 \
+             WHERE command != 'agent' AND (lower(title) LIKE ?1 OR lower(prompt) LIKE ?1 OR lower(response) LIKE ?1) \
              ORDER BY ts DESC LIMIT 50".to_string()
         };
         let mut stmt = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return results };
@@ -1406,7 +1406,95 @@ fn format_relative_time(ts: i64) -> String {
                 },
                 score,
             });
-            score -= 0.01; // preserve newest-first order
+            score -= 0.01;
+        }
+        results
+    }
+
+    /// agentchats: prefix — browse stored Agent chat history (newest first).
+    pub fn search_agent_chats_only(&self, query: &str) -> Vec<SearchResult> {
+        let conn = &self.conn;
+        let q = query.trim().to_lowercase();
+        let mut results = Vec::new();
+
+        // Check if query is targeting a specific agent, to prepend "New Conversation"
+        let agent_name_to_check = if q.starts_with('@') {
+            q.strip_prefix('@').unwrap_or(&q).trim()
+        } else {
+            &q
+        };
+        if !agent_name_to_check.is_empty() {
+            if let Some((_id, actual_name)) = self.find_agent_by_name(agent_name_to_check) {
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("newagent.{}", actual_name),
+                        control_name: format!("💬 New Conversation with @{}", actual_name),
+                        breadcrumb_path: format!("Agent > Start fresh conversation with {}", actual_name),
+                        launch_command: format!("startnewagent:{}", actual_name),
+                        source: "AI".to_string(),
+                        description: format!("Create a new chat thread with @{}", actual_name),
+                        synonyms: format!("new conversation chat agent {}", actual_name.to_lowercase()),
+                    },
+                    score: 110.0,
+                });
+            }
+        }
+
+        let sql = if q.is_empty() {
+            "SELECT id, title, prompt, response, ts, command FROM ai_chats WHERE command = 'agent' ORDER BY ts DESC LIMIT 50".to_string()
+        } else {
+            "SELECT id, title, prompt, response, ts, command FROM ai_chats \
+             WHERE command = 'agent' AND (lower(title) LIKE ?1 OR lower(prompt) LIKE ?1 OR lower(response) LIKE ?1) \
+             ORDER BY ts DESC LIMIT 50".to_string()
+        };
+        let mut stmt = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return results };
+        let like = format!("%{}%", q);
+        let map = |row: &rusqlite::Row| -> rusqlite::Result<(i64, String, String, String, i64, String)> {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+        };
+        let rows = if q.is_empty() { stmt.query_map([], map) } else { stmt.query_map([&like], map) };
+        let rows = match rows { Ok(r) => r, Err(_) => return results };
+        let mut score = 100.0f32;
+        for row in rows.filter_map(|r| r.ok()) {
+            let (id, title, prompt, response, ts, command) = row;
+
+            let clean_prompt = prompt.replace('\n', " ").replace('\r', " ");
+            let clean_prompt = clean_prompt.split_whitespace().collect::<Vec<&str>>().join(" ");
+            let prompt_display = if clean_prompt.len() > 65 {
+                format!("{}...", clean_prompt.chars().take(65).collect::<String>())
+            } else if clean_prompt.is_empty() {
+                if title.is_empty() { "Untitled Agent Run".to_string() } else { title }
+            } else {
+                clean_prompt
+            };
+
+            let clean_response = response.replace('\n', " ").replace('\r', " ");
+            let clean_response = clean_response.split_whitespace().collect::<Vec<&str>>().join(" ");
+            let response_snippet = if clean_response.len() > 80 {
+                format!("{}...", clean_response.chars().take(80).collect::<String>())
+            } else if clean_response.is_empty() {
+                "(Thinking or empty response)".to_string()
+            } else {
+                clean_response
+            };
+
+            let cmd_upper = command.to_uppercase();
+            let breadcrumb = format!("Agent Run [{}] > {}", cmd_upper, response_snippet);
+            let time_str = Self::format_relative_time(ts);
+
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: format!("aichat.{}", id),
+                    control_name: prompt_display,
+                    breadcrumb_path: breadcrumb,
+                    launch_command: format!("aichat:{}", id),
+                    source: "AI".to_string(),
+                    description: format!("{} | Enter to select & continue", time_str),
+                    synonyms: "agent chat history run hermes".to_string(),
+                },
+                score,
+            });
+            score -= 0.01;
         }
         results
     }
@@ -2151,7 +2239,7 @@ fn format_relative_time(ts: i64) -> String {
             results.push(SearchResult {
                 entry: CatalogEntry {
                     id: "folder.aichats".to_string(),
-                    control_name: "AI Chat History".to_string(),
+                    control_name: "AI History".to_string(),
                     breadcrumb_path: "AI > Past chats".to_string(),
                     launch_command: "chats:".to_string(),
                     source: "FOLDER".to_string(),
@@ -2159,6 +2247,18 @@ fn format_relative_time(ts: i64) -> String {
                     synonyms: "ai chats history conversations past previous saved".to_string(),
                 },
                 score: 3.1,
+            });
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: "folder.agentchats".to_string(),
+                    control_name: "Agent History".to_string(),
+                    breadcrumb_path: "AI > Agent runs".to_string(),
+                    launch_command: "agentchats:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Browse and reopen your past Agent runs".to_string(),
+                    synonyms: "agent chats history runs task runs previous saved hermes".to_string(),
+                },
+                score: 3.08,
             });
             results.push(SearchResult {
                 entry: CatalogEntry {
@@ -2349,7 +2449,11 @@ fn format_relative_time(ts: i64) -> String {
         }
 
         if let Some(sub) = q_lower_trimmed.strip_prefix("chats:") {
-            return self.search_ai_chats(sub.trim());
+            return self.search_ai_chats_only(sub.trim());
+        }
+
+        if let Some(sub) = q_lower_trimmed.strip_prefix("agentchats:") {
+            return self.search_agent_chats_only(sub.trim());
         }
 
         if let Some(sub) = q_lower_trimmed.strip_prefix("agents:") {
