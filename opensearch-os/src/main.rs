@@ -2277,6 +2277,9 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                         s.ai_answer = Some(response);
                         s.ai_title = title;
                         s.ai_scroll = 0;
+                        s.active_chat_id = Some(id);
+                        s.query.clear(); // Clear search query to allow typing follow-up
+                        s.cursor_pos = 0;
                         s.results.clear();
                         s.selected = 0;
                         let _ = InvalidateRect(hwnd, None, FALSE);
