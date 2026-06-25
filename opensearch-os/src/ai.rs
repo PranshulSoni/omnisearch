@@ -3,6 +3,9 @@
 //! worker thread so the UI never stalls.
 
 use anyhow::{anyhow, Result};
+use std::sync::atomic::AtomicBool;
+
+pub static HERMES_GATEWAY_RUNNING: AtomicBool = AtomicBool::new(false);
 
 // DeepSeek V4 Flash (OpenAI-compatible). Override endpoint/model via env if desired.
 const DEFAULT_ENDPOINT: &str = "https://api.deepseek.com/chat/completions";
@@ -218,10 +221,11 @@ pub fn complete(system: &str, user: &str) -> Result<String> {
         "temperature": 0.3,
     });
 
+    let timeout_secs = if cfg.model == "hermes-agent" { 300 } else { 30 };
     let resp = ureq::post(&cfg.endpoint)
         .set("Authorization", &format!("Bearer {}", cfg.api_key))
         .set("Content-Type", "application/json")
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .send_json(body);
 
     let resp = match resp {
@@ -256,10 +260,11 @@ pub fn complete_chat(system: &str, prev_user: &str, prev_assistant: &str, user: 
         "temperature": 0.3,
     });
 
+    let timeout_secs = if cfg.model == "hermes-agent" { 300 } else { 30 };
     let resp = ureq::post(&cfg.endpoint)
         .set("Authorization", &format!("Bearer {}", cfg.api_key))
         .set("Content-Type", "application/json")
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .send_json(body);
 
     let resp = match resp {
