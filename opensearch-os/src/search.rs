@@ -186,6 +186,56 @@ impl SearchEngine {
         )?;
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_timeline_timestamp ON timeline_events(timestamp);", []);
 
+        // Create quicklinks table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS quicklinks (
+                name TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                keyword TEXT NOT NULL
+            );",
+            [],
+        )?;
+
+        // Pre-populate quicklinks if empty
+        let ql_count: i64 = conn.query_row("SELECT COUNT(*) FROM quicklinks", [], |row| row.get(0)).unwrap_or(0);
+        if ql_count == 0 {
+            let defaults = &[
+                ("Google", "https://google.com/search?q={query}", "g"),
+                ("YouTube", "https://youtube.com/results?search_query={query}", "yt"),
+                ("GitHub", "https://github.com/search?q={query}", "gh"),
+                ("Rust Docs", "https://docs.rs/releases/search?query={query}", "rs"),
+            ];
+            for &(name, url, keyword) in defaults {
+                let _ = conn.execute(
+                    "INSERT INTO quicklinks (name, url, keyword) VALUES (?, ?, ?);",
+                    rusqlite::params![name, url, keyword],
+                );
+            }
+        }
+
+        // Create snippets table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS snippets (
+                name TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                keyword TEXT
+            );",
+            [],
+        )?;
+
+        // Pre-populate snippets if empty
+        let sn_count: i64 = conn.query_row("SELECT COUNT(*) FROM snippets", [], |row| row.get(0)).unwrap_or(0);
+        if sn_count == 0 {
+            let _ = conn.execute(
+                "INSERT INTO snippets (name, content, keyword) VALUES (?, ?, ?);",
+                rusqlite::params![
+                    "Example Snippet",
+                    "Hello, this is a reusable snippet! Type '!demo' to trigger it or search for it.",
+                    "!demo"
+                ],
+            );
+        }
+
         let mut engine = Self { vecs, meta, n, dim, session, tokenizer, anchor_categories: vec![], apps: vec![], recent_files: vec![], _db_path: db_path, conn };
         for cat in &mut anchor_categories {
             for phrase in cat.phrases {
