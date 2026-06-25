@@ -379,7 +379,7 @@ fn get_target_window() -> Option<HWND> {
 
     unsafe {
         let class: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
-        let launcher_hwnd = FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null());
+        let launcher_hwnd = FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()).unwrap_or_default();
         let fg = GetForegroundWindow();
 
         if fg != launcher_hwnd && !fg.0.is_null() {
