@@ -2762,7 +2762,17 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             } else if let Some(text) = cmd.strip_prefix("copy:") {
                 copy_to_clipboard(hwnd, text);
             } else if let Some(path) = cmd.strip_prefix("copy_image:") {
-                copy_image_to_clipboard(hwnd, path);
+                let prev_hwnd = s.prev_foreground;
+                if copy_image_to_clipboard(hwnd, path) {
+                    do_hide(hwnd, s);
+                    paste_into_window(prev_hwnd);
+                } else {
+                    s.query = "Could not copy image to clipboard".to_string();
+                    s.cursor_pos = s.query.len();
+                    s.results.clear();
+                    let _ = InvalidateRect(hwnd, None, FALSE);
+                }
+                return;
             } else if cmd == "action:create_snippet" {
                 s.form_state = FormState::CreateSnippetName;
                 s.query.clear();
@@ -2787,66 +2797,7 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 do_hide(hwnd, s);
                 // Auto-paste into the previously focused window (Raycast-style snippet behavior)
                 if !prev_hwnd.0.is_null() {
-                    // Brief delay to let the launcher hide animation settle before sending input
-                    std::thread::sleep(std::time::Duration::from_millis(80));
-                    // Restore focus to the previous window
-                    let _ = SetForegroundWindow(prev_hwnd);
-                    // Send Ctrl+V
-                    use windows::Win32::UI::Input::KeyboardAndMouse::{
-                        SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-                        VK_CONTROL, KEYEVENTF_KEYUP,
-                    };
-                    let inputs = [
-                        INPUT {
-                            r#type: INPUT_KEYBOARD,
-                            Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                                ki: KEYBDINPUT {
-                                    wVk: VK_CONTROL,
-                                    wScan: 0,
-                                    dwFlags: KEYBD_EVENT_FLAGS(0),
-                                    time: 0,
-                                    dwExtraInfo: 0,
-                                },
-                            },
-                        },
-                        INPUT {
-                            r#type: INPUT_KEYBOARD,
-                            Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                                ki: KEYBDINPUT {
-                                    wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(0x56), // 'V'
-                                    wScan: 0,
-                                    dwFlags: KEYBD_EVENT_FLAGS(0),
-                                    time: 0,
-                                    dwExtraInfo: 0,
-                                },
-                            },
-                        },
-                        INPUT {
-                            r#type: INPUT_KEYBOARD,
-                            Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                                ki: KEYBDINPUT {
-                                    wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(0x56),
-                                    wScan: 0,
-                                    dwFlags: KEYEVENTF_KEYUP,
-                                    time: 0,
-                                    dwExtraInfo: 0,
-                                },
-                            },
-                        },
-                        INPUT {
-                            r#type: INPUT_KEYBOARD,
-                            Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                                ki: KEYBDINPUT {
-                                    wVk: VK_CONTROL,
-                                    wScan: 0,
-                                    dwFlags: KEYEVENTF_KEYUP,
-                                    time: 0,
-                                    dwExtraInfo: 0,
-                                },
-                            },
-                        },
-                    ];
-                    let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+                    paste_into_window(prev_hwnd);
                 }
                 return;
             } else if let Some(url) = cmd.strip_prefix("open_quicklink:") {
@@ -4171,7 +4122,70 @@ unsafe fn get_active_app_name() -> String {
     "Unknown".to_string()
 }
 
-unsafe fn copy_image_to_clipboard(hwnd: HWND, file_path: &str) {
+unsafe fn paste_into_window(target: HWND) {
+    if target.0.is_null() {
+        return;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    let _ = SetForegroundWindow(target);
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        VK_CONTROL, KEYEVENTF_KEYUP,
+    };
+    let inputs = [
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VK_CONTROL,
+                    wScan: 0,
+                    dwFlags: KEYBD_EVENT_FLAGS(0),
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        },
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(0x56),
+                    wScan: 0,
+                    dwFlags: KEYBD_EVENT_FLAGS(0),
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        },
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(0x56),
+                    wScan: 0,
+                    dwFlags: KEYEVENTF_KEYUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        },
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VK_CONTROL,
+                    wScan: 0,
+                    dwFlags: KEYEVENTF_KEYUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        },
+    ];
+    let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+}
+
+unsafe fn copy_image_to_clipboard(hwnd: HWND, file_path: &str) -> bool {
     use windows::Win32::System::DataExchange::{OpenClipboard, CloseClipboard, EmptyClipboard, SetClipboardData};
     use windows::Win32::UI::WindowsAndMessaging::{LoadImageW, IMAGE_BITMAP, LR_LOADFROMFILE, LR_CREATEDIBSECTION};
     use windows::Win32::Foundation::HANDLE;
@@ -4190,10 +4204,12 @@ unsafe fn copy_image_to_clipboard(hwnd: HWND, file_path: &str) {
     if let Ok(hbitmap) = h_img {
         if OpenClipboard(hwnd).is_ok() {
             let _ = EmptyClipboard();
-            let _ = SetClipboardData(2, HANDLE(hbitmap.0));
+            let ok = SetClipboardData(2, HANDLE(hbitmap.0)).is_ok();
             let _ = CloseClipboard();
+            return ok;
         }
     }
+    false
 }
 
 unsafe fn capture_clipboard_image_data(hwnd: HWND) -> Option<(Vec<u8>, windows::Win32::Graphics::Gdi::BITMAPINFOHEADER)> {
