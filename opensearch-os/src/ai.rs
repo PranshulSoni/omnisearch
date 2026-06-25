@@ -381,6 +381,18 @@ pub fn start_hermes_gateway_daemon() {
 
 fn ensure_hermes_gateway_running() -> Result<()> {
     if !HERMES_GATEWAY_RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
+        let hermes_cmd = get_hermes_executable();
+        if hermes_cmd == "hermes" {
+            let _ = std::process::Command::new("powershell")
+                .args([
+                    "-NoExit",
+                    "-Command",
+                    "Write-Host 'Hermes Agent not found. Starting automatic installation...'; iex (irm https://hermes-agent.nousresearch.com/install.ps1); Read-Host 'Installation completed. Press Enter to close'"
+                ])
+                .spawn();
+            return Err(anyhow!("Hermes Agent is not installed. An installation window has been opened. Please wait for the setup to complete and try again."));
+        }
+
         // Double check status
         let running = std::net::TcpStream::connect_timeout(
             &"127.0.0.1:8642".parse().unwrap(),
