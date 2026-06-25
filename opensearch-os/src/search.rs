@@ -2371,6 +2371,30 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                 return vec![
                     SearchResult {
                         entry: CatalogEntry {
+                            id: "ai.config.preset.opencode".to_string(),
+                            control_name: "Apply OpenCode Zen Preset".to_string(),
+                            breadcrumb_path: "AI Config > Set endpoint and model for OpenCode Zen".to_string(),
+                            launch_command: "action:ai_config:preset:opencode".to_string(),
+                            source: "AI".to_string(),
+                            description: "Press Enter to configure endpoint and model for OpenCode Zen".to_string(),
+                            synonyms: "ai config preset opencode".to_string(),
+                        },
+                        score: 101.0,
+                    },
+                    SearchResult {
+                        entry: CatalogEntry {
+                            id: "ai.config.preset.deepseek".to_string(),
+                            control_name: "Apply DeepSeek Preset".to_string(),
+                            breadcrumb_path: "AI Config > Set endpoint and model for DeepSeek".to_string(),
+                            launch_command: "action:ai_config:preset:deepseek".to_string(),
+                            source: "AI".to_string(),
+                            description: "Press Enter to configure endpoint and model for DeepSeek".to_string(),
+                            synonyms: "ai config preset deepseek".to_string(),
+                        },
+                        score: 100.5,
+                    },
+                    SearchResult {
+                        entry: CatalogEntry {
                             id: "ai.config.key".to_string(),
                             control_name: "Set AI API Key".to_string(),
                             breadcrumb_path: format!("AI Config > Key: {}", key_masked),
@@ -2446,6 +2470,22 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                             },
                             score: 100.0,
                         }];
+                    } else if subcmd == "preset" {
+                        if val == "opencode" || val == "deepseek" {
+                            let label = format!("Apply {} Preset", if val == "opencode" { "OpenCode Zen" } else { "DeepSeek" });
+                            return vec![SearchResult {
+                                entry: CatalogEntry {
+                                    id: format!("ai.config.preset.{}", val),
+                                    control_name: label,
+                                    breadcrumb_path: format!("AI Config > Apply Preset"),
+                                    launch_command: format!("action:ai_config:preset:{}", val),
+                                    source: "AI".to_string(),
+                                    description: format!("Press Enter to configure endpoint and model for {}", val),
+                                    synonyms: format!("ai config preset {}", val),
+                                },
+                                score: 100.0,
+                            }];
+                        }
                     }
                 } else if rest_trimmed == "reset" {
                     return vec![SearchResult {
