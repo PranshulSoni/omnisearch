@@ -2346,6 +2346,124 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             }
         }
 
+        // ── AI config: Settings and credentials ──────────────────────────────────────
+        {
+            let lt = q_lower_trimmed.as_str();
+            let qt = q.trim();
+            if lt == "ai config" {
+                let mut key_masked = "Not set".to_string();
+                let mut endpoint_val = "Default (DeepSeek/OpenCodeZen auto)".to_string();
+                let mut model_val = "Default (DeepSeek/OpenCodeZen auto)".to_string();
+                let conn = &self.conn;
+                if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'api_key'", [], |row| row.get::<_, String>(0)) {
+                    if val.len() > 8 {
+                        key_masked = format!("{}...{}", &val[..4], &val[val.len()-4..]);
+                    } else if !val.is_empty() {
+                        key_masked = "****".to_string();
+                    }
+                }
+                if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'endpoint'", [], |row| row.get::<_, String>(0)) {
+                    if !val.is_empty() { endpoint_val = val; }
+                }
+                if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'model'", [], |row| row.get::<_, String>(0)) {
+                    if !val.is_empty() { model_val = val; }
+                }
+                return vec![
+                    SearchResult {
+                        entry: CatalogEntry {
+                            id: "ai.config.key".to_string(),
+                            control_name: "Set AI API Key".to_string(),
+                            breadcrumb_path: format!("AI Config > Key: {}", key_masked),
+                            launch_command: "query:ai config key ".to_string(),
+                            source: "AI".to_string(),
+                            description: "Type 'ai config key <API_KEY>' and press Enter to save".to_string(),
+                            synonyms: "ai config setting key apikey opencode deepseek".to_string(),
+                        },
+                        score: 100.0,
+                    },
+                    SearchResult {
+                        entry: CatalogEntry {
+                            id: "ai.config.endpoint".to_string(),
+                            control_name: "Set AI Endpoint URL".to_string(),
+                            breadcrumb_path: format!("AI Config > Endpoint: {}", endpoint_val),
+                            launch_command: "query:ai config endpoint ".to_string(),
+                            source: "AI".to_string(),
+                            description: "Type 'ai config endpoint <URL>' and press Enter to save".to_string(),
+                            synonyms: "ai config endpoint url baseurl".to_string(),
+                        },
+                        score: 99.0,
+                    },
+                    SearchResult {
+                        entry: CatalogEntry {
+                            id: "ai.config.model".to_string(),
+                            control_name: "Set AI Model Name".to_string(),
+                            breadcrumb_path: format!("AI Config > Model: {}", model_val),
+                            launch_command: "query:ai config model ".to_string(),
+                            source: "AI".to_string(),
+                            description: "Type 'ai config model <MODEL_NAME>' and press Enter to save".to_string(),
+                            synonyms: "ai config model name".to_string(),
+                        },
+                        score: 98.0,
+                    },
+                    SearchResult {
+                        entry: CatalogEntry {
+                            id: "ai.config.reset".to_string(),
+                            control_name: "Reset AI Configuration".to_string(),
+                            breadcrumb_path: "AI Config > Clear all custom values".to_string(),
+                            launch_command: "action:ai_config:reset".to_string(),
+                            source: "AI".to_string(),
+                            description: "Press Enter to delete SQLite configurations".to_string(),
+                            synonyms: "ai config reset clear delete".to_string(),
+                        },
+                        score: 97.0,
+                    },
+                ];
+            }
+
+            if let Some(rest) = lt.strip_prefix("ai config ") {
+                let rest_trimmed = rest.trim();
+                if let Some((subcmd, val)) = rest_trimmed.split_once(' ') {
+                    let subcmd = subcmd.trim();
+                    let val = val.trim();
+                    if subcmd == "key" || subcmd == "endpoint" || subcmd == "model" {
+                        let label = format!("Save AI {}: {}", subcmd, if subcmd == "key" { "****" } else { val });
+                        let mut raw_val = val.to_string();
+                        if let Some(idx) = qt.to_lowercase().find(subcmd) {
+                            let start_idx = idx + subcmd.len();
+                            if start_idx < qt.len() {
+                                raw_val = qt[start_idx..].trim().to_string();
+                            }
+                        }
+                        return vec![SearchResult {
+                            entry: CatalogEntry {
+                                id: format!("ai.config.save.{}", subcmd),
+                                control_name: label,
+                                breadcrumb_path: format!("AI Config > Save {}", subcmd),
+                                launch_command: format!("action:ai_config:{}:{}", subcmd, raw_val),
+                                source: "AI".to_string(),
+                                description: format!("Press Enter to save this {} to settings", subcmd),
+                                synonyms: format!("ai config save {}", subcmd),
+                            },
+                            score: 100.0,
+                        }];
+                    }
+                } else if rest_trimmed == "reset" {
+                    return vec![SearchResult {
+                        entry: CatalogEntry {
+                            id: "ai.config.reset".to_string(),
+                            control_name: "Reset AI Configuration".to_string(),
+                            breadcrumb_path: "AI Config > Clear all custom values".to_string(),
+                            launch_command: "action:ai_config:reset".to_string(),
+                            source: "AI".to_string(),
+                            description: "Press Enter to delete SQLite configurations".to_string(),
+                            synonyms: "ai config reset clear delete".to_string(),
+                        },
+                        score: 100.0,
+                    }];
+                }
+            }
+        }
+
         // ── AI commands: Enter sends to DeepSeek (handled via "ai:" launch cmd) ─
         {
             let qt = q.trim();
