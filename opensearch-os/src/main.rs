@@ -156,11 +156,15 @@ impl State {
             return SEARCH_H + 24;
         }
         let n = self.results.len().min(VISIBLE_RESULTS) as i32;
-        let base_h = if n == 0 { SEARCH_H } else { SEARCH_H + 1 + n * RESULT_H };
-        if self.query.starts_with("clip:") || self.query.starts_with("clipboard:") {
-            base_h + 24
+        if n == 0 {
+            SEARCH_H
         } else {
-            base_h
+            let base_h = SEARCH_H + 1 + n * RESULT_H;
+            if self.query.starts_with("clip:") || self.query.starts_with("clipboard:") {
+                base_h + 24
+            } else {
+                base_h + 12
+            }
         }
     }
     fn result_rect(&self, i: usize) -> RECT {
@@ -1744,10 +1748,45 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
 
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
-        let sw = GetSystemMetrics(SM_CXSCREEN);
-        let sh = GetSystemMetrics(SM_CYSCREEN);
-        s.cx = sw / 2;
-        s.cy = sh / 2;
+
+        // Get active monitor work area (excludes taskbar)
+        let hmonitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let (work_w, work_h, work_left, work_top) = if GetMonitorInfoW(hmonitor, &mut mi).as_bool() {
+            (
+                mi.rcWork.right - mi.rcWork.left,
+                mi.rcWork.bottom - mi.rcWork.top,
+                mi.rcWork.left,
+                mi.rcWork.top,
+            )
+        } else {
+            (
+                GetSystemMetrics(SM_CXSCREEN),
+                GetSystemMetrics(SM_CYSCREEN),
+                0,
+                0,
+            )
+        };
+
+        let win_x = work_left + (work_w - WIN_W) / 2;
+        let win_y = work_top;
+
+        // Position and size the physical window to cover the entire work area vertically
+        let _ = SetWindowPos(
+            hwnd,
+            HWND(null_mut()),
+            win_x,
+            win_y,
+            WIN_W,
+            work_h,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        );
+
+        s.cx = WIN_W / 2;
+        s.cy = work_h / 2;
         s.last_mouse_x = pt.x;
         s.last_mouse_y = pt.y;
 
