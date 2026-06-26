@@ -1120,7 +1120,7 @@ unsafe extern "system" fn wnd_proc(
             // AI answer panel captures keys: Esc/Backspace closes, Enter submits follow-up.
             if s.ai_pending {
                 match vk {
-                    VK_ESCAPE => close_ai_panel(hwnd, s),
+                    VK_ESCAPE => start_hide(hwnd, s),
                     VK_DOWN => { ai_scroll_down(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); }
                     VK_UP => { ai_scroll_up(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); }
                     _ => {}
@@ -1137,7 +1137,7 @@ unsafe extern "system" fn wnd_proc(
                 }
                 match vk {
                     VK_ESCAPE => {
-                        close_ai_panel(hwnd, s);
+                        start_hide(hwnd, s);
                         return LRESULT(0);
                     }
                     VK_BACK => {
