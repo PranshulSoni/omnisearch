@@ -55,6 +55,8 @@ const WM_VOICE_QUERY_READY: u32 = WM_USER + 101;
 const WM_AI_RESULT: u32 = WM_USER + 6;
 // Hermes Runs API: a tool needs approval (lparam = boxed HermesApproval).
 const WM_HERMES_APPROVAL: u32 = WM_USER + 7;
+// Hermes Runs API: streaming output progress (lparam = boxed String).
+const WM_AI_PROGRESS: u32 = WM_USER + 8;
 
 // AI answer panel height (below the search bar) when showing an AI response.
 const AI_PANEL_H: i32 = 360;
