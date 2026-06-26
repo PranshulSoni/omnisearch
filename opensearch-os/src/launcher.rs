@@ -483,6 +483,11 @@ fn handle_window_action(action: &str) {
     use windows::Win32::Foundation::RECT;
 
     unsafe {
+        if action == "restore" {
+            let _ = ShowWindow(target_hwnd, SW_RESTORE);
+            return;
+        }
+
         // Restore if maximized, unless we are maximizing or toggling topmost
         if action != "maximize" && action != "toggle_always_on_top" {
             if IsZoomed(target_hwnd).as_bool() {
@@ -546,6 +551,50 @@ fn handle_window_action(action: &str) {
                 h = sh * 70 / 100;
                 x = work.left + (sw - w) / 2;
                 y = work.top + (sh - h) / 2;
+            }
+            "maximize_height" => {
+                let mut r = RECT::default();
+                if GetWindowRect(target_hwnd, &mut r).is_ok() {
+                    w = r.right - r.left;
+                    h = sh;
+                    x = r.left;
+                    y = work.top;
+                } else {
+                    return;
+                }
+            }
+            "maximize_width" => {
+                let mut r = RECT::default();
+                if GetWindowRect(target_hwnd, &mut r).is_ok() {
+                    w = sw;
+                    h = r.bottom - r.top;
+                    x = work.left;
+                    y = r.top;
+                } else {
+                    return;
+                }
+            }
+            "move_left" => {
+                let mut r = RECT::default();
+                if GetWindowRect(target_hwnd, &mut r).is_ok() {
+                    w = r.right - r.left;
+                    h = r.bottom - r.top;
+                    x = work.left;
+                    y = r.top;
+                } else {
+                    return;
+                }
+            }
+            "move_right" => {
+                let mut r = RECT::default();
+                if GetWindowRect(target_hwnd, &mut r).is_ok() {
+                    w = r.right - r.left;
+                    h = r.bottom - r.top;
+                    x = work.right - w;
+                    y = r.top;
+                } else {
+                    return;
+                }
             }
             "left_half" => {
                 w = sw / 2;

@@ -3633,6 +3633,11 @@ mod tests {
             "action:open_run",
             "action:quit_active_app",
             "action:open_recycle_bin",
+            "action:window:restore",
+            "action:window:maximize_height",
+            "action:window:maximize_width",
+            "action:window:move_left",
+            "action:window:move_right",
         ] {
             assert!(QUICK_ACTIONS.iter().any(|action| action.launch_command == command));
         }
@@ -4784,6 +4789,41 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         breadcrumb: "Window Management > Maximize",
         launch_command: "action:window:maximize",
         description: "Maximize the active window.",
+    },
+    QuickAction {
+        triggers: &["restore window", "unmaximize window"],
+        name: "Restore Window",
+        breadcrumb: "Window Management > Restore",
+        launch_command: "action:window:restore",
+        description: "Restore the active window.",
+    },
+    QuickAction {
+        triggers: &["maximize height", "tall window", "full height"],
+        name: "Maximize Height",
+        breadcrumb: "Window Management > Maximize Height",
+        launch_command: "action:window:maximize_height",
+        description: "Resize the active window to full screen height.",
+    },
+    QuickAction {
+        triggers: &["maximize width", "wide window", "full width"],
+        name: "Maximize Width",
+        breadcrumb: "Window Management > Maximize Width",
+        launch_command: "action:window:maximize_width",
+        description: "Resize the active window to full screen width.",
+    },
+    QuickAction {
+        triggers: &["move left", "move window left"],
+        name: "Move Left",
+        breadcrumb: "Window Management > Move Left",
+        launch_command: "action:window:move_left",
+        description: "Move the active window to the left edge.",
+    },
+    QuickAction {
+        triggers: &["move right", "move window right"],
+        name: "Move Right",
+        breadcrumb: "Window Management > Move Right",
+        launch_command: "action:window:move_right",
+        description: "Move the active window to the right edge.",
     },
     QuickAction {
         triggers: &["center", "center window", "align center"],
