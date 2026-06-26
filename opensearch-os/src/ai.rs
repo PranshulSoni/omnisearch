@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicBool;
 use std::os::windows::process::CommandExt;
 
 pub static HERMES_GATEWAY_RUNNING: AtomicBool = AtomicBool::new(false);
+pub static ALWAYS_APPROVE: AtomicBool = AtomicBool::new(false);
 
 // DeepSeek V4 Flash (OpenAI-compatible). Override endpoint/model via env if desired.
 const DEFAULT_ENDPOINT: &str = "https://api.deepseek.com/chat/completions";
@@ -302,6 +303,9 @@ fn get_hermes_config() -> AiConfig {
             if !val_trimmed.is_empty() {
                 api_key = val_trimmed;
             }
+        }
+        if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'always_approve'", [], |row| row.get::<_, String>(0)) {
+            ALWAYS_APPROVE.store(val.trim() == "1", std::sync::atomic::Ordering::Relaxed);
         }
     }
     AiConfig {
@@ -898,7 +902,7 @@ mod tests {
         HERMES_GATEWAY_RUNNING.store(false, std::sync::atomic::Ordering::Relaxed);
 
         let conn = rusqlite::Connection::open(app_dir.join("file_index.db")).unwrap();
-        conn.execute("CREATE TABLE ai_settings (key TEXT PRIMARY KEY, value TEXT);", []).unwrap();
+        conn.execute("CREATE TABLE IF NOT EXISTS ai_settings (key TEXT PRIMARY KEY, value TEXT);", []).unwrap();
         conn.execute("INSERT INTO ai_settings (key, value) VALUES ('model', 'hermes-agent');", []).unwrap();
         conn.execute("INSERT INTO ai_settings (key, value) VALUES ('api_key', 'sk-H-test-key');", []).unwrap();
         drop(conn);
