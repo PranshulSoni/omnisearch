@@ -1400,6 +1400,94 @@ impl SearchEngine {
         ]
     }
 
+    pub fn search_workday_memory_summary(&self, days_ago: i64) -> Vec<SearchResult> {
+        let (start, end) = local_day_bounds(days_ago);
+        let label = if days_ago == 0 { "Today" } else { "Yesterday" };
+        let count = count_memory_events(&self.conn, start, end);
+        let sources = memory_source_summary(&self.conn, start, end);
+        let mut results = vec![SearchResult {
+            entry: CatalogEntry {
+                id: format!("memory.summary.{}", days_ago),
+                control_name: format!("{}: what your PC remembers", label),
+                breadcrumb_path: format!("Memory > {} > Summary", label),
+                launch_command: "memory:".to_string(),
+                source: "MEMORY".to_string(),
+                description: if count == 0 {
+                    "No captured memory for this day yet. MemoryOS is collecting new activity now."
+                        .to_string()
+                } else {
+                    format!("{} remembered events. Evidence: {}", count, sources)
+                },
+                synonyms: "memory workday summary yesterday today evidence".to_string(),
+            },
+            score: 13.0,
+        }];
+
+        let mut stmt = match self.conn.prepare(
+            "SELECT id, timestamp, source, event_type, title, coalesce(detail, ''), coalesce(app_name, ''), path, url
+             FROM memory_events
+             WHERE timestamp >= ? AND timestamp < ?
+             ORDER BY timestamp DESC LIMIT 8",
+        ) {
+            Ok(s) => s,
+            Err(_) => return results,
+        };
+        let rows = stmt
+            .query_map(params![start, end], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                ))
+            })
+            .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default();
+
+        for (idx, (id, timestamp, source, event_type, title, detail, app_name, path, url)) in
+            rows.into_iter().enumerate()
+        {
+            let launch_command = url
+                .clone()
+                .or_else(|| path.clone())
+                .unwrap_or_else(|| app_name.clone());
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: format!("memory.summary.evidence.{}", id),
+                    control_name: title,
+                    breadcrumb_path: format!(
+                        "Memory > {} > {} > {}",
+                        label,
+                        source,
+                        format_timestamp_local(timestamp)
+                    ),
+                    launch_command,
+                    source: "MEMORY".to_string(),
+                    description: format!(
+                        "{}: {}",
+                        event_type,
+                        ellipsize_chars(&detail.replace("\r\n", " ").replace('\n', " "), 90)
+                    ),
+                    synonyms: format!(
+                        "{} {} {} {}",
+                        source.to_lowercase(),
+                        event_type.to_lowercase(),
+                        app_name.to_lowercase(),
+                        path.unwrap_or_default().to_lowercase()
+                    ),
+                },
+                score: 12.0 - (idx as f32 * 0.1),
+            });
+        }
+
+        results
+    }
+
     pub fn search_project(&self, project_keyword: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = &self.conn;
@@ -2860,6 +2948,10 @@ impl SearchEngine {
                 | "what does windows remember"
         ) {
             return self.search_memory_home();
+        }
+
+        if let Some(days_ago) = workday_memory_query_days(&q_lower_trimmed) {
+            return self.search_workday_memory_summary(days_ago);
         }
 
         // Intercept temporal context queries (e.g. yesterday before lunch)
@@ -4810,6 +4902,16 @@ mod tests {
             memory_home_description(3, 2, 9),
             "3 events today, 2 yesterday, 9 total. Stored locally on this PC."
         );
+    }
+
+    #[test]
+    fn workday_memory_query_detects_mvp_phrasing() {
+        assert_eq!(
+            workday_memory_query_days("what was i working on yesterday"),
+            Some(1)
+        );
+        assert_eq!(workday_memory_query_days("what did i do today"), Some(0));
+        assert_eq!(workday_memory_query_days("open chrome yesterday"), None);
     }
 
     #[test]
@@ -8105,6 +8207,23 @@ fn memory_home_description(today: i64, yesterday: i64, total: i64) -> String {
         "{} events today, {} yesterday, {} total. Stored locally on this PC.",
         today, yesterday, total
     )
+}
+
+fn workday_memory_query_days(query: &str) -> Option<i64> {
+    let asks_work = query.contains("working on")
+        || query.contains("worked on")
+        || query.contains("what was i doing")
+        || query.contains("what did i do");
+    if !asks_work {
+        return None;
+    }
+    if query.contains("yesterday") {
+        Some(1)
+    } else if query.contains("today") {
+        Some(0)
+    } else {
+        None
+    }
 }
 
 fn count_memory_events(conn: &Connection, start: i64, end: i64) -> i64 {
