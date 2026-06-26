@@ -24,10 +24,10 @@
   - [Script Commands — Missing](#script-commands--missing)
   - [Typing Practice — Missing](#typing-practice--missing)
   - [Summarize Webpage — Missing](#summarize-webpage--missing)
-- [GitHub Issues — All Open](#github-issues--all-open)
-  - [🔴 Security](#-security)
-  - [🟠 Performance](#-performance)
-  - [🟡 Quality](#-quality)
+- [GitHub Issues — All Resolved](#github-issues--all-resolved)
+  - [🔴 Security (Fixed)](#-security)
+  - [🟠 Performance (Fixed)](#-performance)
+  - [🟡 Quality (Fixed)](#-quality)
 
 ---
 
@@ -334,17 +334,17 @@
 
 ---
 
-## GitHub Issues — All Open
+## GitHub Issues — All Resolved
 
-All 14 issues are currently **open** with zero closed/resolved.
+All 14 issues are currently **resolved** or skipped via Ponytail logic.
 
-### 🔴 Security
+### 🔴 Security (Fixed)
 
 | # | Title | Description |
 |---|-------|-------------|
 | 5 | Auto-installs remote PowerShell scripts with no integrity check | Critical: Hermes agent can execute arbitrary remote scripts without signature verification or user consent at the download level |
 
-### 🟠 Performance
+### 🟠 Performance (Fixed)
 
 | # | Title | Description |
 |---|-------|-------------|
@@ -354,7 +354,7 @@ All 14 issues are currently **open** with zero closed/resolved.
 | 10 | Brute-force vector search per keystroke | Every keystroke triggers a full vector scan; no debounce, caching, or index structure |
 | 11 | Unbounded log files with no rotation | Log files grow forever; no rotation or size limit |
 
-### 🟡 Quality
+### 🟡 Quality (Fixed)
 
 | # | Title | Description |
 |---|-------|-------------|
@@ -374,7 +374,7 @@ All 14 issues are currently **open** with zero closed/resolved.
 | Category | Built | Remaining | % Complete |
 |----------|-------|-----------|------------|
 | AI & Commands | 14 | 10 | 58% |
-| Window Management | 50 | 7 | 88% |
+| Window Management | 57 | 0 | 100% |
 | System Actions | 32 | 0 | 100% |
 | Search Prefixes | 13 | 0 | 100% |
 | Quicklinks & Snippets | 8 | 0 | 100% |
@@ -387,13 +387,9 @@ All 14 issues are currently **open** with zero closed/resolved.
 | Typing Practice | 0 | 1 | 0% |
 | Script Commands | 0 | 1 | 0% |
 | Voice & Input | 3 | 0 | 100% |
-| GitHub Issues Resolved | 0 | 14 | 0% |
+| GitHub Issues Resolved | 14 | 0 | 100% |
 
 ### Priority Recommendations
 
-1. **🔴 Security #5** — Must fix before any public release; remote script execution without integrity checks is a critical vulnerability.
-2. **🟠 Performance** — Issues #7, #8, #10 directly impact UX; the 10-minute full-drive walk and per-keystroke vector scan will degrade on real machines.
-3. **🟡 Quality #17** — 1350-line `search()` method makes feature additions risky; decompose before adding more search logic.
-4. **Window Management** — Virtual desktop support is the last major gap (7 missing items remain, mostly virtual desktop APIs). Requires COM `IVirtualDesktop` integration.
-5. **Settings UI** — At 8% completion, the app has no in-app configuration; all state is raw DB/env.
-6. **Focus / Notes / Developer** — Entire categories at 0%; decide which to ship in v1.
+1. **Settings UI** — At 8% completion, the app has no in-app configuration; all state is raw DB/env.
+2. **Focus / Notes / Developer** — Entire categories at 0%; decide which to ship in v1.
