@@ -296,6 +296,36 @@ fn handle_action(action: &str) {
                 keybd_event(VK_LWIN.0 as u8, 0, KEYEVENTF_KEYUP, 0);
             }
         }
+        "open_settings" | "reveal_logs" => {
+            if let Ok(appdata) = std::env::var("APPDATA") {
+                let _ = Command::new("explorer.exe")
+                    .arg(std::path::PathBuf::from(appdata).join("opensearch-os"))
+                    .spawn();
+            }
+        }
+        "copy_version" => {
+            let version = env!("CARGO_PKG_VERSION");
+            let _ = Command::new("powershell")
+                .args(["-WindowStyle", "Hidden", "-Command", &format!("Set-Clipboard -Value '{}'", version)])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "copy_logs" => {
+            if let Ok(appdata) = std::env::var("APPDATA") {
+                let log_path = std::path::PathBuf::from(appdata).join("opensearch-os").join("opensearch-os.log");
+                let _ = Command::new("powershell")
+                    .args(["-WindowStyle", "Hidden", "-Command", &format!("Get-Content '{}' -Raw | Set-Clipboard", log_path.display())])
+                    .creation_flags(0x08000000)
+                    .spawn();
+            }
+        }
+        "quick_look" => {
+            unsafe {
+                use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_SPACE};
+                keybd_event(VK_SPACE.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
+                keybd_event(VK_SPACE.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+            }
+        }
         "lock" => {
             unsafe {
                 let _ = windows::Win32::System::Shutdown::LockWorkStation();
@@ -382,13 +412,6 @@ fn handle_action(action: &str) {
             let _ = Command::new("explorer.exe")
                 .arg("shell:RecycleBinFolder")
                 .spawn();
-        }
-        "reveal_logs" => {
-            if let Ok(appdata) = std::env::var("APPDATA") {
-                let _ = Command::new("explorer.exe")
-                    .arg(std::path::PathBuf::from(appdata).join("opensearch-os"))
-                    .spawn();
-            }
         }
         "recycle" => {
             unsafe {

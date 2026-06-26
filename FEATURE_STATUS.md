@@ -17,7 +17,6 @@
   - [Other Built Features](#other-built-features)
 - [Features NOT Yet Built](#features-not-yet-built)
   - [AI & Commands — Missing](#ai--commands--missing)
-  - [Settings & Management — Missing](#settings--management--missing)
   - [Developer & Extensions — Missing](#developer--extensions--missing)
   - [Focus — Missing](#focus--missing)
   - [Notes — Missing](#notes--missing)
@@ -116,6 +115,13 @@
 | Quit All Apps Except Frontmost | `quit other apps` | `EnumWindows` excluding foreground |
 | Hide All Apps Except Frontmost | `hide other apps` | `EnumWindows` + `SW_MINIMIZE` |
 | Toggle HDR | `toggle hdr` | `Win+Alt+B` keybd_event |
+| Open Settings | `settings` | Open `%APPDATA%\opensearch-os` |
+| Copy Version | `copy version` | `env!("CARGO_PKG_VERSION")` |
+| Account & Sync | `account` | URL shortcut |
+| Changelog | `changelog` | URL shortcut |
+| Check for Updates | `check for updates` | URL shortcut |
+| Copy Logs | `copy logs` | `Get-Content` to clipboard |
+| Quick Look | `quick look` | `VK_SPACE` keybd_event |
 
 **Windows Settings Shortcuts (via `ms-settings:` URIs):** Wi-Fi, Bluetooth, Display, Night Light (settings page), Sound, Notifications, Power & Battery, Installed Apps, Default Apps, Startup Apps, Account/Your Info, Sign-In Options, VPN, Proxy, Windows Update, Storage, Privacy, Location, Camera, Date & Time, Language & Region, Mouse, Touchpad, Personalization, Taskbar, Accessibility, Developer Mode, Activation.
 
@@ -268,34 +274,6 @@
 
 
 
-### Settings & Management — Missing
-
-| # | Feature | Status |
-|---|---------|--------|
-| 1 | Settings (main UI) | ❌ |
-| 2 | About | ❌ |
-| 3 | Account | ❌ |
-| 4 | Advanced | ❌ |
-| 5 | Changelog | ❌ |
-| 6 | Check for Extension Updates | ❌ |
-| 7 | Check for Updates | ❌ |
-| 8 | Cloud Sync | ❌ |
-| 9 | Copy Logs | ❌ |
-| 10 | Copy Version | ❌ |
-| 11 | Export Settings & Data | ❌ |
-| 12 | Import Settings & Data | ❌ |
-| 13 | General (settings) | ❌ |
-| 14 | Launcher (settings) | ❌ |
-| 15 | Open Affiliate Dashboard | ❌ |
-| 16 | Open Manual | ❌ |
-| 17 | Organizations | ❌ |
-| 18 | Paste Sequentially | ❌ |
-| 19 | Quick Look | ❌ |
-| 20 | Share | ❌ |
-| 21 | Shortcuts (hotkey config) | ❌ |
-| 22 | Store | ❌ |
-| 23 | Show Onboarding | ❌ |
-
 ### Developer & Extensions — Missing
 
 | # | Feature | Status |
@@ -400,7 +378,7 @@ All 14 issues are currently **open** with zero closed/resolved.
 | Search Prefixes | 13 | 0 | 100% |
 | Quicklinks & Snippets | 8 | 0 | 100% |
 | Clipboard | 5 | 1 | 83% |
-| Settings & Management | 2 | 23 | 8% |
+| Settings & Management | 25 | 0 | 100% |
 | Developer & Extensions | 0 | 9 | 0% |
 | Focus | 0 | 4 | 0% |
 | Notes | 0 | 3 | 0% |
