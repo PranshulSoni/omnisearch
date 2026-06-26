@@ -3430,7 +3430,8 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 || cmd == "img:"
                 || cmd == "chats:"
                 || cmd == "agents:"
-                || cmd == "agentchats:");
+                || cmd == "agentchats:"
+                || cmd == "notes:");
         if is_action_folder {
             s.query = cmd;
             s.cursor_pos = s.query.len();
