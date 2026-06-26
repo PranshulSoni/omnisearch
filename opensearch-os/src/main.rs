@@ -103,6 +103,9 @@ struct State {
     db_path: std::path::PathBuf,
     query: String,
     cursor_pos: usize,
+    chat_input: String,
+    chat_cursor_pos: usize,
+    chat_input_active: bool,
     results: Vec<SearchResult>,
     selected: usize,
     anim: Anim,
@@ -366,6 +369,9 @@ unsafe fn run() {
         db_path: db_path.clone(),
         query: String::new(),
         cursor_pos: 0,
+        chat_input: String::new(),
+        chat_cursor_pos: 0,
+        chat_input_active: false,
         results: vec![],
         selected: 0,
         anim: Anim::Hidden,
@@ -1060,6 +1066,13 @@ unsafe extern "system" fn wnd_proc(
             s.submenu_active = false;
             if let Some(c) = char::from_u32(wp.0 as u32) {
                 if !c.is_control() {
+                    if s.chat_input_active && s.ai_answer.is_some() {
+                        s.chat_input.insert(s.chat_cursor_pos, c);
+                        s.chat_cursor_pos += c.len_utf8();
+                        reset_cursor_blink(hwnd, s);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                        return LRESULT(0);
+                    }
                     if s.text_selected {
                         s.query.clear();
                         s.cursor_pos = 0;
@@ -1130,6 +1143,89 @@ unsafe extern "system" fn wnd_proc(
             }
 
             if s.ai_answer.is_some() {
+                if s.chat_input_active {
+                    if ctrl_down {
+                        match vk.0 as u32 {
+                            0x43 => {
+                                if !s.chat_input.is_empty() {
+                                    copy_to_clipboard(hwnd, &s.chat_input);
+                                }
+                                return LRESULT(0);
+                            }
+                            0x56 => {
+                                if let Some(text) = paste_from_clipboard(hwnd) {
+                                    let clean_text: String = text.chars().filter(|c| !c.is_control()).collect();
+                                    s.chat_input.insert_str(s.chat_cursor_pos, &clean_text);
+                                    s.chat_cursor_pos += clean_text.len();
+                                    reset_cursor_blink(hwnd, s);
+                                    let _ = InvalidateRect(hwnd, None, FALSE);
+                                }
+                                return LRESULT(0);
+                            }
+                            _ => {}
+                        }
+                    }
+                    match vk {
+                        VK_ESCAPE => {
+                            close_ai_panel(hwnd, s);
+                            start_hide(hwnd, s);
+                            return LRESULT(0);
+                        }
+                        VK_BACK => {
+                            if s.chat_cursor_pos > 0 {
+                                let mut p = s.chat_cursor_pos - 1;
+                                while p > 0 && !s.chat_input.is_char_boundary(p) {
+                                    p -= 1;
+                                }
+                                s.chat_input.remove(p);
+                                s.chat_cursor_pos = p;
+                                reset_cursor_blink(hwnd, s);
+                                let _ = InvalidateRect(hwnd, None, FALSE);
+                            }
+                            return LRESULT(0);
+                        }
+                        VK_LEFT => {
+                            if ctrl_down {
+                                s.chat_cursor_pos = word_left(&s.chat_input, s.chat_cursor_pos);
+                            } else if s.chat_cursor_pos > 0 {
+                                let mut p = s.chat_cursor_pos - 1;
+                                while p > 0 && !s.chat_input.is_char_boundary(p) {
+                                    p -= 1;
+                                }
+                                s.chat_cursor_pos = p;
+                            }
+                            reset_cursor_blink(hwnd, s);
+                            let _ = InvalidateRect(hwnd, None, FALSE);
+                            return LRESULT(0);
+                        }
+                        VK_RIGHT => {
+                            if ctrl_down {
+                                s.chat_cursor_pos = word_right(&s.chat_input, s.chat_cursor_pos);
+                            } else if s.chat_cursor_pos < s.chat_input.len() {
+                                let mut p = s.chat_cursor_pos + 1;
+                                while p < s.chat_input.len() && !s.chat_input.is_char_boundary(p) {
+                                    p += 1;
+                                }
+                                s.chat_cursor_pos = p;
+                            }
+                            reset_cursor_blink(hwnd, s);
+                            let _ = InvalidateRect(hwnd, None, FALSE);
+                            return LRESULT(0);
+                        }
+                        VK_RETURN => {
+                            let msg = s.chat_input.trim().to_string();
+                            if !msg.is_empty() {
+                                s.chat_input.clear();
+                                s.chat_cursor_pos = 0;
+                                start_follow_up_chat(hwnd, s, msg);
+                            }
+                            return LRESULT(0);
+                        }
+                        VK_DOWN => { ai_scroll_down(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); return LRESULT(0); }
+                        VK_UP => { ai_scroll_up(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); return LRESULT(0); }
+                        _ => {}
+                    }
+                }
                 if ctrl_down && vk.0 as u32 == 0x43 { // Ctrl+C
                     if let Some(ans) = &s.ai_answer {
                         copy_to_clipboard(hwnd, ans);
@@ -1871,13 +1967,29 @@ unsafe extern "system" fn wnd_proc(
 
             if s.ai_answer.is_some() {
                 let my = ((lp.0 >> 16) & 0xFFFF) as i16 as i32;
-                let _mx = (lp.0 & 0xFFFF) as i16 as i32;
+                let mx = (lp.0 & 0xFFFF) as i16 as i32;
                 let win_h = s.win_h();
                 let y_start = s.cy - win_h / 2;
+                let mut rc_client = RECT::default();
+                let _ = GetClientRect(hwnd, &mut rc_client);
+                let win_w = rc_client.right - rc_client.left;
+                let x_start = (win_w - WIN_W) / 2;
 
                 let body_top = y_start + SEARCH_H + 1;
-                let footer_h = 50;
-                let content_bottom = y_start + win_h - footer_h;
+                let footer_h = 62;
+                let content_bottom = y_start + SEARCH_H + 1 + AI_PANEL_H - footer_h;
+                let input_y = content_bottom + 8;
+                let input_x = x_start + 24;
+                let input_w = WIN_W - 48;
+
+                if mx >= input_x && mx < input_x + input_w && my >= input_y && my < input_y + 34 {
+                    s.chat_input_active = true;
+                    s.chat_cursor_pos = s.chat_input.len();
+                    s.text_selected = false;
+                    reset_cursor_blink(hwnd, s);
+                    let _ = InvalidateRect(hwnd, None, FALSE);
+                    return LRESULT(0);
+                }
 
                 // Click inside the chat history area (above bottom input box) copies the chat text
                 if my >= body_top && my < content_bottom {
@@ -1952,6 +2064,7 @@ unsafe extern "system" fn wnd_proc(
             
             if my >= by && my < by + SEARCH_H {
                 if s.ai_answer.is_some() || s.ai_pending {
+                    s.chat_input_active = false;
                     close_ai_panel(hwnd, s);
                     return LRESULT(0);
                 }
@@ -2311,6 +2424,9 @@ unsafe fn reset_visible_chat_view(hwnd: HWND, s: &mut State) {
     s.active_chat_id = None;
     s.query.clear();
     s.cursor_pos = 0;
+    s.chat_input.clear();
+    s.chat_cursor_pos = 0;
+    s.chat_input_active = false;
     s.results.clear();
     s.selected = 0;
     s.scroll_offset = 0;
@@ -2569,8 +2685,9 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
     s.ai_follow_bottom = true;
     s.results.clear();
     s.selected = 0;
-    s.query.clear();
-    s.cursor_pos = 0;
+    s.chat_input.clear();
+    s.chat_cursor_pos = 0;
+    s.chat_input_active = true;
     let _ = unsafe { InvalidateRect(hwnd, None, FALSE) };
 
     let hwnd_raw = hwnd.0 as isize;
@@ -2874,6 +2991,9 @@ unsafe fn close_ai_panel(hwnd: HWND, s: &mut State) {
     s.hermes_approval = None;
     s.ai_tick = 0;
     s.active_chat_id = None;
+    s.chat_input.clear();
+    s.chat_cursor_pos = 0;
+    s.chat_input_active = false;
     s.results.clear();
     trigger_search(hwnd, s); // restore normal results for the current query
     let _ = InvalidateRect(hwnd, None, FALSE);
@@ -2969,8 +3089,9 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             // Store chat in DB immediately to get a chat ID
             let chat_id = store_ai_chat(&db_path, &aicmd_clone, &title, &input_clone, "Executing...");
             s.active_chat_id = chat_id;
-            s.query.clear(); // Clear input box so they can immediately type follow-up
-            s.cursor_pos = 0;
+            s.chat_input.clear();
+            s.chat_cursor_pos = 0;
+            s.chat_input_active = true;
 
             std::thread::spawn(move || {
                 let hwnd_ai = hwnd_ai;
@@ -3018,8 +3139,9 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                         s.ai_scroll = 0;
                         s.ai_follow_bottom = true;
                         s.active_chat_id = Some(id);
-                        s.query.clear(); // Clear search query to allow typing follow-up
-                        s.cursor_pos = 0;
+                        s.chat_input.clear();
+                        s.chat_cursor_pos = 0;
+                        s.chat_input_active = true;
                         s.results.clear();
                         s.selected = 0;
 
@@ -3172,8 +3294,9 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             s.ai_scroll = 0;
             s.ai_follow_bottom = true;
             s.active_chat_id = chat_id;
-            s.query.clear();
-            s.cursor_pos = 0;
+            s.chat_input.clear();
+            s.chat_cursor_pos = 0;
+            s.chat_input_active = true;
             s.results.clear();
             s.selected = 0;
             s.scroll_offset = 0;
@@ -3217,8 +3340,9 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             // Store chat in DB immediately to get a chat ID
             let chat_id = store_ai_chat(&db_path, "agent", &title, &msg_clone, "Executing...");
             s.active_chat_id = chat_id;
-            s.query.clear(); // Clear input box so they can immediately type follow-up
-            s.cursor_pos = 0;
+            s.chat_input.clear();
+            s.chat_cursor_pos = 0;
+            s.chat_input_active = true;
 
             // Prefer the streaming Runs API so a real Approve/Deny button can be
             // shown when Hermes needs tool approval. Fall back to the blocking
@@ -4463,7 +4587,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     }
 
     // Draw cursor
-    if s.cursor_visible {
+    if s.cursor_visible && !s.chat_input_active {
         let cur = floor_char_boundary(&s.query, s.cursor_pos);
         let before = &s.query[..cur];
         let dw_before: Vec<u16> = before.encode_utf16().collect();
@@ -4763,12 +4887,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let input_y = content_bottom + 8;
             fill_rounded(mdc, x + pad, input_y, w - pad * 2, 34, 10, COLORREF(0x00_2B_29_28));
             SelectObject(mdc, s.font_c);
-            let input_text = if s.query.trim().is_empty() {
+            let input_text = if s.chat_input.trim().is_empty() {
                 SetTextColor(mdc, CLR_PH);
                 "Message this chat...".to_string()
             } else {
                 SetTextColor(mdc, CLR_WHITE);
-                s.query.clone()
+                s.chat_input.clone()
             };
             let mut input_w: Vec<u16> = input_text.encode_utf16().collect();
             let mut input_rc = RECT {
@@ -4779,9 +4903,9 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             };
             let _ = DrawTextW(mdc, &mut input_w, &mut input_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
-            if s.cursor_visible {
-                let cur = floor_char_boundary(&s.query, s.cursor_pos);
-                let before = &s.query[..cur];
+            if s.cursor_visible && s.chat_input_active {
+                let cur = floor_char_boundary(&s.chat_input, s.chat_cursor_pos);
+                let before = &s.chat_input[..cur];
                 let dw_before: Vec<u16> = before.encode_utf16().collect();
                 let mut size = SIZE::default();
                 if !dw_before.is_empty() {
