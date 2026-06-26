@@ -7032,6 +7032,27 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Launch Windows Focus Session to toggle state.",
     },
     QuickAction {
+        triggers: &["ask clipboard", "ai clipboard", "chat clipboard"],
+        name: "Ask Clipboard using AI",
+        breadcrumb: "AI > Ask Clipboard",
+        launch_command: "action:ask_clipboard",
+        description: "Start an AI chat using your current clipboard text.",
+    },
+    QuickAction {
+        triggers: &["typing practice", "monkeytype", "typing test"],
+        name: "Typing Practice",
+        breadcrumb: "Fun > Typing Practice",
+        launch_command: "https://monkeytype.com",
+        description: "Open Monkeytype in your browser.",
+    },
+    QuickAction {
+        triggers: &["reload script commands", "refresh script commands"],
+        name: "Reload Script Commands",
+        breadcrumb: "Developer > Reload Script Commands",
+        launch_command: "action:reload_script_commands",
+        description: "Reload all script commands from disk.",
+    },
+    QuickAction {
         triggers: &["export snippets"],
         name: "Export Snippets",
         breadcrumb: "Snippets > Export to Desktop",
