@@ -1,11 +1,11 @@
 #![windows_subsystem = "windows"]
 
 use std::fs;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
-use std::os::windows::process::CommandExt;
 
 use windows::Win32::{
     Foundation::HWND,
@@ -17,7 +17,7 @@ use windows::Win32::{
 fn show_message(text: &str, title: &str, is_question: bool) -> bool {
     let text_wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
-    
+
     let flags = if is_question {
         MB_YESNO | MB_ICONQUESTION
     } else {
@@ -87,11 +87,17 @@ fn main() {
     let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
 
     if local_appdata.is_empty() || appdata.is_empty() || user_profile.is_empty() {
-        show_message("Failed to resolve standard Windows system folders. Uninstallation aborted.", "Uninstall Error", false);
+        show_message(
+            "Failed to resolve standard Windows system folders. Uninstallation aborted.",
+            "Uninstall Error",
+            false,
+        );
         return;
     }
 
-    let install_dir = PathBuf::from(&local_appdata).join("Programs").join("OpenSearch OS");
+    let install_dir = PathBuf::from(&local_appdata)
+        .join("Programs")
+        .join("OpenSearch OS");
     let data_dir = PathBuf::from(&appdata).join("opensearch-os");
 
     let current_exe = std::env::current_exe().unwrap_or_default();
@@ -104,9 +110,7 @@ fn main() {
         let temp_exe = temp_dir.join("opensearch-os-uninstaller.exe");
 
         if fs::copy(&current_exe, &temp_exe).is_ok() {
-            let spawn_res = Command::new(&temp_exe)
-                .arg("--run-cleanup")
-                .spawn();
+            let spawn_res = Command::new(&temp_exe).arg("--run-cleanup").spawn();
             if spawn_res.is_ok() {
                 // Exit immediately so original exe is unlocked
                 return;
@@ -135,7 +139,9 @@ fn main() {
     let _ = delete_dir_with_retry(&install_dir);
 
     // 4. Manually purge any lingering shortcuts
-    let desktop_lnk = PathBuf::from(&user_profile).join("Desktop").join("OpenSearch OS.lnk");
+    let desktop_lnk = PathBuf::from(&user_profile)
+        .join("Desktop")
+        .join("OpenSearch OS.lnk");
     let startup_lnk = PathBuf::from(&appdata)
         .join("Microsoft")
         .join("Windows")
@@ -164,14 +170,22 @@ fn main() {
     show_message(
         "OpenSearch OS has been successfully uninstalled from your computer.",
         "Uninstall Complete",
-        false
+        false,
     );
 
     // Self-delete the temp uninstaller executable if running from Temp
     if is_cleanup {
         let temp_exe = std::env::temp_dir().join("opensearch-os-uninstaller.exe");
         let _ = Command::new("cmd")
-            .args(["/c", "start", "/b", "cmd", "/c", "timeout /t 1 /nobreak && del", &temp_exe.to_string_lossy()])
+            .args([
+                "/c",
+                "start",
+                "/b",
+                "cmd",
+                "/c",
+                "timeout /t 1 /nobreak && del",
+                &temp_exe.to_string_lossy(),
+            ])
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .spawn();
     }

@@ -8,14 +8,24 @@ fn main() {
 fn copy_model() {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let src = std::path::Path::new(&manifest)
-        .join("..").join("assets").join("model").join("model_int8.onnx");
+        .join("..")
+        .join("assets")
+        .join("model")
+        .join("model_int8.onnx");
     if !src.exists() {
-        println!("cargo:warning=model_int8.onnx not found at {}", src.display());
+        println!(
+            "cargo:warning=model_int8.onnx not found at {}",
+            src.display()
+        );
         return;
     }
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
-    let target_dir = std::path::Path::new(&out_dir).ancestors().nth(3).unwrap().to_path_buf();
+    let target_dir = std::path::Path::new(&out_dir)
+        .ancestors()
+        .nth(3)
+        .unwrap()
+        .to_path_buf();
     let dst = target_dir.join("model_int8.onnx");
     if !dst.exists() {
         if let Err(e) = std::fs::copy(&src, &dst) {
@@ -39,7 +49,10 @@ fn copy_directml() {
 
     let dll = find_directml(&ort_cache);
     if dll.is_none() {
-        println!("cargo:warning=Could not find DirectML.dll in ort cache at {}", ort_cache.display());
+        println!(
+            "cargo:warning=Could not find DirectML.dll in ort cache at {}",
+            ort_cache.display()
+        );
         return;
     }
     let dll = dll.unwrap();
@@ -64,7 +77,10 @@ fn copy_directml() {
         }
         if !dst.exists() {
             if let Err(e) = std::fs::copy(&dll, &dst) {
-                println!("cargo:warning=Failed to copy DirectML.dll to {}: {e}", dst.display());
+                println!(
+                    "cargo:warning=Failed to copy DirectML.dll to {}: {e}",
+                    dst.display()
+                );
             }
         }
     }

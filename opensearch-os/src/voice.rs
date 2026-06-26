@@ -1,9 +1,7 @@
 use windows::{
     core::HSTRING,
     Media::SpeechRecognition::{
-        SpeechRecognitionResultStatus,
-        SpeechRecognitionScenario,
-        SpeechRecognitionTopicConstraint,
+        SpeechRecognitionResultStatus, SpeechRecognitionScenario, SpeechRecognitionTopicConstraint,
         SpeechRecognizer,
     },
     Win32::Foundation::{HWND, LPARAM, WPARAM},
@@ -41,9 +39,15 @@ fn log_voice(msg: String) {
         .and_then(|p| p.parent().map(|d| d.join("voice_log.txt")))
         .unwrap_or_else(|| std::path::PathBuf::from("voice_log.txt"));
     if let Ok(meta) = std::fs::metadata(&path) {
-        if meta.len() > 1024 * 1024 { let _ = std::fs::remove_file(&path); }
+        if meta.len() > 1024 * 1024 {
+            let _ = std::fs::remove_file(&path);
+        }
     }
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         use std::io::Write;
         let _ = writeln!(file, "[{}] {}", now_ms(), msg);
     }
@@ -137,14 +141,17 @@ fn build_recognizer() -> Option<SpeechRecognizer> {
 
     // Bound the initial-silence wait so RecognizeAsync always returns (never hangs).
     if let Ok(timeouts) = recognizer.Timeouts() {
-        let eight_s = windows::Foundation::TimeSpan { Duration: 8 * 10_000_000 };
+        let eight_s = windows::Foundation::TimeSpan {
+            Duration: 8 * 10_000_000,
+        };
         let _ = timeouts.SetInitialSilenceTimeout(eight_s);
     }
 
     let constraint = SpeechRecognitionTopicConstraint::Create(
         SpeechRecognitionScenario::Dictation,
         &HSTRING::from("dictation"),
-    ).ok()?;
+    )
+    .ok()?;
     recognizer.Constraints().ok()?.Append(&constraint).ok()?;
     recognizer.CompileConstraintsAsync().ok()?.get().ok()?;
     Some(recognizer)
@@ -161,4 +168,3 @@ fn run_recognition(recognizer: &SpeechRecognizer) -> Option<String> {
         None
     }
 }
-

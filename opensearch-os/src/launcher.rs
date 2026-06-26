@@ -1,25 +1,27 @@
-use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+use std::process::Command;
 use windows::{
     core::{w, PCWSTR},
-    Win32::{
-        UI::Shell::ShellExecuteW,
-        UI::WindowsAndMessaging::SW_SHOWNORMAL,
-        Foundation::HWND,
-    },
+    Win32::{Foundation::HWND, UI::Shell::ShellExecuteW, UI::WindowsAndMessaging::SW_SHOWNORMAL},
 };
 
 pub fn launch(cmd: &str) {
     let cmd = cmd.trim();
-    if cmd.is_empty() { return; }
+    if cmd.is_empty() {
+        return;
+    }
 
     // Map breadcrumbs and non-executable control panel applets to valid commands
     let cmd = match cmd {
-        "Windows Defender Firewall > Customize settings > Private network settings" |
-        "Windows Defender Firewall > Customize settings > Public network settings" => "control.exe /name Microsoft.WindowsFirewall",
-        "System > Set priority notifications > Calls and reminders > Show incoming calls" |
-        "System > Set priority notifications > Calls and reminders > Show reminders" => "ms-settings:notifications",
+        "Windows Defender Firewall > Customize settings > Private network settings"
+        | "Windows Defender Firewall > Customize settings > Public network settings" => {
+            "control.exe /name Microsoft.WindowsFirewall"
+        }
+        "System > Set priority notifications > Calls and reminders > Show incoming calls"
+        | "System > Set priority notifications > Calls and reminders > Show reminders" => {
+            "ms-settings:notifications"
+        }
         "inetcpl.cpl" => "control.exe inetcpl.cpl",
         _ => cmd,
     };
@@ -42,10 +44,10 @@ pub fn launch(cmd: &str) {
         if let Ok(hwnd_val) = hwnd_str.trim().parse::<isize>() {
             let target_hwnd = windows::Win32::Foundation::HWND(hwnd_val as *mut std::ffi::c_void);
             unsafe {
-                use windows::Win32::UI::WindowsAndMessaging::{
-                    ShowWindow, SetForegroundWindow, SW_RESTORE, IsIconic
-                };
                 use windows::Win32::UI::Input::KeyboardAndMouse::SetActiveWindow;
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
+                };
                 if IsIconic(target_hwnd).as_bool() {
                     let _ = ShowWindow(target_hwnd, SW_RESTORE);
                 }
@@ -130,7 +132,11 @@ pub fn launch(cmd: &str) {
         return;
     }
 
-    if cmd.starts_with("http://") || cmd.starts_with("https://") || cmd_lower.ends_with(".lnk") || std::path::Path::new(cmd).exists() {
+    if cmd.starts_with("http://")
+        || cmd.starts_with("https://")
+        || cmd_lower.ends_with(".lnk")
+        || std::path::Path::new(cmd).exists()
+    {
         let cmd_wide: Vec<u16> = cmd.encode_utf16().chain(std::iter::once(0)).collect();
         unsafe {
             let res = ShellExecuteW(
@@ -152,9 +158,7 @@ pub fn launch(cmd: &str) {
                     SW_SHOWNORMAL,
                 );
                 if res_openas.0 as isize <= 32 {
-                    let _ = Command::new("notepad.exe")
-                        .arg(cmd)
-                        .spawn();
+                    let _ = Command::new("notepad.exe").arg(cmd).spawn();
                 }
             }
         }
@@ -192,7 +196,10 @@ pub fn launch(cmd: &str) {
                             SW_SHOWNORMAL,
                         );
                     }
-                    Err(std::io::Error::new(std::io::ErrorKind::Other, "fallback to ShellExecuteW"))
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "fallback to ShellExecuteW",
+                    ))
                 }
             }
         } else {
@@ -222,80 +229,98 @@ fn handle_action(action: &str) {
                 .creation_flags(0x08000000)
                 .spawn();
         }
-        "quit_all_apps" => {
-            unsafe {
-                use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, IsWindowVisible, PostMessageW, WM_CLOSE, GetWindowThreadProcessId};
-                use windows::Win32::Foundation::{HWND, LPARAM, BOOL, WPARAM};
-                struct Data { my_pid: u32 }
-                unsafe extern "system" fn enum_func(hwnd: HWND, lparam: LPARAM) -> BOOL {
-                    let data = &*(lparam.0 as *const Data);
-                    if IsWindowVisible(hwnd).as_bool() {
-                        let mut pid = 0;
-                        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-                        if pid != data.my_pid {
-                            let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
-                        }
+        "quit_all_apps" => unsafe {
+            use windows::Win32::Foundation::{BOOL, HWND, LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{
+                EnumWindows, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, WM_CLOSE,
+            };
+            struct Data {
+                my_pid: u32,
+            }
+            unsafe extern "system" fn enum_func(hwnd: HWND, lparam: LPARAM) -> BOOL {
+                let data = &*(lparam.0 as *const Data);
+                if IsWindowVisible(hwnd).as_bool() {
+                    let mut pid = 0;
+                    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                    if pid != data.my_pid {
+                        let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
                     }
-                    BOOL(1)
                 }
-                let data = Data { my_pid: std::process::id() };
-                let _ = EnumWindows(Some(enum_func), LPARAM(&data as *const _ as isize));
+                BOOL(1)
             }
-        }
-        "quit_other_apps" => {
-            unsafe {
-                use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, EnumWindows, IsWindowVisible, PostMessageW, WM_CLOSE, GetWindowThreadProcessId};
-                use windows::Win32::Foundation::{HWND, LPARAM, BOOL, WPARAM};
-                struct Data { fg: HWND, my_pid: u32 }
-                unsafe extern "system" fn enum_func(hwnd: HWND, lparam: LPARAM) -> BOOL {
-                    let data = &*(lparam.0 as *const Data);
-                    if hwnd != data.fg && IsWindowVisible(hwnd).as_bool() {
-                        let mut pid = 0;
-                        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-                        if pid != data.my_pid {
-                            let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
-                        }
+            let data = Data {
+                my_pid: std::process::id(),
+            };
+            let _ = EnumWindows(Some(enum_func), LPARAM(&data as *const _ as isize));
+        },
+        "quit_other_apps" => unsafe {
+            use windows::Win32::Foundation::{BOOL, HWND, LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{
+                EnumWindows, GetForegroundWindow, GetWindowThreadProcessId, IsWindowVisible,
+                PostMessageW, WM_CLOSE,
+            };
+            struct Data {
+                fg: HWND,
+                my_pid: u32,
+            }
+            unsafe extern "system" fn enum_func(hwnd: HWND, lparam: LPARAM) -> BOOL {
+                let data = &*(lparam.0 as *const Data);
+                if hwnd != data.fg && IsWindowVisible(hwnd).as_bool() {
+                    let mut pid = 0;
+                    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                    if pid != data.my_pid {
+                        let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
                     }
-                    BOOL(1)
                 }
-                let fg = GetForegroundWindow();
-                let data = Data { fg, my_pid: std::process::id() };
-                let _ = EnumWindows(Some(enum_func), LPARAM(&data as *const _ as isize));
+                BOOL(1)
             }
-        }
-        "hide_other_apps" => {
-            unsafe {
-                use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, EnumWindows, IsWindowVisible, ShowWindow, SW_MINIMIZE, GetWindowThreadProcessId};
-                use windows::Win32::Foundation::{HWND, LPARAM, BOOL};
-                struct Data { fg: HWND, my_pid: u32 }
-                unsafe extern "system" fn enum_func(hwnd: HWND, lparam: LPARAM) -> BOOL {
-                    let data = &*(lparam.0 as *const Data);
-                    if hwnd != data.fg && IsWindowVisible(hwnd).as_bool() {
-                        let mut pid = 0;
-                        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-                        if pid != data.my_pid {
-                            let _ = ShowWindow(hwnd, SW_MINIMIZE);
-                        }
+            let fg = GetForegroundWindow();
+            let data = Data {
+                fg,
+                my_pid: std::process::id(),
+            };
+            let _ = EnumWindows(Some(enum_func), LPARAM(&data as *const _ as isize));
+        },
+        "hide_other_apps" => unsafe {
+            use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{
+                EnumWindows, GetForegroundWindow, GetWindowThreadProcessId, IsWindowVisible,
+                ShowWindow, SW_MINIMIZE,
+            };
+            struct Data {
+                fg: HWND,
+                my_pid: u32,
+            }
+            unsafe extern "system" fn enum_func(hwnd: HWND, lparam: LPARAM) -> BOOL {
+                let data = &*(lparam.0 as *const Data);
+                if hwnd != data.fg && IsWindowVisible(hwnd).as_bool() {
+                    let mut pid = 0;
+                    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                    if pid != data.my_pid {
+                        let _ = ShowWindow(hwnd, SW_MINIMIZE);
                     }
-                    BOOL(1)
                 }
-                let fg = GetForegroundWindow();
-                let data = Data { fg, my_pid: std::process::id() };
-                let _ = EnumWindows(Some(enum_func), LPARAM(&data as *const _ as isize));
+                BOOL(1)
             }
-        }
-        "toggle_hdr" => {
-            unsafe {
-                use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_LWIN, VK_LMENU};
-                const VK_B: u8 = 0x42;
-                keybd_event(VK_LWIN.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
-                keybd_event(VK_LMENU.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
-                keybd_event(VK_B, 0, KEYBD_EVENT_FLAGS(0), 0);
-                keybd_event(VK_B, 0, KEYEVENTF_KEYUP, 0);
-                keybd_event(VK_LMENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);
-                keybd_event(VK_LWIN.0 as u8, 0, KEYEVENTF_KEYUP, 0);
-            }
-        }
+            let fg = GetForegroundWindow();
+            let data = Data {
+                fg,
+                my_pid: std::process::id(),
+            };
+            let _ = EnumWindows(Some(enum_func), LPARAM(&data as *const _ as isize));
+        },
+        "toggle_hdr" => unsafe {
+            use windows::Win32::UI::Input::KeyboardAndMouse::{
+                keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_LMENU, VK_LWIN,
+            };
+            const VK_B: u8 = 0x42;
+            keybd_event(VK_LWIN.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
+            keybd_event(VK_LMENU.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
+            keybd_event(VK_B, 0, KEYBD_EVENT_FLAGS(0), 0);
+            keybd_event(VK_B, 0, KEYEVENTF_KEYUP, 0);
+            keybd_event(VK_LMENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+            keybd_event(VK_LWIN.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+        },
         "open_settings" | "reveal_logs" => {
             if let Ok(appdata) = std::env::var("APPDATA") {
                 let _ = Command::new("explorer.exe")
@@ -306,31 +331,41 @@ fn handle_action(action: &str) {
         "copy_version" => {
             let version = env!("CARGO_PKG_VERSION");
             let _ = Command::new("powershell")
-                .args(["-WindowStyle", "Hidden", "-Command", &format!("Set-Clipboard -Value '{}'", version)])
+                .args([
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    &format!("Set-Clipboard -Value '{}'", version),
+                ])
                 .creation_flags(0x08000000)
                 .spawn();
         }
         "copy_logs" => {
             if let Ok(appdata) = std::env::var("APPDATA") {
-                let log_path = std::path::PathBuf::from(appdata).join("opensearch-os").join("opensearch-os.log");
+                let log_path = std::path::PathBuf::from(appdata)
+                    .join("opensearch-os")
+                    .join("opensearch-os.log");
                 let _ = Command::new("powershell")
-                    .args(["-WindowStyle", "Hidden", "-Command", &format!("Get-Content '{}' -Raw | Set-Clipboard", log_path.display())])
+                    .args([
+                        "-WindowStyle",
+                        "Hidden",
+                        "-Command",
+                        &format!("Get-Content '{}' -Raw | Set-Clipboard", log_path.display()),
+                    ])
                     .creation_flags(0x08000000)
                     .spawn();
             }
         }
-        "quick_look" => {
-            unsafe {
-                use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_SPACE};
-                keybd_event(VK_SPACE.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
-                keybd_event(VK_SPACE.0 as u8, 0, KEYEVENTF_KEYUP, 0);
-            }
-        }
-        "lock" => {
-            unsafe {
-                let _ = windows::Win32::System::Shutdown::LockWorkStation();
-            }
-        }
+        "quick_look" => unsafe {
+            use windows::Win32::UI::Input::KeyboardAndMouse::{
+                keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_SPACE,
+            };
+            keybd_event(VK_SPACE.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
+            keybd_event(VK_SPACE.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+        },
+        "lock" => unsafe {
+            let _ = windows::Win32::System::Shutdown::LockWorkStation();
+        },
         "shutdown" => {
             let _ = Command::new("shutdown").args(["/s", "/t", "0"]).spawn();
         }
@@ -339,7 +374,9 @@ fn handle_action(action: &str) {
         }
         "clipboard:paste_sequentially" => {
             if let Ok(appdata) = std::env::var("APPDATA") {
-                let db_path = std::path::PathBuf::from(appdata).join("opensearch-os").join("index.db");
+                let db_path = std::path::PathBuf::from(appdata)
+                    .join("opensearch-os")
+                    .join("index.db");
                 if let Ok(conn) = rusqlite::Connection::open(&db_path) {
                     if let Ok(mut stmt) = conn.prepare("SELECT content FROM clipboard_history WHERE is_image = 0 ORDER BY timestamp DESC LIMIT 3") {
                         let items: Vec<String> = stmt.query_map([], |row| row.get(0)).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default();
@@ -381,16 +418,12 @@ fn handle_action(action: &str) {
                 }
             }
         }
-        "sleep" => {
-            unsafe {
-                let _ = windows::Win32::System::Power::SetSuspendState(false, false, false);
-            }
-        }
-        "hibernate" => {
-            unsafe {
-                let _ = windows::Win32::System::Power::SetSuspendState(true, false, false);
-            }
-        }
+        "sleep" => unsafe {
+            let _ = windows::Win32::System::Power::SetSuspendState(false, false, false);
+        },
+        "hibernate" => unsafe {
+            let _ = windows::Win32::System::Power::SetSuspendState(true, false, false);
+        },
         "logout" => {
             let _ = Command::new("shutdown").arg("/l").spawn();
         }
@@ -413,16 +446,16 @@ fn handle_action(action: &str) {
                 .arg("shell:RecycleBinFolder")
                 .spawn();
         }
-        "recycle" => {
-            unsafe {
-                use windows::Win32::UI::Shell::{SHEmptyRecycleBinW, SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI};
-                let _ = SHEmptyRecycleBinW(
-                    HWND::default(),
-                    PCWSTR::null(),
-                    SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI,
-                );
-            }
-        }
+        "recycle" => unsafe {
+            use windows::Win32::UI::Shell::{
+                SHEmptyRecycleBinW, SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI,
+            };
+            let _ = SHEmptyRecycleBinW(
+                HWND::default(),
+                PCWSTR::null(),
+                SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI,
+            );
+        },
         "flushdns" => {
             let _ = Command::new("cmd")
                 .args(["/c", "ipconfig /flushdns"])
@@ -434,15 +467,15 @@ fn handle_action(action: &str) {
                 .args(["sysdm.cpl,EditEnvironmentVariables"])
                 .spawn();
         }
-        "clearclip" => {
-            unsafe {
-                use windows::Win32::System::DataExchange::{OpenClipboard, EmptyClipboard, CloseClipboard};
-                if OpenClipboard(HWND::default()).is_ok() {
-                    let _ = EmptyClipboard();
-                    let _ = CloseClipboard();
-                }
+        "clearclip" => unsafe {
+            use windows::Win32::System::DataExchange::{
+                CloseClipboard, EmptyClipboard, OpenClipboard,
+            };
+            if OpenClipboard(HWND::default()).is_ok() {
+                let _ = EmptyClipboard();
+                let _ = CloseClipboard();
             }
-        }
+        },
         "hosts" => {
             let hosts = r"C:\Windows\System32\drivers\etc\hosts";
             let _ = Command::new("notepad.exe").arg(hosts).spawn();
@@ -566,13 +599,17 @@ fn handle_action(action: &str) {
         folder if folder.starts_with("folder:") => {
             let which = &folder[7..];
             let path = match which {
-                "downloads" => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Downloads),
-                "desktop"   => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop),
-                "documents" => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Documents),
-                "pictures"  => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Pictures),
-                "music"     => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Music),
-                "videos"    => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Videos),
-                "temp"      => std::env::var("TEMP").ok(),
+                "downloads" => {
+                    get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Downloads)
+                }
+                "desktop" => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop),
+                "documents" => {
+                    get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Documents)
+                }
+                "pictures" => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Pictures),
+                "music" => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Music),
+                "videos" => get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Videos),
+                "temp" => std::env::var("TEMP").ok(),
                 _ => None,
             };
             if let Some(p) = path {
@@ -585,11 +622,13 @@ fn handle_action(action: &str) {
 
 pub fn get_known_folder_path(folder_id: &windows::core::GUID) -> Option<String> {
     unsafe {
-        use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
         use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
         let result = SHGetKnownFolderPath(folder_id, KF_FLAG_DEFAULT, HANDLE::default()).ok()?;
         let mut len = 0;
-        while *result.0.add(len) != 0 { len += 1; }
+        while *result.0.add(len) != 0 {
+            len += 1;
+        }
         let s = String::from_utf16_lossy(std::slice::from_raw_parts(result.0, len));
         windows::Win32::System::Com::CoTaskMemFree(Some(result.0 as *const _));
         Some(s)
@@ -597,11 +636,11 @@ pub fn get_known_folder_path(folder_id: &windows::core::GUID) -> Option<String> 
 }
 
 fn get_target_window() -> Option<HWND> {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, FindWindowW, GetWindow, GW_HWNDNEXT, IsWindowVisible,
-        GetClassNameW, GetWindowTextW
-    };
     use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowTextW,
+        IsWindowVisible, GW_HWNDNEXT,
+    };
 
     unsafe {
         let class: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
@@ -613,12 +652,17 @@ fn get_target_window() -> Option<HWND> {
         } else if !launcher_hwnd.0.is_null() {
             let mut curr = GetWindow(launcher_hwnd, GW_HWNDNEXT);
             while let Ok(c) = curr {
-                if c.0.is_null() { break; }
+                if c.0.is_null() {
+                    break;
+                }
                 if IsWindowVisible(c).as_bool() {
                     let mut class_buf = [0u16; 256];
                     let class_len = GetClassNameW(c, &mut class_buf) as usize;
                     let class_name = String::from_utf16_lossy(&class_buf[..class_len]);
-                    if class_name != "Shell_TrayWnd" && class_name != "Progman" && class_name != "opensearch-os" {
+                    if class_name != "Shell_TrayWnd"
+                        && class_name != "Progman"
+                        && class_name != "opensearch-os"
+                    {
                         let mut title_buf = [0u16; 256];
                         let title_len = GetWindowTextW(c, &mut title_buf) as usize;
                         if title_len > 0 {
@@ -711,13 +755,13 @@ fn handle_window_action(action: &str) {
 
     if action == "move_next_display" || action == "move_previous_display" {
         unsafe {
+            use windows::Win32::Foundation::{BOOL, LPARAM};
             use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
-            use windows::Win32::Foundation::{LPARAM, BOOL};
-            
+
             struct MonitorData {
                 monitors: Vec<HMONITOR>,
             }
-            
+
             unsafe extern "system" fn monitor_enum(
                 hmonitor: HMONITOR,
                 _hdc: HDC,
@@ -728,52 +772,70 @@ fn handle_window_action(action: &str) {
                 data.monitors.push(hmonitor);
                 BOOL(1)
             }
-            
-            let mut data = MonitorData { monitors: Vec::new() };
-            let _ = EnumDisplayMonitors(None, None, Some(monitor_enum), LPARAM(&mut data as *mut _ as isize));
-            
+
+            let mut data = MonitorData {
+                monitors: Vec::new(),
+            };
+            let _ = EnumDisplayMonitors(
+                None,
+                None,
+                Some(monitor_enum),
+                LPARAM(&mut data as *mut _ as isize),
+            );
+
             if data.monitors.len() > 1 {
-                use windows::Win32::Graphics::Gdi::{MonitorFromWindow, GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+                use windows::Win32::Graphics::Gdi::{
+                    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+                };
                 let current_monitor = MonitorFromWindow(target_hwnd, MONITOR_DEFAULTTONEAREST);
-                let current_idx = data.monitors.iter().position(|&m| m.0 == current_monitor.0).unwrap_or(0);
-                
+                let current_idx = data
+                    .monitors
+                    .iter()
+                    .position(|&m| m.0 == current_monitor.0)
+                    .unwrap_or(0);
+
                 let new_idx = if action == "move_next_display" {
                     (current_idx + 1) % data.monitors.len()
                 } else {
                     (current_idx + data.monitors.len() - 1) % data.monitors.len()
                 };
-                
+
                 let new_monitor = data.monitors[new_idx];
-                
+
                 let mut current_info = MONITORINFO::default();
                 current_info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
                 let _ = GetMonitorInfoW(current_monitor, &mut current_info);
-                
+
                 let mut new_info = MONITORINFO::default();
                 new_info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
                 let _ = GetMonitorInfoW(new_monitor, &mut new_info);
-                
-                use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE};
+
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    GetWindowRect, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+                };
                 let mut r = windows::Win32::Foundation::RECT::default();
                 if GetWindowRect(target_hwnd, &mut r).is_ok() {
                     let w = r.right - r.left;
                     let h = r.bottom - r.top;
-                    
+
                     let cw = current_info.rcWork.right - current_info.rcWork.left;
                     let ch = current_info.rcWork.bottom - current_info.rcWork.top;
                     let nw = new_info.rcWork.right - new_info.rcWork.left;
                     let nh = new_info.rcWork.bottom - new_info.rcWork.top;
-                    
+
                     let rx = (r.left - current_info.rcWork.left) as f32 / cw as f32;
                     let ry = (r.top - current_info.rcWork.top) as f32 / ch as f32;
-                    
+
                     let new_x = new_info.rcWork.left + (rx * nw as f32) as i32;
                     let new_y = new_info.rcWork.top + (ry * nh as f32) as i32;
-                    
+
                     let _ = SetWindowPos(
                         target_hwnd,
                         HWND::default(),
-                        new_x, new_y, w, h,
+                        new_x,
+                        new_y,
+                        w,
+                        h,
                         SWP_NOZORDER | SWP_NOACTIVATE,
                     );
                 }
@@ -782,15 +844,15 @@ fn handle_window_action(action: &str) {
         return;
     }
 
-    use windows::Win32::UI::WindowsAndMessaging::{
-        IsZoomed, ShowWindow, SetWindowPos, GetWindowRect, GetWindowLongPtrW,
-        SW_RESTORE, SW_MAXIMIZE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        HWND_TOPMOST, HWND_NOTOPMOST, GWL_EXSTYLE, WS_EX_TOPMOST
-    };
-    use windows::Win32::Graphics::Gdi::{
-        MonitorFromWindow, GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST
-    };
     use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, GetWindowRect, IsZoomed, SetWindowPos, ShowWindow, GWL_EXSTYLE,
+        HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        SW_MAXIMIZE, SW_RESTORE, WS_EX_TOPMOST,
+    };
 
     unsafe {
         if action == "restore" {
@@ -813,11 +875,18 @@ fn handle_window_action(action: &str) {
         if action == "toggle_always_on_top" {
             let ex_style = GetWindowLongPtrW(target_hwnd, GWL_EXSTYLE) as u32;
             let is_topmost = (ex_style & WS_EX_TOPMOST.0) != 0;
-            let z_order = if is_topmost { HWND_NOTOPMOST } else { HWND_TOPMOST };
+            let z_order = if is_topmost {
+                HWND_NOTOPMOST
+            } else {
+                HWND_TOPMOST
+            };
             let _ = SetWindowPos(
                 target_hwnd,
                 z_order,
-                0, 0, 0, 0,
+                0,
+                0,
+                0,
+                0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             );
             return;
@@ -825,10 +894,14 @@ fn handle_window_action(action: &str) {
 
         // Get monitor info
         let monitor = MonitorFromWindow(target_hwnd, MONITOR_DEFAULTTONEAREST);
-        if monitor.0.is_null() { return; }
+        if monitor.0.is_null() {
+            return;
+        }
         let mut info = MONITORINFO::default();
         info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if !GetMonitorInfoW(monitor, &mut info).as_bool() { return; }
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return;
+        }
 
         let work = info.rcWork;
         let sw = work.right - work.left;
@@ -1021,7 +1094,9 @@ fn handle_window_action(action: &str) {
                     h = r.bottom - r.top;
                     x = r.left;
                     y = work.top;
-                } else { return; }
+                } else {
+                    return;
+                }
             }
             "move_bottom" => {
                 let mut r = RECT::default();
@@ -1030,50 +1105,230 @@ fn handle_window_action(action: &str) {
                     h = r.bottom - r.top;
                     x = r.left;
                     y = work.bottom - h;
-                } else { return; }
+                } else {
+                    return;
+                }
             }
-            "bottom_center_sixth" => { w = sw / 3; h = sh / 2; x = work.left + sw / 3; y = work.top + sh / 2; }
-            "top_center_sixth" => { w = sw / 3; h = sh / 2; x = work.left + sw / 3; y = work.top; }
-            "bottom_left_sixth" => { w = sw / 3; h = sh / 2; x = work.left; y = work.top + sh / 2; }
-            "bottom_right_sixth" => { w = sw / 3; h = sh / 2; x = work.left + 2 * sw / 3; y = work.top + sh / 2; }
-            "top_left_sixth" => { w = sw / 3; h = sh / 2; x = work.left; y = work.top; }
-            "top_right_sixth" => { w = sw / 3; h = sh / 2; x = work.left + 2 * sw / 3; y = work.top; }
-            "bottom_center_two_thirds" => { w = 2 * sw / 3; h = sh / 2; x = work.left + sw / 6; y = work.top + sh / 2; }
-            "top_center_two_thirds" => { w = 2 * sw / 3; h = sh / 2; x = work.left + sw / 6; y = work.top; }
-            "bottom_third" => { w = sw; h = sh / 3; x = work.left; y = work.top + 2 * sh / 3; }
-            "top_third" => { w = sw; h = sh / 3; x = work.left; y = work.top; }
-            "bottom_three_fourths" => { w = sw; h = 3 * sh / 4; x = work.left; y = work.top + sh / 4; }
-            "top_three_fourths" => { w = sw; h = 3 * sh / 4; x = work.left; y = work.top; }
-            "bottom_two_thirds" => { w = sw; h = 2 * sh / 3; x = work.left; y = work.top + sh / 3; }
-            "top_two_thirds" => { w = sw; h = 2 * sh / 3; x = work.left; y = work.top; }
-            "first_fourth" => { w = sw / 4; h = sh; x = work.left; y = work.top; }
-            "second_fourth" => { w = sw / 4; h = sh; x = work.left + sw / 4; y = work.top; }
-            "third_fourth" => { w = sw / 4; h = sh; x = work.left + sw / 2; y = work.top; }
-            "last_fourth" => { w = sw / 4; h = sh; x = work.left + 3 * sw / 4; y = work.top; }
-            "top_first_fourth" => { w = sw / 4; h = sh / 2; x = work.left; y = work.top; }
-            "top_second_fourth" => { w = sw / 4; h = sh / 2; x = work.left + sw / 4; y = work.top; }
-            "top_third_fourth" => { w = sw / 4; h = sh / 2; x = work.left + sw / 2; y = work.top; }
-            "top_last_fourth" => { w = sw / 4; h = sh / 2; x = work.left + 3 * sw / 4; y = work.top; }
-            "bottom_first_fourth" => { w = sw / 4; h = sh / 2; x = work.left; y = work.top + sh / 2; }
-            "bottom_second_fourth" => { w = sw / 4; h = sh / 2; x = work.left + sw / 4; y = work.top + sh / 2; }
-            "bottom_third_fourth" => { w = sw / 4; h = sh / 2; x = work.left + sw / 2; y = work.top + sh / 2; }
-            "bottom_last_fourth" => { w = sw / 4; h = sh / 2; x = work.left + 3 * sw / 4; y = work.top + sh / 2; }
-            "last_third" => { w = sw / 3; h = sh; x = work.left + 2 * sw / 3; y = work.top; }
-            "last_three_fourths" => { w = 3 * sw / 4; h = sh; x = work.left + sw / 4; y = work.top; }
-            "last_two_thirds" => { w = 2 * sw / 3; h = sh; x = work.left + sw / 3; y = work.top; }
-            "first_third" => { w = sw / 3; h = sh; x = work.left; y = work.top; }
-            "first_three_fourths" => { w = 3 * sw / 4; h = sh; x = work.left; y = work.top; }
-            "first_two_thirds" => { w = 2 * sw / 3; h = sh; x = work.left; y = work.top; }
-            "center_half" => { w = sw / 2; h = sh; x = work.left + sw / 4; y = work.top; }
-            "center_three_fourths" => { w = 3 * sw / 4; h = sh; x = work.left + sw / 8; y = work.top; }
-            "center_two_thirds" => { w = 2 * sw / 3; h = sh; x = work.left + sw / 6; y = work.top; }
+            "bottom_center_sixth" => {
+                w = sw / 3;
+                h = sh / 2;
+                x = work.left + sw / 3;
+                y = work.top + sh / 2;
+            }
+            "top_center_sixth" => {
+                w = sw / 3;
+                h = sh / 2;
+                x = work.left + sw / 3;
+                y = work.top;
+            }
+            "bottom_left_sixth" => {
+                w = sw / 3;
+                h = sh / 2;
+                x = work.left;
+                y = work.top + sh / 2;
+            }
+            "bottom_right_sixth" => {
+                w = sw / 3;
+                h = sh / 2;
+                x = work.left + 2 * sw / 3;
+                y = work.top + sh / 2;
+            }
+            "top_left_sixth" => {
+                w = sw / 3;
+                h = sh / 2;
+                x = work.left;
+                y = work.top;
+            }
+            "top_right_sixth" => {
+                w = sw / 3;
+                h = sh / 2;
+                x = work.left + 2 * sw / 3;
+                y = work.top;
+            }
+            "bottom_center_two_thirds" => {
+                w = 2 * sw / 3;
+                h = sh / 2;
+                x = work.left + sw / 6;
+                y = work.top + sh / 2;
+            }
+            "top_center_two_thirds" => {
+                w = 2 * sw / 3;
+                h = sh / 2;
+                x = work.left + sw / 6;
+                y = work.top;
+            }
+            "bottom_third" => {
+                w = sw;
+                h = sh / 3;
+                x = work.left;
+                y = work.top + 2 * sh / 3;
+            }
+            "top_third" => {
+                w = sw;
+                h = sh / 3;
+                x = work.left;
+                y = work.top;
+            }
+            "bottom_three_fourths" => {
+                w = sw;
+                h = 3 * sh / 4;
+                x = work.left;
+                y = work.top + sh / 4;
+            }
+            "top_three_fourths" => {
+                w = sw;
+                h = 3 * sh / 4;
+                x = work.left;
+                y = work.top;
+            }
+            "bottom_two_thirds" => {
+                w = sw;
+                h = 2 * sh / 3;
+                x = work.left;
+                y = work.top + sh / 3;
+            }
+            "top_two_thirds" => {
+                w = sw;
+                h = 2 * sh / 3;
+                x = work.left;
+                y = work.top;
+            }
+            "first_fourth" => {
+                w = sw / 4;
+                h = sh;
+                x = work.left;
+                y = work.top;
+            }
+            "second_fourth" => {
+                w = sw / 4;
+                h = sh;
+                x = work.left + sw / 4;
+                y = work.top;
+            }
+            "third_fourth" => {
+                w = sw / 4;
+                h = sh;
+                x = work.left + sw / 2;
+                y = work.top;
+            }
+            "last_fourth" => {
+                w = sw / 4;
+                h = sh;
+                x = work.left + 3 * sw / 4;
+                y = work.top;
+            }
+            "top_first_fourth" => {
+                w = sw / 4;
+                h = sh / 2;
+                x = work.left;
+                y = work.top;
+            }
+            "top_second_fourth" => {
+                w = sw / 4;
+                h = sh / 2;
+                x = work.left + sw / 4;
+                y = work.top;
+            }
+            "top_third_fourth" => {
+                w = sw / 4;
+                h = sh / 2;
+                x = work.left + sw / 2;
+                y = work.top;
+            }
+            "top_last_fourth" => {
+                w = sw / 4;
+                h = sh / 2;
+                x = work.left + 3 * sw / 4;
+                y = work.top;
+            }
+            "bottom_first_fourth" => {
+                w = sw / 4;
+                h = sh / 2;
+                x = work.left;
+                y = work.top + sh / 2;
+            }
+            "bottom_second_fourth" => {
+                w = sw / 4;
+                h = sh / 2;
+                x = work.left + sw / 4;
+                y = work.top + sh / 2;
+            }
+            "bottom_third_fourth" => {
+                w = sw / 4;
+                h = sh / 2;
+                x = work.left + sw / 2;
+                y = work.top + sh / 2;
+            }
+            "bottom_last_fourth" => {
+                w = sw / 4;
+                h = sh / 2;
+                x = work.left + 3 * sw / 4;
+                y = work.top + sh / 2;
+            }
+            "last_third" => {
+                w = sw / 3;
+                h = sh;
+                x = work.left + 2 * sw / 3;
+                y = work.top;
+            }
+            "last_three_fourths" => {
+                w = 3 * sw / 4;
+                h = sh;
+                x = work.left + sw / 4;
+                y = work.top;
+            }
+            "last_two_thirds" => {
+                w = 2 * sw / 3;
+                h = sh;
+                x = work.left + sw / 3;
+                y = work.top;
+            }
+            "first_third" => {
+                w = sw / 3;
+                h = sh;
+                x = work.left;
+                y = work.top;
+            }
+            "first_three_fourths" => {
+                w = 3 * sw / 4;
+                h = sh;
+                x = work.left;
+                y = work.top;
+            }
+            "first_two_thirds" => {
+                w = 2 * sw / 3;
+                h = sh;
+                x = work.left;
+                y = work.top;
+            }
+            "center_half" => {
+                w = sw / 2;
+                h = sh;
+                x = work.left + sw / 4;
+                y = work.top;
+            }
+            "center_three_fourths" => {
+                w = 3 * sw / 4;
+                h = sh;
+                x = work.left + sw / 8;
+                y = work.top;
+            }
+            "center_two_thirds" => {
+                w = 2 * sw / 3;
+                h = sh;
+                x = work.left + sw / 6;
+                y = work.top;
+            }
             _ => return,
         }
 
         let _ = SetWindowPos(
             target_hwnd,
             windows::Win32::Foundation::HWND::default(),
-            x, y, w, h,
+            x,
+            y,
+            w,
+            h,
             SWP_NOZORDER | SWP_NOACTIVATE,
         );
     }
@@ -1081,19 +1336,16 @@ fn handle_window_action(action: &str) {
 
 pub fn set_master_volume(percent: f32) -> Result<(), windows::core::Error> {
     unsafe {
-        use windows::Win32::System::Com::*;
-        use windows::Win32::Media::Audio::*;
         use windows::Win32::Media::Audio::Endpoints::*;
-        
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-            &MMDeviceEnumerator,
-            None,
-            CLSCTX_ALL,
-        )?;
-        
+        use windows::Win32::Media::Audio::*;
+        use windows::Win32::System::Com::*;
+
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+
         let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
         let volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None)?;
-        
+
         volume.SetMasterVolumeLevelScalar(percent, std::ptr::null())?;
         Ok(())
     }
@@ -1101,19 +1353,16 @@ pub fn set_master_volume(percent: f32) -> Result<(), windows::core::Error> {
 
 pub fn set_mute(muted: bool) -> Result<(), windows::core::Error> {
     unsafe {
-        use windows::Win32::System::Com::*;
-        use windows::Win32::Media::Audio::*;
         use windows::Win32::Media::Audio::Endpoints::*;
-        
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-            &MMDeviceEnumerator,
-            None,
-            CLSCTX_ALL,
-        )?;
-        
+        use windows::Win32::Media::Audio::*;
+        use windows::Win32::System::Com::*;
+
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+
         let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
         let volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None)?;
-        
+
         volume.SetMute(muted, std::ptr::null())?;
         Ok(())
     }
@@ -1121,19 +1370,16 @@ pub fn set_mute(muted: bool) -> Result<(), windows::core::Error> {
 
 pub fn get_mute() -> Result<bool, windows::core::Error> {
     unsafe {
-        use windows::Win32::System::Com::*;
-        use windows::Win32::Media::Audio::*;
         use windows::Win32::Media::Audio::Endpoints::*;
-        
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(
-            &MMDeviceEnumerator,
-            None,
-            CLSCTX_ALL,
-        )?;
-        
+        use windows::Win32::Media::Audio::*;
+        use windows::Win32::System::Com::*;
+
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+
         let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
         let volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None)?;
-        
+
         let val = volume.GetMute()?;
         Ok(val.as_bool())
     }
@@ -1141,19 +1387,17 @@ pub fn get_mute() -> Result<bool, windows::core::Error> {
 
 pub fn toggle_hidden_files() -> Result<bool, windows::core::Error> {
     unsafe {
+        use windows::core::PCWSTR;
         use windows::Win32::System::Registry::*;
         use windows::Win32::UI::Shell::SHChangeNotify;
         use windows::Win32::UI::Shell::SHCNE_ASSOCCHANGED;
         use windows::Win32::UI::Shell::SHCNF_IDLIST;
-        use windows::core::PCWSTR;
-        
+
         let subkey = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\0"
             .encode_utf16()
             .collect::<Vec<u16>>();
-        let value_name = "Hidden\0"
-            .encode_utf16()
-            .collect::<Vec<u16>>();
-            
+        let value_name = "Hidden\0".encode_utf16().collect::<Vec<u16>>();
+
         let mut hkey = HKEY::default();
         let status = RegOpenKeyExW(
             HKEY_CURRENT_USER,
@@ -1162,15 +1406,15 @@ pub fn toggle_hidden_files() -> Result<bool, windows::core::Error> {
             KEY_READ | KEY_WRITE,
             &mut hkey,
         );
-        
+
         if status.is_err() {
             return Err(status.into());
         }
-        
+
         let mut value_type = REG_VALUE_TYPE::default();
         let mut data = 0u32;
         let mut data_size = std::mem::size_of::<u32>() as u32;
-        
+
         let status = RegQueryValueExW(
             hkey,
             PCWSTR(value_name.as_ptr()),
@@ -1179,13 +1423,13 @@ pub fn toggle_hidden_files() -> Result<bool, windows::core::Error> {
             Some(&mut data as *mut u32 as *mut u8),
             Some(&mut data_size),
         );
-        
+
         let new_val = if status.is_ok() && data == 1 {
             2u32 // change to hide
         } else {
             1u32 // change to show
         };
-        
+
         let data_slice = std::slice::from_raw_parts(&new_val as *const u32 as *const u8, 4);
         let status = RegSetValueExW(
             hkey,
@@ -1194,9 +1438,9 @@ pub fn toggle_hidden_files() -> Result<bool, windows::core::Error> {
             REG_DWORD,
             Some(data_slice),
         );
-        
+
         let _ = RegCloseKey(hkey);
-        
+
         if status.is_ok() {
             SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
             Ok(new_val == 1)
@@ -1231,7 +1475,9 @@ fn show_screensaver() {
     if screensaver.exists() {
         let _ = Command::new(screensaver).arg("/s").spawn();
     } else {
-        let _ = Command::new("explorer.exe").arg("ms-settings:lockscreen").spawn();
+        let _ = Command::new("explorer.exe")
+            .arg("ms-settings:lockscreen")
+            .spawn();
     }
 }
 
@@ -1275,7 +1521,7 @@ fn key_input(
 pub fn send_media_key(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) {
     unsafe {
         use windows::Win32::UI::Input::KeyboardAndMouse::*;
-        
+
         let inputs = [
             INPUT {
                 r#type: INPUT_KEYBOARD,
@@ -1302,7 +1548,7 @@ pub fn send_media_key(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_K
                 },
             },
         ];
-        
+
         SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }
 }

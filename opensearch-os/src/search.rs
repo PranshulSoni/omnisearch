@@ -1,9 +1,12 @@
 use anyhow::{bail, Result};
-use ort::{session::{Session, builder::GraphOptimizationLevel}, value::TensorRef};
-use serde::Deserialize;
-use tokenizers::Tokenizer;
-use std::sync::atomic::{AtomicBool, Ordering};
+use ort::{
+    session::{builder::GraphOptimizationLevel, Session},
+    value::TensorRef,
+};
 use rusqlite::Connection;
+use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokenizers::Tokenizer;
 
 pub static DISABLE_LIVE_RESULTS: AtomicBool = AtomicBool::new(false);
 
@@ -79,7 +82,7 @@ pub struct AppInfo {
 #[derive(Clone)]
 pub struct RecentFileInfo {
     pub name: String,
-    pub path: String,  // resolved target path
+    pub path: String, // resolved target path
 }
 
 pub struct SearchEngine {
@@ -103,7 +106,7 @@ impl SearchEngine {
         if CATALOG.len() < 8 {
             bail!("catalog.bin too small");
         }
-        let n   = u32::from_le_bytes(CATALOG[0..4].try_into()?) as usize;
+        let n = u32::from_le_bytes(CATALOG[0..4].try_into()?) as usize;
         let dim = u32::from_le_bytes(CATALOG[4..8].try_into()?) as usize;
 
         let mut off = 8usize;
@@ -140,8 +143,8 @@ impl SearchEngine {
             .commit_from_file(model_path)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        let tokenizer = Tokenizer::from_bytes(TOKENIZER)
-            .map_err(|e| anyhow::anyhow!("tokenizer: {e}"))?;
+        let tokenizer =
+            Tokenizer::from_bytes(TOKENIZER).map_err(|e| anyhow::anyhow!("tokenizer: {e}"))?;
 
         let mut anchor_categories = vec![
             AnchorCategory {
@@ -185,8 +188,14 @@ impl SearchEngine {
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         // Add columns if they don't exist
-        let _ = conn.execute("ALTER TABLE clipboard_history ADD COLUMN is_image INTEGER DEFAULT 0;", []);
-        let _ = conn.execute("ALTER TABLE clipboard_history ADD COLUMN pinned INTEGER DEFAULT 0;", []);
+        let _ = conn.execute(
+            "ALTER TABLE clipboard_history ADD COLUMN is_image INTEGER DEFAULT 0;",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE clipboard_history ADD COLUMN pinned INTEGER DEFAULT 0;",
+            [],
+        );
         conn.execute(
             "CREATE TABLE IF NOT EXISTS clipboard_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -209,7 +218,10 @@ impl SearchEngine {
             );",
             [],
         )?;
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_timeline_timestamp ON timeline_events(timestamp);", []);
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_timeline_timestamp ON timeline_events(timestamp);",
+            [],
+        );
 
         // Create quicklinks table
         conn.execute(
@@ -222,13 +234,23 @@ impl SearchEngine {
         )?;
 
         // Pre-populate quicklinks if empty
-        let ql_count: i64 = conn.query_row("SELECT COUNT(*) FROM quicklinks", [], |row| row.get(0)).unwrap_or(0);
+        let ql_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM quicklinks", [], |row| row.get(0))
+            .unwrap_or(0);
         if ql_count == 0 {
             let defaults = &[
                 ("Google", "https://google.com/search?q={query}", "g"),
-                ("YouTube", "https://youtube.com/results?search_query={query}", "yt"),
+                (
+                    "YouTube",
+                    "https://youtube.com/results?search_query={query}",
+                    "yt",
+                ),
                 ("GitHub", "https://github.com/search?q={query}", "gh"),
-                ("Rust Docs", "https://docs.rs/releases/search?query={query}", "rs"),
+                (
+                    "Rust Docs",
+                    "https://docs.rs/releases/search?query={query}",
+                    "rs",
+                ),
             ];
             for &(name, url, keyword) in defaults {
                 let _ = conn.execute(
@@ -258,7 +280,9 @@ impl SearchEngine {
         )?;
 
         // Pre-populate AI settings if empty
-        let ai_count: i64 = conn.query_row("SELECT COUNT(*) FROM ai_settings", [], |row| row.get(0)).unwrap_or(0);
+        let ai_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ai_settings", [], |row| row.get(0))
+            .unwrap_or(0);
         if ai_count == 0 {
             let _ = conn.execute(
                 "INSERT INTO ai_settings (key, value) VALUES ('api_key', ?);",
@@ -275,7 +299,9 @@ impl SearchEngine {
         }
 
         // Pre-populate snippets if empty
-        let sn_count: i64 = conn.query_row("SELECT COUNT(*) FROM snippets", [], |row| row.get(0)).unwrap_or(0);
+        let sn_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM snippets", [], |row| row.get(0))
+            .unwrap_or(0);
         if sn_count == 0 {
             let _ = conn.execute(
                 "INSERT INTO snippets (name, content, keyword) VALUES (?, ?, ?);",
@@ -288,7 +314,21 @@ impl SearchEngine {
         }
 
         let meta_index = meta.iter().map(CatalogEntryIndex::from_entry).collect();
-        let mut engine = Self { vecs, meta, meta_index, n, dim, session, tokenizer, anchor_categories: vec![], apps: vec![], recent_files: vec![], _db_path: db_path, conn, query_cache: std::collections::HashMap::new() };
+        let mut engine = Self {
+            vecs,
+            meta,
+            meta_index,
+            n,
+            dim,
+            session,
+            tokenizer,
+            anchor_categories: vec![],
+            apps: vec![],
+            recent_files: vec![],
+            _db_path: db_path,
+            conn,
+            query_cache: std::collections::HashMap::new(),
+        };
         for cat in &mut anchor_categories {
             for phrase in cat.phrases {
                 let phrase_with_prefix = format!("query: {}", phrase);
@@ -305,70 +345,85 @@ impl SearchEngine {
         Ok(engine)
     }
 
-fn get_path_score_modifier(full_path: &str) -> f32 {
-    let path_lower = full_path.to_lowercase();
-    
-    // Penalize system/tool/hidden directories
-    if path_lower.contains("\\node_modules\\") ||
-       path_lower.contains("\\target\\") ||
-       path_lower.contains("\\.git\\") ||
-       path_lower.contains("\\appdata\\") ||
-       path_lower.contains("\\.cargo\\") ||
-       path_lower.contains("\\.rustup\\") ||
-       path_lower.contains("\\.npm\\") ||
-       path_lower.contains("\\.antigravity") ||
-       path_lower.contains("\\.cursor\\") ||
-       path_lower.contains("\\venv\\") ||
-       path_lower.contains("\\.venv\\") ||
-       path_lower.contains("\\__macosx\\") ||
-       path_lower.contains("\\bin\\") ||
-       path_lower.contains("\\obj\\") ||
-       path_lower.contains("\\temp\\") ||
-       path_lower.contains("\\tmp\\") {
-        return -2.0; // Excluded from results
+    fn get_path_score_modifier(full_path: &str) -> f32 {
+        let path_lower = full_path.to_lowercase();
+
+        // Penalize system/tool/hidden directories
+        if path_lower.contains("\\node_modules\\")
+            || path_lower.contains("\\target\\")
+            || path_lower.contains("\\.git\\")
+            || path_lower.contains("\\appdata\\")
+            || path_lower.contains("\\.cargo\\")
+            || path_lower.contains("\\.rustup\\")
+            || path_lower.contains("\\.npm\\")
+            || path_lower.contains("\\.antigravity")
+            || path_lower.contains("\\.cursor\\")
+            || path_lower.contains("\\venv\\")
+            || path_lower.contains("\\.venv\\")
+            || path_lower.contains("\\__macosx\\")
+            || path_lower.contains("\\bin\\")
+            || path_lower.contains("\\obj\\")
+            || path_lower.contains("\\temp\\")
+            || path_lower.contains("\\tmp\\")
+        {
+            return -2.0; // Excluded from results
+        }
+
+        // Boost user's active/primary directories
+        if path_lower.contains("\\desktop\\")
+            || path_lower.contains("\\documents\\")
+            || path_lower.contains("\\downloads\\")
+            || path_lower.contains("\\pictures\\")
+        {
+            return 1.5;
+        }
+
+        0.0
     }
 
-    // Boost user's active/primary directories
-    if path_lower.contains("\\desktop\\") ||
-       path_lower.contains("\\documents\\") ||
-       path_lower.contains("\\downloads\\") ||
-       path_lower.contains("\\pictures\\") {
-        return 1.5;
-    }
-
-    0.0
-}
-
-    fn query_everything(&self, query: &str, only_code: bool, max_results: usize) -> Option<Vec<SearchResult>> {
+    fn query_everything(
+        &self,
+        query: &str,
+        only_code: bool,
+        max_results: usize,
+    ) -> Option<Vec<SearchResult>> {
         use everything_ipc::wm::{EverythingClient, RequestFlags};
-        
+
         let client = EverythingClient::new().ok()?;
-        
+
         let code_exts = [
-            "rs", "py", "js", "ts", "json", "html", "css",
-            "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
-            "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
+            "rs", "py", "js", "ts", "json", "html", "css", "c", "cpp", "h", "hpp", "cs", "go",
+            "java", "kt", "sh", "bat", "ps1", "yaml", "yml", "toml", "ini", "sql", "xml",
         ];
-        
+
         let full_query = if only_code {
             format!("{} ext:{}", query, code_exts.join(";"))
         } else {
             query.to_string()
         };
-        
+
         let list = client
             .query_wait(&full_query)
-            .request_flags(RequestFlags::FileName | RequestFlags::Path | RequestFlags::Size | RequestFlags::Attributes)
+            .request_flags(
+                RequestFlags::FileName
+                    | RequestFlags::Path
+                    | RequestFlags::Size
+                    | RequestFlags::Attributes,
+            )
             .max_results(max_results as u32)
             .call()
             .ok()?;
-            
+
         let mut results = Vec::new();
         for item in list.iter() {
-            let filename = item.get_string(RequestFlags::FileName).unwrap_or_else(|| "Unknown".to_string());
-            let path = item.get_string(RequestFlags::Path).unwrap_or_else(|| "Unknown".to_string());
+            let filename = item
+                .get_string(RequestFlags::FileName)
+                .unwrap_or_else(|| "Unknown".to_string());
+            let path = item
+                .get_string(RequestFlags::Path)
+                .unwrap_or_else(|| "Unknown".to_string());
             let size = item.get_size(RequestFlags::Size).unwrap_or(0);
-            
+
             // Fix: Path::new("C:").join("file") gives "C:file" not "C:\file".
             // Always ensure a backslash separator between the parent path and filename.
             let full_path = if path.ends_with('\\') || path.ends_with('/') {
@@ -376,7 +431,7 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             } else {
                 format!("{}\\{}", path, filename)
             };
-            
+
             let path_modifier = Self::get_path_score_modifier(&full_path);
             if path_modifier < -1.0 {
                 continue; // Skip system/hidden/ignored files
@@ -384,7 +439,7 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
 
             let attrs = item.get_u32(RequestFlags::Attributes).unwrap_or(0);
             let is_dir = (attrs & 0x10) != 0;
-            
+
             let ext = if is_dir {
                 "folder".to_string()
             } else {
@@ -393,7 +448,7 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     .map(|e| e.to_string_lossy().to_string().to_lowercase())
                     .unwrap_or_default()
             };
-                
+
             let source = if is_dir {
                 "FOLDER"
             } else if only_code || code_exts.contains(&ext.as_str()) {
@@ -401,28 +456,37 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             } else {
                 "FILE"
             };
-            
+
             let q_lower = query.to_lowercase();
             let name_lower = filename.to_lowercase();
-            let name_no_ext = if let Some(dot) = name_lower.rfind('.') { &name_lower[..dot] } else { &name_lower };
-            
-            let mut score = if name_lower == q_lower || name_no_ext == q_lower {
-                3.0  // exact match
-            } else if name_lower.starts_with(&q_lower) || name_no_ext.starts_with(&q_lower) {
-                2.5  // prefix match
-            } else if name_lower.contains(&q_lower) {
-                1.8  // substring match
+            let name_no_ext = if let Some(dot) = name_lower.rfind('.') {
+                &name_lower[..dot]
             } else {
-                1.0  // fallback (Everything already knows it's relevant)
+                &name_lower
+            };
+
+            // ponytail: scoring code duplicated across 6+ searchers. Skipped DRY refactor because they might evolve independently. Combine when you actually need to change the math in all 6 places at once.
+            let mut score = if name_lower == q_lower || name_no_ext == q_lower {
+                3.0 // exact match
+            } else if name_lower.starts_with(&q_lower) || name_no_ext.starts_with(&q_lower) {
+                2.5 // prefix match
+            } else if name_lower.contains(&q_lower) {
+                1.8 // substring match
+            } else {
+                1.0 // fallback (Everything already knows it's relevant)
             };
             score += path_modifier;
-            
+
             let breadcrumb = if source == "FOLDER" {
                 format!("Folder > {}", full_path)
             } else {
-                format!("{} > {}", if source == "CODE" { "Code" } else { "File" }, full_path)
+                format!(
+                    "{} > {}",
+                    if source == "CODE" { "Code" } else { "File" },
+                    full_path
+                )
             };
-            
+
             let description = if source == "FOLDER" {
                 "Local folder".to_string()
             } else {
@@ -437,7 +501,7 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                 };
                 format!("Local {} file ({})", ext.to_uppercase(), size_str)
             };
-            
+
             results.push(SearchResult {
                 entry: CatalogEntry {
                     id: format!("{}.{}", source.to_lowercase(), full_path),
@@ -451,15 +515,19 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                 score,
             });
         }
-        
+
         Some(results)
     }
 
-
-
     // with_fts_content: if false (general search), skips content-only matches — only filename hits shown.
     //                   if true  (file:/code: prefix), full content search is included.
-    fn search_files_generic(&self, query: &str, only_code: bool, max_results: usize, with_fts_content: bool) -> Vec<SearchResult> {
+    fn search_files_generic(
+        &self,
+        query: &str,
+        only_code: bool,
+        max_results: usize,
+        with_fts_content: bool,
+    ) -> Vec<SearchResult> {
         let conn = &self.conn;
 
         let q_lower = query.to_lowercase();
@@ -469,14 +537,14 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         if q_words.is_empty() {
             let image_exts = ["png", "jpg", "jpeg", "gif", "bmp", "webp"];
             let code_exts_local = [
-                "rs", "py", "js", "ts", "json", "html", "css",
-                "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
-                "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
+                "rs", "py", "js", "ts", "json", "html", "css", "c", "cpp", "h", "hpp", "cs", "go",
+                "java", "kt", "sh", "bat", "ps1", "yaml", "yml", "toml", "ini", "sql", "xml",
             ];
             let mut results = Vec::new();
             // Pull recent files sorted by modification time descending
             let query_str = if only_code {
-                let placeholders: Vec<String> = code_exts_local.iter().map(|_| "?".to_string()).collect();
+                let placeholders: Vec<String> =
+                    code_exts_local.iter().map(|_| "?".to_string()).collect();
                 format!(
                     "SELECT path, name, extension, modified FROM files WHERE is_dir=0 AND extension IN ({}) ORDER BY modified DESC LIMIT ?",
                     placeholders.join(",")
@@ -487,7 +555,9 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             if let Ok(mut stmt) = conn.prepare(&query_str) {
                 let mut params_vec: Vec<rusqlite::types::Value> = vec![];
                 if only_code {
-                    for ext in &code_exts_local { params_vec.push(rusqlite::types::Value::Text(ext.to_string())); }
+                    for ext in &code_exts_local {
+                        params_vec.push(rusqlite::types::Value::Text(ext.to_string()));
+                    }
                 }
                 params_vec.push(rusqlite::types::Value::Integer(max_results as i64));
                 let params_ref = rusqlite::params_from_iter(params_vec.iter());
@@ -502,14 +572,28 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     for row in rows.filter_map(|r| r.ok()) {
                         let (path, name, ext, _modified) = row;
                         let path_modifier = Self::get_path_score_modifier(&path);
-                        if path_modifier < -1.0 { continue; }
+                        if path_modifier < -1.0 {
+                            continue;
+                        }
                         // Score: recent + boosted path + image bonus
-                        let image_bonus = if image_exts.contains(&ext.as_str()) { 0.5 } else { 0.0 };
+                        let image_bonus = if image_exts.contains(&ext.as_str()) {
+                            0.5
+                        } else {
+                            0.0
+                        };
                         let recency_score = 1.0 + path_modifier + image_bonus;
-                        let source = if only_code || code_exts_local.contains(&ext.as_str()) { "CODE" }
-                            else if image_exts.contains(&ext.as_str()) { "FILE" }
-                            else { "FILE" };
-                        let breadcrumb = format!("{} > {}", if source == "CODE" { "Code" } else { "File" }, path);
+                        let source = if only_code || code_exts_local.contains(&ext.as_str()) {
+                            "CODE"
+                        } else if image_exts.contains(&ext.as_str()) {
+                            "FILE"
+                        } else {
+                            "FILE"
+                        };
+                        let breadcrumb = format!(
+                            "{} > {}",
+                            if source == "CODE" { "Code" } else { "File" },
+                            path
+                        );
                         let description = format!("Local {} file", ext.to_uppercase());
                         results.push(SearchResult {
                             entry: CatalogEntry {
@@ -526,26 +610,45 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     }
                 }
             }
-            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             return results;
         }
 
         let code_exts = [
-            "rs", "py", "js", "ts", "json", "html", "css",
-            "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
-            "ps1", "yaml", "yml", "toml", "ini", "sql", "xml"
+            "rs", "py", "js", "ts", "json", "html", "css", "c", "cpp", "h", "hpp", "cs", "go",
+            "java", "kt", "sh", "bat", "ps1", "yaml", "yml", "toml", "ini", "sql", "xml",
         ];
 
         // Helper: score a filename against query
         let score_name = |name: &str| -> f32 {
             let name_lower = name.to_lowercase();
-            let name_no_ext = name_lower.rfind('.').map(|d| &name_lower[..d]).unwrap_or(&name_lower);
-            if name_lower == q_lower || name_no_ext == q_lower { return 3.0; }
-            if name_lower.starts_with(&q_lower) || name_no_ext.starts_with(&q_lower) { return 2.5; }
-            if name_lower.contains(&q_lower) { return 1.8; }
-            let words: Vec<&str> = name_no_ext.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+            let name_no_ext = name_lower
+                .rfind('.')
+                .map(|d| &name_lower[..d])
+                .unwrap_or(&name_lower);
+            if name_lower == q_lower || name_no_ext == q_lower {
+                return 3.0;
+            }
+            if name_lower.starts_with(&q_lower) || name_no_ext.starts_with(&q_lower) {
+                return 2.5;
+            }
+            if name_lower.contains(&q_lower) {
+                return 1.8;
+            }
+            let words: Vec<&str> = name_no_ext
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .collect();
             let matched = q_words.iter().filter(|w| words.contains(w)).count();
-            if matched > 0 { 0.8 + 0.4 * (matched as f32 / q_words.len() as f32) } else { 0.0 }
+            if matched > 0 {
+                0.8 + 0.4 * (matched as f32 / q_words.len() as f32)
+            } else {
+                0.0
+            }
         };
 
         let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -572,31 +675,54 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                 "SELECT path, name, extension FROM files WHERE name LIKE ? LIMIT ?".to_string()
             };
             if let Ok(mut stmt) = conn.prepare(&query_str) {
-                let mut params_vec: Vec<rusqlite::types::Value> = vec![
-                    rusqlite::types::Value::Text(name_query),
-                ];
+                let mut params_vec: Vec<rusqlite::types::Value> =
+                    vec![rusqlite::types::Value::Text(name_query)];
                 if only_code {
-                    for ext in &code_exts { params_vec.push(rusqlite::types::Value::Text(ext.to_string())); }
+                    for ext in &code_exts {
+                        params_vec.push(rusqlite::types::Value::Text(ext.to_string()));
+                    }
                 }
                 params_vec.push(rusqlite::types::Value::Integer(max_results as i64));
                 let params_ref = rusqlite::params_from_iter(params_vec.iter());
                 if let Ok(rows) = stmt.query_map(params_ref, |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
                 }) {
                     for row in rows.filter_map(|r| r.ok()) {
                         let (path, name, ext) = row;
                         let path_modifier = Self::get_path_score_modifier(&path);
-                        if path_modifier < -1.0 { continue; }
+                        if path_modifier < -1.0 {
+                            continue;
+                        }
                         let mut score = score_name(&name);
-                        if score <= 0.0 { continue; }
+                        if score <= 0.0 {
+                            continue;
+                        }
                         score += path_modifier;
-                        let source = if ext == "folder" { "FOLDER" }
-                            else if only_code || code_exts.contains(&ext.as_str()) { "CODE" }
-                            else { "FILE" };
-                        let breadcrumb = if source == "FOLDER" { format!("Folder > {}", path) }
-                            else { format!("{} > {}", if source == "CODE" { "Code" } else { "File" }, path) };
-                        let description = if source == "FOLDER" { "Local folder".to_string() }
-                            else { format!("Local {} file", ext.to_uppercase()) };
+                        let source = if ext == "folder" {
+                            "FOLDER"
+                        } else if only_code || code_exts.contains(&ext.as_str()) {
+                            "CODE"
+                        } else {
+                            "FILE"
+                        };
+                        let breadcrumb = if source == "FOLDER" {
+                            format!("Folder > {}", path)
+                        } else {
+                            format!(
+                                "{} > {}",
+                                if source == "CODE" { "Code" } else { "File" },
+                                path
+                            )
+                        };
+                        let description = if source == "FOLDER" {
+                            "Local folder".to_string()
+                        } else {
+                            format!("Local {} file", ext.to_uppercase())
+                        };
                         seen_paths.insert(path.clone());
                         results.push(SearchResult {
                             entry: CatalogEntry {
@@ -622,7 +748,8 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         }
 
         // Build prefix-based FTS matching query: each word matches as prefix (e.g. "gene*" or "hello* world*")
-        let clean_fts_query = q_words.iter()
+        let clean_fts_query = q_words
+            .iter()
             .map(|w| {
                 let clean: String = w.chars().filter(|c| c.is_alphanumeric()).collect();
                 format!("{}*", clean)
@@ -648,14 +775,16 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             "SELECT f.path, f.name, f.extension, snippet(files_fts, 1, '', '', '...', 15) \
              FROM files f \
              JOIN files_fts fts ON f.path = fts.path \
-             WHERE files_fts MATCH ? LIMIT ?".to_string()
+             WHERE files_fts MATCH ? LIMIT ?"
+                .to_string()
         };
         if let Ok(mut stmt_fts) = conn.prepare(&fts_query_str) {
-            let mut fts_params_vec: Vec<rusqlite::types::Value> = vec![
-                rusqlite::types::Value::Text(clean_fts_query),
-            ];
+            let mut fts_params_vec: Vec<rusqlite::types::Value> =
+                vec![rusqlite::types::Value::Text(clean_fts_query)];
             if only_code {
-                for ext in &code_exts { fts_params_vec.push(rusqlite::types::Value::Text(ext.to_string())); }
+                for ext in &code_exts {
+                    fts_params_vec.push(rusqlite::types::Value::Text(ext.to_string()));
+                }
             }
             fts_params_vec.push(rusqlite::types::Value::Integer(max_results as i64));
             let fts_params_ref = rusqlite::params_from_iter(fts_params_vec.iter());
@@ -672,28 +801,54 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     // Already shown via metadata — upgrade score if name also matches
                     if seen_paths.contains(&path) {
                         // Boost existing entry's score for content match
-                        if let Some(existing) = results.iter_mut().find(|r| r.entry.launch_command == path) {
+                        if let Some(existing) =
+                            results.iter_mut().find(|r| r.entry.launch_command == path)
+                        {
                             existing.score += 0.5; // content match bonus
                         }
                         continue;
                     }
                     let path_modifier = Self::get_path_score_modifier(&path);
-                    if path_modifier < -1.0 { continue; }
+                    if path_modifier < -1.0 {
+                        continue;
+                    }
                     let snippet = snippet_raw
-                        .replace('\n', " ").replace('\r', " ").replace('\t', " ")
-                        .split_whitespace().collect::<Vec<&str>>().join(" ");
-                    let source = if only_code || code_exts.contains(&ext.as_str()) { "CODE" } else { "FILE" };
+                        .replace('\n', " ")
+                        .replace('\r', " ")
+                        .replace('\t', " ")
+                        .split_whitespace()
+                        .collect::<Vec<&str>>()
+                        .join(" ");
+                    let source = if only_code || code_exts.contains(&ext.as_str()) {
+                        "CODE"
+                    } else {
+                        "FILE"
+                    };
                     // Score: content-only matches intentionally score lower than filename matches.
                     // Base 0.8 + up to 1.5 name bonus keeps content matches below pure filename hits (score 1.8+).
                     let name_bonus = score_name(&name).min(1.5);
                     let score = 0.8 + name_bonus + path_modifier;
-                    if score <= 0.0 { continue; }
+                    if score <= 0.0 {
+                        continue;
+                    }
                     let parent_dir = std::path::Path::new(&path)
-                        .parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
+                        .parent()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
                     let breadcrumb = if parent_dir.is_empty() {
-                        format!("{} | {}", if source == "CODE" { "Code" } else { "File" }, snippet)
+                        format!(
+                            "{} | {}",
+                            if source == "CODE" { "Code" } else { "File" },
+                            snippet
+                        )
                     } else {
-                        format!("{} > {} | {}", if source == "CODE" { "Code" } else { "File" }, parent_dir, snippet)
+                        format!(
+                            "{} > {} | {}",
+                            if source == "CODE" { "Code" } else { "File" },
+                            parent_dir,
+                            snippet
+                        )
                     };
                     seen_paths.insert(path.clone());
                     results.push(SearchResult {
@@ -703,7 +858,10 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                             breadcrumb_path: breadcrumb,
                             launch_command: path,
                             source: source.to_string(),
-                            description: format!("Local {} file (content match)", ext.to_uppercase()),
+                            description: format!(
+                                "Local {} file (content match)",
+                                ext.to_uppercase()
+                            ),
                             synonyms: name.to_lowercase(),
                         },
                         score,
@@ -726,18 +884,25 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
     }
     */
 
-    pub fn search_timeline(&self, start_time: i64, end_time: i64, keyword: &str) -> Vec<SearchResult> {
+    pub fn search_timeline(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        keyword: &str,
+    ) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = &self.conn;
 
         let select_query = if keyword.is_empty() {
             "SELECT timestamp, duration, app_name, window_title FROM timeline_events \
              WHERE timestamp >= ? AND timestamp <= ? \
-             ORDER BY timestamp DESC LIMIT 50".to_string()
+             ORDER BY timestamp DESC LIMIT 50"
+                .to_string()
         } else {
             "SELECT timestamp, duration, app_name, window_title FROM timeline_events \
              WHERE timestamp >= ? AND timestamp <= ? AND (window_title LIKE ? OR app_name LIKE ?) \
-             ORDER BY timestamp DESC LIMIT 50".to_string()
+             ORDER BY timestamp DESC LIMIT 50"
+                .to_string()
         };
 
         let mut stmt = match conn.prepare(&select_query) {
@@ -753,17 +918,24 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                 ))
-            }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+            })
+            .map(|m| m.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
         } else {
             let like_pattern = format!("%{}%", keyword.to_lowercase());
-            stmt.query_map(rusqlite::params![start_time, end_time, like_pattern, like_pattern], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+            stmt.query_map(
+                rusqlite::params![start_time, end_time, like_pattern, like_pattern],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .map(|m| m.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
         };
 
         for (timestamp, duration, app_name, window_title) in rows {
@@ -779,9 +951,16 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                 || window_title.contains(":/")
                 || window_title.contains("http://")
                 || window_title.contains("https://");
-            let title_has_meeting = ["meet.google.com", "zoom.us", "teams.microsoft.com",
-                "teams.live.com", "webex.com", "gotomeeting.com"]
-                .iter().any(|d| window_title.to_lowercase().contains(d));
+            let title_has_meeting = [
+                "meet.google.com",
+                "zoom.us",
+                "teams.microsoft.com",
+                "teams.live.com",
+                "webex.com",
+                "gotomeeting.com",
+            ]
+            .iter()
+            .any(|d| window_title.to_lowercase().contains(d));
             let launch_command = if title_has_url || title_has_meeting {
                 extract_path_or_url(&window_title).unwrap_or_else(|| app_name.clone())
             } else {
@@ -801,7 +980,11 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     launch_command,
                     source: "MEMORY".to_string(),
                     description: format!("Active app: {} at {}", display_app, time_str),
-                    synonyms: format!("{} {} timeline memory", display_app.to_lowercase(), window_title.to_lowercase()),
+                    synonyms: format!(
+                        "{} {} timeline memory",
+                        display_app.to_lowercase(),
+                        window_title.to_lowercase()
+                    ),
                 },
                 score: 4.0,
             });
@@ -810,7 +993,13 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         results
     }
 
-    pub fn search_timeline_sequential(&self, anchor_app: &str, direction: &str, start_time: i64, end_time: i64) -> Vec<SearchResult> {
+    pub fn search_timeline_sequential(
+        &self,
+        anchor_app: &str,
+        direction: &str,
+        start_time: i64,
+        end_time: i64,
+    ) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = &self.conn;
 
@@ -821,13 +1010,17 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
              AND timestamp >= ? AND timestamp <= ? \
              ORDER BY timestamp DESC LIMIT 1";
 
-        let anchor_ts: Option<i64> = conn.query_row(
-            anchor_query,
-            rusqlite::params![anchor_pattern, anchor_pattern, start_time, end_time],
-            |row| row.get::<_, i64>(0),
-        ).ok();
+        let anchor_ts: Option<i64> = conn
+            .query_row(
+                anchor_query,
+                rusqlite::params![anchor_pattern, anchor_pattern, start_time, end_time],
+                |row| row.get::<_, i64>(0),
+            )
+            .ok();
 
-        let Some(anchor_ts) = anchor_ts else { return results; };
+        let Some(anchor_ts) = anchor_ts else {
+            return results;
+        };
 
         let window_secs: i64 = 600;
 
@@ -854,17 +1047,26 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             Err(_) => return results,
         };
 
-        let rows: Vec<(i64, i64, String, String)> = stmt.query_map(
-            rusqlite::params![range_start, range_end, anchor_pattern, anchor_pattern],
-            |row| Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            )),
-        ).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        let rows: Vec<(i64, i64, String, String)> = stmt
+            .query_map(
+                rusqlite::params![range_start, range_end, anchor_pattern, anchor_pattern],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .map(|m| m.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
 
-        let dir_label = if direction == "after" { "After" } else { "Before" };
+        let dir_label = if direction == "after" {
+            "After"
+        } else {
+            "Before"
+        };
 
         for (i, (timestamp, duration, app_name, window_title)) in rows.into_iter().enumerate() {
             let time_str = format_timestamp_local(timestamp);
@@ -883,11 +1085,25 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                 entry: CatalogEntry {
                     id: format!("timeline.seq.{}", timestamp),
                     control_name: format!("{} ({})", window_title, display_app),
-                    breadcrumb_path: format!("Timeline > {} {}: {} ({})", dir_label, anchor_app, time_str, dur_str),
+                    breadcrumb_path: format!(
+                        "Timeline > {} {}: {} ({})",
+                        dir_label, anchor_app, time_str, dur_str
+                    ),
                     launch_command: app_name.clone(),
                     source: "MEMORY".to_string(),
-                    description: format!("{} {}: {} at {}", dir_label.to_lowercase(), anchor_app, display_app, time_str),
-                    synonyms: format!("{} {} {} timeline sequential", display_app.to_lowercase(), window_title.to_lowercase(), direction),
+                    description: format!(
+                        "{} {}: {} at {}",
+                        dir_label.to_lowercase(),
+                        anchor_app,
+                        display_app,
+                        time_str
+                    ),
+                    synonyms: format!(
+                        "{} {} {} timeline sequential",
+                        display_app.to_lowercase(),
+                        window_title.to_lowercase(),
+                        direction
+                    ),
                 },
                 score: 4.5 - (i as f32 * 0.1),
             });
@@ -904,18 +1120,27 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         let kw_pattern = format!("%{}%", kw_lower);
 
         // 1. Find the Git repositories matching the keyword
-        let mut stmt = match conn.prepare("SELECT name, path, head_branch FROM git_repos WHERE name LIKE ? OR path LIKE ?") {
+        let mut stmt = match conn.prepare(
+            "SELECT name, path, head_branch FROM git_repos WHERE name LIKE ? OR path LIKE ?",
+        ) {
             Ok(s) => s,
             Err(_) => return results,
         };
-        let repos: Vec<(String, String, String)> = stmt.query_map([&kw_pattern, &kw_pattern], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-        }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        let repos: Vec<(String, String, String)> = stmt
+            .query_map([&kw_pattern, &kw_pattern], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map(|m| m.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
 
         let mut project_paths = Vec::new();
         for (name, path, head) in &repos {
             project_paths.push(path.clone());
-            
+
             // Add git repo itself as a result
             results.push(SearchResult {
                 entry: CatalogEntry {
@@ -932,21 +1157,32 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         }
 
         // 2. Query matching recent files or folders
-        let mut stmt = match conn.prepare("SELECT path, size, is_dir FROM files WHERE path LIKE ? LIMIT 20") {
-            Ok(s) => s,
-            Err(_) => return results,
-        };
-        let files: Vec<(String, i64, i32)> = stmt.query_map([&kw_pattern], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i32>(2)?))
-        }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        let mut stmt =
+            match conn.prepare("SELECT path, size, is_dir FROM files WHERE path LIKE ? LIMIT 20") {
+                Ok(s) => s,
+                Err(_) => return results,
+            };
+        let files: Vec<(String, i64, i32)> = stmt
+            .query_map([&kw_pattern], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i32>(2)?,
+                ))
+            })
+            .map(|m| m.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
 
         for (path, size, is_dir) in files {
-            let name = std::path::Path::new(&path).file_name()
+            let name = std::path::Path::new(&path)
+                .file_name()
                 .map(|f| f.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.clone());
-            
+
             let is_code = path.contains("\\target\\") || path.contains("\\node_modules\\");
-            if is_code { continue; } // skip build targets
+            if is_code {
+                continue;
+            } // skip build targets
 
             let control_name = if is_dir == 1 {
                 format!("📁 Folder: {}", name)
@@ -973,9 +1209,16 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             Ok(s) => s,
             Err(_) => return results,
         };
-        let urls: Vec<(String, String, String)> = stmt.query_map([&kw_pattern, &kw_pattern], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-        }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        let urls: Vec<(String, String, String)> = stmt
+            .query_map([&kw_pattern, &kw_pattern], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map(|m| m.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
 
         for (url, title, src) in urls {
             let is_figma = url.contains("figma.com");
@@ -1004,12 +1247,21 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             Ok(s) => s,
             Err(_) => return results,
         };
-        let commits: Vec<(String, String, String, i64)> = stmt.query_map([&kw_pattern], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?))
-        }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        let commits: Vec<(String, String, String, i64)> = stmt
+            .query_map([&kw_pattern], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map(|m| m.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
 
         for (repo_path, hash, message, ts) in commits {
-            let repo_name = std::path::Path::new(&repo_path).file_name()
+            let repo_name = std::path::Path::new(&repo_path)
+                .file_name()
                 .map(|f| f.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "repo".to_string());
             let short_hash = take_chars(&hash, 7);
@@ -1018,7 +1270,10 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                 entry: CatalogEntry {
                     id: format!("project.commit.{}", hash),
                     control_name: format!("💻 Commit: {} (in {})", message, repo_name),
-                    breadcrumb_path: format!("Project > Commit > {} [hash: {}]", repo_name, short_hash),
+                    breadcrumb_path: format!(
+                        "Project > Commit > {} [hash: {}]",
+                        repo_name, short_hash
+                    ),
                     launch_command: repo_path.clone(),
                     source: "PROJECT".to_string(),
                     description: format!("Git commit at {}", format_timestamp_local(ts)),
@@ -1033,9 +1288,16 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             Ok(s) => s,
             Err(_) => return results,
         };
-        let clips: Vec<(String, String, i32)> = stmt.query_map([&kw_pattern], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i32>(2)?))
-        }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        let clips: Vec<(String, String, i32)> = stmt
+            .query_map([&kw_pattern], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i32>(2)?,
+                ))
+            })
+            .map(|m| m.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
 
         for (content, app, is_image) in clips {
             let display_app = std::path::Path::new(&app)
@@ -1044,7 +1306,8 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                 .unwrap_or_else(|| app.clone());
 
             if is_image == 1 {
-                let filename = std::path::Path::new(&content).file_name()
+                let filename = std::path::Path::new(&content)
+                    .file_name()
                     .map(|f| f.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "image.bmp".to_string());
                 results.push(SearchResult {
@@ -1060,7 +1323,8 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     score: 8.0,
                 });
             } else {
-                let preview = ellipsize_chars(&content.replace("\r\n", " ").replace('\n', " "), 100);
+                let preview =
+                    ellipsize_chars(&content.replace("\r\n", " ").replace('\n', " "), 100);
                 results.push(SearchResult {
                     entry: CatalogEntry {
                         id: format!("project.clip.{}", content),
@@ -1077,20 +1341,27 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         }
 
         // 6. Temporal proximity connections (Worked on simultaneously)
-        let mut stmt = match conn.prepare("SELECT timestamp FROM timeline_events WHERE window_title LIKE ? OR app_name LIKE ?") {
+        let mut stmt = match conn.prepare(
+            "SELECT timestamp FROM timeline_events WHERE window_title LIKE ? OR app_name LIKE ?",
+        ) {
             Ok(s) => s,
             Err(_) => return results,
         };
-        let activity_timestamps: Vec<i64> = stmt.query_map([&kw_pattern, &kw_pattern], |row| {
-            row.get::<_, i64>(0)
-        }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        let activity_timestamps: Vec<i64> = stmt
+            .query_map([&kw_pattern, &kw_pattern], |row| row.get::<_, i64>(0))
+            .map(|m| m.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
 
         if !activity_timestamps.is_empty() {
             let mut min_ts = i64::MAX;
             let mut max_ts = i64::MIN;
             for ts in activity_timestamps {
-                if ts < min_ts { min_ts = ts; }
-                if ts > max_ts { max_ts = ts; }
+                if ts < min_ts {
+                    min_ts = ts;
+                }
+                if ts > max_ts {
+                    max_ts = ts;
+                }
             }
 
             if max_ts >= min_ts {
@@ -1115,10 +1386,19 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     Ok(s) => s,
                     Err(_) => return results,
                 };
-                let temp_urls: Vec<(String, String, String)> = stmt.query_map(
-                    rusqlite::params![min_ts, max_ts, kw_pattern, kw_pattern],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-                ).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+                let temp_urls: Vec<(String, String, String)> = stmt
+                    .query_map(
+                        rusqlite::params![min_ts, max_ts, kw_pattern, kw_pattern],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                            ))
+                        },
+                    )
+                    .map(|m| m.filter_map(|r| r.ok()).collect())
+                    .unwrap_or_default();
 
                 for (url, title, _src) in temp_urls {
                     results.push(SearchResult {
@@ -1145,7 +1425,7 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         let conn = &self.conn;
 
         let q_lower = query.to_lowercase();
-        
+
         let select_query = if q_lower.is_empty() {
             "SELECT content, source_app, timestamp, is_image, pinned FROM clipboard_history ORDER BY pinned DESC, timestamp DESC LIMIT 50".to_string()
         } else {
@@ -1166,7 +1446,9 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     row.get::<_, i32>(3)?,
                     row.get::<_, i32>(4)?,
                 ))
-            }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+            })
+            .map(|m| m.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
         } else {
             let like_pattern = format!("%{}%", q_lower);
             stmt.query_map([&like_pattern, &like_pattern], |row| {
@@ -1177,7 +1459,9 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                     row.get::<_, i32>(3)?,
                     row.get::<_, i32>(4)?,
                 ))
-            }).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+            })
+            .map(|m| m.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
         };
 
         for (content, source_app, timestamp, is_image, pinned) in rows {
@@ -1219,8 +1503,11 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
                 });
             } else {
                 let desc = ellipsize_chars(&content.replace("\r\n", " ").replace('\n', " "), 100);
-                
-                let display_name = content.replace("\r\n", " ").replace('\n', " ").replace('\t', " ");
+
+                let display_name = content
+                    .replace("\r\n", " ")
+                    .replace('\n', " ")
+                    .replace('\t', " ");
                 let display_name = ellipsize_chars(&display_name, 200);
 
                 results.push(SearchResult {
@@ -1253,34 +1540,37 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
 
     /// img: / screenshots: prefix — search images by OCR'd text content and filename.
     pub fn search_images_only(&self, query: &str) -> Vec<SearchResult> {
-        const IMG_FILTER: &str =
-            "f.extension IN ('png','jpg','jpeg','bmp','gif','webp')";
+        const IMG_FILTER: &str = "f.extension IN ('png','jpg','jpeg','bmp','gif','webp')";
         let conn = &self.conn;
         let q_lower = query.trim().to_lowercase();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut results = Vec::new();
 
-        let mut push_img = |path: String, name: String, ext: String, snippet: String, score: f32| {
-            let parent = std::path::Path::new(&path)
-                .parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
-            let breadcrumb = if snippet.is_empty() {
-                format!("Image > {}", path)
-            } else {
-                format!("Image > {} | {}", parent, snippet)
+        let mut push_img =
+            |path: String, name: String, ext: String, snippet: String, score: f32| {
+                let parent = std::path::Path::new(&path)
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                let breadcrumb = if snippet.is_empty() {
+                    format!("Image > {}", path)
+                } else {
+                    format!("Image > {} | {}", parent, snippet)
+                };
+                results.push(SearchResult {
+                    entry: CatalogEntry {
+                        id: format!("file.{}", path),
+                        control_name: name.clone(),
+                        breadcrumb_path: breadcrumb,
+                        launch_command: path,
+                        source: "FILE".to_string(),
+                        description: format!("{} image — Enter to open", ext.to_uppercase()),
+                        synonyms: name.to_lowercase(),
+                    },
+                    score,
+                });
             };
-            results.push(SearchResult {
-                entry: CatalogEntry {
-                    id: format!("file.{}", path),
-                    control_name: name.clone(),
-                    breadcrumb_path: breadcrumb,
-                    launch_command: path,
-                    source: "FILE".to_string(),
-                    description: format!("{} image — Enter to open", ext.to_uppercase()),
-                    synonyms: name.to_lowercase(),
-                },
-                score,
-            });
-        };
 
         // Empty query → most recent images
         if q_lower.is_empty() {
@@ -1309,21 +1599,38 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
         }
 
         // OCR content match via FTS5 (each word as a prefix term)
-        let fts_q = q_lower.split_whitespace()
-            .map(|w| { let c: String = w.chars().filter(|ch| ch.is_alphanumeric()).collect(); format!("{}*", c) })
+        let fts_q = q_lower
+            .split_whitespace()
+            .map(|w| {
+                let c: String = w.chars().filter(|ch| ch.is_alphanumeric()).collect();
+                format!("{}*", c)
+            })
             .filter(|w| w.len() > 1)
-            .collect::<Vec<_>>().join(" ");
+            .collect::<Vec<_>>()
+            .join(" ");
         if !fts_q.is_empty() {
-            if let Ok(mut stmt) = conn.prepare(
-                &format!("SELECT f.path, f.name, f.extension, snippet(files_fts, 1, '', '', '...', 12) \
+            if let Ok(mut stmt) = conn.prepare(&format!(
+                "SELECT f.path, f.name, f.extension, snippet(files_fts, 1, '', '', '...', 12) \
                           FROM files f JOIN files_fts fts ON f.path = fts.path \
-                          WHERE files_fts MATCH ? AND {IMG_FILTER} LIMIT 50")
-            ) {
-                if let Ok(rows) = stmt.query_map([&fts_q], |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?, r.get::<_,String>(3)?))) {
+                          WHERE files_fts MATCH ? AND {IMG_FILTER} LIMIT 50"
+            )) {
+                if let Ok(rows) = stmt.query_map([&fts_q], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                }) {
                     for (path, name, ext, snip) in rows.filter_map(|r| r.ok()) {
                         if seen.insert(path.clone()) {
-                            let snippet = snip.replace('\n', " ").replace('\r', " ").replace('\t', " ")
-                                .split_whitespace().collect::<Vec<&str>>().join(" ");
+                            let snippet = snip
+                                .replace('\n', " ")
+                                .replace('\r', " ")
+                                .replace('\t', " ")
+                                .split_whitespace()
+                                .collect::<Vec<&str>>()
+                                .join(" ");
                             push_img(path, name, ext, snippet, 1.5);
                         }
                     }
@@ -1331,28 +1638,32 @@ fn get_path_score_modifier(full_path: &str) -> f32 {
             }
         }
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results
     }
 
-fn format_relative_time(ts: i64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    let diff = now - ts;
-    if diff < 0 {
-        "Just now".to_string()
-    } else if diff < 60 {
-        format!("{}s ago", diff)
-    } else if diff < 3600 {
-        format!("{}m ago", diff / 60)
-    } else if diff < 86400 {
-        format!("{}h ago", diff / 3600)
-    } else {
-        format!("{}d ago", diff / 86400)
+    fn format_relative_time(ts: i64) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let diff = now - ts;
+        if diff < 0 {
+            "Just now".to_string()
+        } else if diff < 60 {
+            format!("{}s ago", diff)
+        } else if diff < 3600 {
+            format!("{}m ago", diff / 60)
+        } else if diff < 86400 {
+            format!("{}h ago", diff / 3600)
+        } else {
+            format!("{}d ago", diff / 86400)
+        }
     }
-}
 
     /// chats: prefix — browse stored AI chat history (newest first).
     pub fn search_ai_chats_only(&self, query: &str) -> Vec<SearchResult> {
@@ -1366,29 +1677,57 @@ fn format_relative_time(ts: i64) -> String {
              WHERE command != 'agent' AND (lower(title) LIKE ?1 OR lower(prompt) LIKE ?1 OR lower(response) LIKE ?1) \
              ORDER BY ts DESC".to_string()
         };
-        let mut stmt = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return results };
-        let like = format!("%{}%", q);
-        let map = |row: &rusqlite::Row| -> rusqlite::Result<(i64, String, String, String, i64, String)> {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(_) => return results,
         };
-        let rows = if q.is_empty() { stmt.query_map([], map) } else { stmt.query_map([&like], map) };
-        let rows = match rows { Ok(r) => r, Err(_) => return results };
+        let like = format!("%{}%", q);
+        let map =
+            |row: &rusqlite::Row| -> rusqlite::Result<(i64, String, String, String, i64, String)> {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            };
+        let rows = if q.is_empty() {
+            stmt.query_map([], map)
+        } else {
+            stmt.query_map([&like], map)
+        };
+        let rows = match rows {
+            Ok(r) => r,
+            Err(_) => return results,
+        };
         let mut score = 100.0f32;
         for row in rows.filter_map(|r| r.ok()) {
             let (id, title, prompt, response, ts, command) = row;
 
             let clean_prompt = prompt.replace('\n', " ").replace('\r', " ");
-            let clean_prompt = clean_prompt.split_whitespace().collect::<Vec<&str>>().join(" ");
+            let clean_prompt = clean_prompt
+                .split_whitespace()
+                .collect::<Vec<&str>>()
+                .join(" ");
             let prompt_display = if clean_prompt.len() > 65 {
                 format!("{}...", clean_prompt.chars().take(65).collect::<String>())
             } else if clean_prompt.is_empty() {
-                if title.is_empty() { "Untitled Chat".to_string() } else { title }
+                if title.is_empty() {
+                    "Untitled Chat".to_string()
+                } else {
+                    title
+                }
             } else {
                 clean_prompt
             };
 
             let clean_response = response.replace('\n', " ").replace('\r', " ");
-            let clean_response = clean_response.split_whitespace().collect::<Vec<&str>>().join(" ");
+            let clean_response = clean_response
+                .split_whitespace()
+                .collect::<Vec<&str>>()
+                .join(" ");
             let response_snippet = if clean_response.len() > 80 {
                 format!("{}...", clean_response.chars().take(80).collect::<String>())
             } else if clean_response.is_empty() {
@@ -1436,11 +1775,17 @@ fn format_relative_time(ts: i64) -> String {
                     entry: CatalogEntry {
                         id: format!("newagent.{}", actual_name),
                         control_name: format!("💬 New Conversation with @{}", actual_name),
-                        breadcrumb_path: format!("Agent > Start fresh conversation with {}", actual_name),
+                        breadcrumb_path: format!(
+                            "Agent > Start fresh conversation with {}",
+                            actual_name
+                        ),
                         launch_command: format!("startnewagent:{}", actual_name),
                         source: "AI".to_string(),
                         description: format!("Create a new chat thread with @{}", actual_name),
-                        synonyms: format!("new conversation chat agent {}", actual_name.to_lowercase()),
+                        synonyms: format!(
+                            "new conversation chat agent {}",
+                            actual_name.to_lowercase()
+                        ),
                     },
                     score: 110.0,
                 });
@@ -1454,29 +1799,57 @@ fn format_relative_time(ts: i64) -> String {
              WHERE command = 'agent' AND (lower(title) LIKE ?1 OR lower(prompt) LIKE ?1 OR lower(response) LIKE ?1) \
              ORDER BY ts DESC".to_string()
         };
-        let mut stmt = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return results };
-        let like = format!("%{}%", q);
-        let map = |row: &rusqlite::Row| -> rusqlite::Result<(i64, String, String, String, i64, String)> {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(_) => return results,
         };
-        let rows = if q.is_empty() { stmt.query_map([], map) } else { stmt.query_map([&like], map) };
-        let rows = match rows { Ok(r) => r, Err(_) => return results };
+        let like = format!("%{}%", q);
+        let map =
+            |row: &rusqlite::Row| -> rusqlite::Result<(i64, String, String, String, i64, String)> {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            };
+        let rows = if q.is_empty() {
+            stmt.query_map([], map)
+        } else {
+            stmt.query_map([&like], map)
+        };
+        let rows = match rows {
+            Ok(r) => r,
+            Err(_) => return results,
+        };
         let mut score = 100.0f32;
         for row in rows.filter_map(|r| r.ok()) {
             let (id, title, prompt, response, ts, command) = row;
 
             let clean_prompt = prompt.replace('\n', " ").replace('\r', " ");
-            let clean_prompt = clean_prompt.split_whitespace().collect::<Vec<&str>>().join(" ");
+            let clean_prompt = clean_prompt
+                .split_whitespace()
+                .collect::<Vec<&str>>()
+                .join(" ");
             let prompt_display = if clean_prompt.len() > 65 {
                 format!("{}...", clean_prompt.chars().take(65).collect::<String>())
             } else if clean_prompt.is_empty() {
-                if title.is_empty() { "Untitled Agent Run".to_string() } else { title }
+                if title.is_empty() {
+                    "Untitled Agent Run".to_string()
+                } else {
+                    title
+                }
             } else {
                 clean_prompt
             };
 
             let clean_response = response.replace('\n', " ").replace('\r', " ");
-            let clean_response = clean_response.split_whitespace().collect::<Vec<&str>>().join(" ");
+            let clean_response = clean_response
+                .split_whitespace()
+                .collect::<Vec<&str>>()
+                .join(" ");
             let response_snippet = if clean_response.len() > 80 {
                 format!("{}...", clean_response.chars().take(80).collect::<String>())
             } else if clean_response.is_empty() {
@@ -1507,11 +1880,13 @@ fn format_relative_time(ts: i64) -> String {
     }
 
     fn find_agent_by_name(&self, name: &str) -> Option<(i64, String)> {
-        self.conn.query_row(
-            "SELECT id, name FROM agents WHERE lower(name) = lower(?) LIMIT 1",
-            [name],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
-        ).ok()
+        self.conn
+            .query_row(
+                "SELECT id, name FROM agents WHERE lower(name) = lower(?) LIMIT 1",
+                [name],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            )
+            .ok()
     }
 
     /// agents: prefix — browse AI agents. Enter on one starts a message to it.
@@ -1524,13 +1899,23 @@ fn format_relative_time(ts: i64) -> String {
         } else {
             "SELECT id, name, goal FROM agents WHERE lower(name) LIKE ?1 OR lower(goal) LIKE ?1 ORDER BY ts DESC LIMIT 50".to_string()
         };
-        let mut stmt = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return results };
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(_) => return results,
+        };
         let like = format!("%{}%", q);
         let map = |row: &rusqlite::Row| -> rusqlite::Result<(i64, String, String)> {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         };
-        let rows = if q.is_empty() { stmt.query_map([], map) } else { stmt.query_map([&like], map) };
-        let rows = match rows { Ok(r) => r, Err(_) => return results };
+        let rows = if q.is_empty() {
+            stmt.query_map([], map)
+        } else {
+            stmt.query_map([&like], map)
+        };
+        let rows = match rows {
+            Ok(r) => r,
+            Err(_) => return results,
+        };
         let mut score = 100.0f32;
         for row in rows.filter_map(|r| r.ok()) {
             let (id, name, goal) = row;
@@ -1538,7 +1923,11 @@ fn format_relative_time(ts: i64) -> String {
                 entry: CatalogEntry {
                     id: format!("agent.{}", id),
                     control_name: name.clone(),
-                    breadcrumb_path: if goal.is_empty() { "Agent > Enter to message".into() } else { format!("Agent > {}", goal) },
+                    breadcrumb_path: if goal.is_empty() {
+                        "Agent > Enter to message".into()
+                    } else {
+                        format!("Agent > {}", goal)
+                    },
                     launch_command: format!("openagent:{}\u{1f}{}", id, name),
                     source: "AI".into(),
                     description: "AI agent — Enter to message".into(),
@@ -1562,7 +1951,7 @@ fn format_relative_time(ts: i64) -> String {
             let mut stmt = match conn.prepare(
                 "SELECT url, title, source, visit_count FROM browser_items 
                  WHERE source LIKE '%bookmark%' 
-                 ORDER BY visit_count DESC LIMIT 100"
+                 ORDER BY visit_count DESC LIMIT 100",
             ) {
                 Ok(s) => s,
                 Err(_) => return results,
@@ -1584,7 +1973,7 @@ fn format_relative_time(ts: i64) -> String {
             let mut stmt = match conn.prepare(
                 "SELECT url, title, source, visit_count FROM browser_items 
                  WHERE source LIKE '%bookmark%' AND (title LIKE ?1 OR url LIKE ?1)
-                 ORDER BY visit_count DESC LIMIT 100"
+                 ORDER BY visit_count DESC LIMIT 100",
             ) {
                 Ok(s) => s,
                 Err(_) => return results,
@@ -1617,7 +2006,10 @@ fn format_relative_time(ts: i64) -> String {
                 } else if title_lower.contains(&q_lower) || url_lower.contains(&q_lower) {
                     score = 1.2;
                 } else {
-                    let matched = q_words.iter().filter(|w| title_lower.contains(*w) || url_lower.contains(*w)).count();
+                    let matched = q_words
+                        .iter()
+                        .filter(|w| title_lower.contains(*w) || url_lower.contains(*w))
+                        .count();
                     if matched > 0 {
                         score = 0.5 + 0.5 * (matched as f32 / q_words.len() as f32);
                     } else {
@@ -1655,7 +2047,11 @@ fn format_relative_time(ts: i64) -> String {
             }
         }
 
-        results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results
     }
 
@@ -1670,7 +2066,7 @@ fn format_relative_time(ts: i64) -> String {
             let mut stmt = match conn.prepare(
                 "SELECT url, title, source, last_visit_time FROM browser_items 
                  WHERE source LIKE '%history%' 
-                 ORDER BY last_visit_time DESC LIMIT 100"
+                 ORDER BY last_visit_time DESC LIMIT 100",
             ) {
                 Ok(s) => s,
                 Err(_) => return results,
@@ -1692,7 +2088,7 @@ fn format_relative_time(ts: i64) -> String {
             let mut stmt = match conn.prepare(
                 "SELECT url, title, source, last_visit_time FROM browser_items 
                  WHERE source LIKE '%history%' AND (title LIKE ?1 OR url LIKE ?1)
-                 ORDER BY last_visit_time DESC LIMIT 100"
+                 ORDER BY last_visit_time DESC LIMIT 100",
             ) {
                 Ok(s) => s,
                 Err(_) => return results,
@@ -1725,7 +2121,10 @@ fn format_relative_time(ts: i64) -> String {
                 } else if title_lower.contains(&q_lower) || url_lower.contains(&q_lower) {
                     score = 1.2;
                 } else {
-                    let matched = q_words.iter().filter(|w| title_lower.contains(*w) || url_lower.contains(*w)).count();
+                    let matched = q_words
+                        .iter()
+                        .filter(|w| title_lower.contains(*w) || url_lower.contains(*w))
+                        .count();
                     if matched > 0 {
                         score = 0.5 + 0.5 * (matched as f32 / q_words.len() as f32);
                     } else {
@@ -1764,7 +2163,11 @@ fn format_relative_time(ts: i64) -> String {
         }
 
         if !q_lower.is_empty() {
-            results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.sort_unstable_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
         results
     }
@@ -1781,7 +2184,7 @@ fn format_relative_time(ts: i64) -> String {
                 "SELECT c.hash, c.author, c.date, c.message, r.name 
                  FROM git_commits c
                  JOIN git_repos r ON c.repo_id = r.id
-                 ORDER BY c.date DESC LIMIT 100"
+                 ORDER BY c.date DESC LIMIT 100",
             ) {
                 Ok(s) => s,
                 Err(_) => return results,
@@ -1806,7 +2209,7 @@ fn format_relative_time(ts: i64) -> String {
                  FROM git_commits c
                  JOIN git_repos r ON c.repo_id = r.id
                  WHERE c.message LIKE ?1 OR c.author LIKE ?1 OR c.hash LIKE ?1
-                 ORDER BY c.date DESC LIMIT 100"
+                 ORDER BY c.date DESC LIMIT 100",
             ) {
                 Ok(s) => s,
                 Err(_) => return results,
@@ -1830,17 +2233,22 @@ fn format_relative_time(ts: i64) -> String {
             let (hash, author, date, message, repo_name) = row;
             let msg_lower = message.to_lowercase();
             let auth_lower = author.to_lowercase();
-            
+
             let mut score = 1.0f32;
             if !q_lower.is_empty() {
                 if msg_lower == q_lower || hash.to_lowercase() == q_lower {
                     score = 2.0;
-                } else if msg_lower.starts_with(&q_lower) || hash.to_lowercase().starts_with(&q_lower) {
+                } else if msg_lower.starts_with(&q_lower)
+                    || hash.to_lowercase().starts_with(&q_lower)
+                {
                     score = 1.6;
                 } else if msg_lower.contains(&q_lower) || auth_lower.contains(&q_lower) {
                     score = 1.2;
                 } else {
-                    let matched = q_words.iter().filter(|w| msg_lower.contains(*w) || auth_lower.contains(*w)).count();
+                    let matched = q_words
+                        .iter()
+                        .filter(|w| msg_lower.contains(*w) || auth_lower.contains(*w))
+                        .count();
                     if matched > 0 {
                         score = 0.5 + 0.5 * (matched as f32 / q_words.len() as f32);
                     } else {
@@ -1867,7 +2275,11 @@ fn format_relative_time(ts: i64) -> String {
             }
         }
 
-        results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results
     }
 
@@ -1883,7 +2295,7 @@ fn format_relative_time(ts: i64) -> String {
                 "SELECT t.file_path, t.line_number, t.todo_text, r.name 
                  FROM git_todos t
                  JOIN git_repos r ON t.repo_id = r.id
-                 ORDER BY t.id DESC LIMIT 100"
+                 ORDER BY t.id DESC LIMIT 100",
             ) {
                 Ok(s) => s,
                 Err(_) => return results,
@@ -1907,7 +2319,7 @@ fn format_relative_time(ts: i64) -> String {
                  FROM git_todos t
                  JOIN git_repos r ON t.repo_id = r.id
                  WHERE t.todo_text LIKE ?1 OR t.file_path LIKE ?1
-                 ORDER BY t.id DESC LIMIT 100"
+                 ORDER BY t.id DESC LIMIT 100",
             ) {
                 Ok(s) => s,
                 Err(_) => return results,
@@ -1930,7 +2342,7 @@ fn format_relative_time(ts: i64) -> String {
             let (file_path, line_number, todo_text, repo_name) = row;
             let todo_lower = todo_text.to_lowercase();
             let file_lower = file_path.to_lowercase();
-            
+
             let mut score = 1.0f32;
             if !q_lower.is_empty() {
                 if todo_lower == q_lower {
@@ -1940,7 +2352,10 @@ fn format_relative_time(ts: i64) -> String {
                 } else if todo_lower.contains(&q_lower) || file_lower.contains(&q_lower) {
                     score = 1.2;
                 } else {
-                    let matched = q_words.iter().filter(|w| todo_lower.contains(*w) || file_lower.contains(*w)).count();
+                    let matched = q_words
+                        .iter()
+                        .filter(|w| todo_lower.contains(*w) || file_lower.contains(*w))
+                        .count();
                     if matched > 0 {
                         score = 0.5 + 0.5 * (matched as f32 / q_words.len() as f32);
                     } else {
@@ -1955,7 +2370,7 @@ fn format_relative_time(ts: i64) -> String {
                     .and_then(|n| n.to_str())
                     .unwrap_or(&file_path)
                     .to_string();
-                
+
                 results.push(SearchResult {
                     entry: CatalogEntry {
                         id: format!("git.todo.{}.{}", file_path, line_number),
@@ -1971,14 +2386,19 @@ fn format_relative_time(ts: i64) -> String {
             }
         }
 
-        results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results
     }
 
+    // ponytail: this 1350-line method is a God object. Skipped decomposition because it works fine and splitting it adds overhead and indirection. Decompose when a new search source actually breaks it.
     pub fn search(&mut self, query: &str, top_k: usize) -> Vec<SearchResult> {
         let q = query.trim();
         let q_lower_trimmed = q.to_lowercase();
-        
+
         // ── Phase 3: System Toggles & Audio Controls ─────────────────────────
         if q_lower_trimmed.starts_with("volume ") || q_lower_trimmed.starts_with("vol ") {
             let num_str = if q_lower_trimmed.starts_with("volume ") {
@@ -2031,7 +2451,11 @@ fn format_relative_time(ts: i64) -> String {
                 score: 11.5,
             }];
         }
-        if q_lower_trimmed == "toggle hidden files" || q_lower_trimmed == "show hidden files" || q_lower_trimmed == "hide hidden files" || q_lower_trimmed == "hidden files" {
+        if q_lower_trimmed == "toggle hidden files"
+            || q_lower_trimmed == "show hidden files"
+            || q_lower_trimmed == "hide hidden files"
+            || q_lower_trimmed == "hidden files"
+        {
             return vec![SearchResult {
                 entry: CatalogEntry {
                     id: "action.explorer.hidden_files".to_string(),
@@ -2039,13 +2463,20 @@ fn format_relative_time(ts: i64) -> String {
                     breadcrumb_path: "System > Explorer > Show or hide hidden files".to_string(),
                     launch_command: "action:toggle_hidden_files".to_string(),
                     source: "ACTION".to_string(),
-                    description: "Toggle visibility of hidden files and folders in Windows Explorer.".to_string(),
-                    synonyms: "hidden files folders show hidden toggle registry explorer".to_string(),
+                    description:
+                        "Toggle visibility of hidden files and folders in Windows Explorer."
+                            .to_string(),
+                    synonyms: "hidden files folders show hidden toggle registry explorer"
+                        .to_string(),
                 },
                 score: 11.5,
             }];
         }
-        if q_lower_trimmed == "play" || q_lower_trimmed == "pause" || q_lower_trimmed == "play/pause" || q_lower_trimmed == "play pause" {
+        if q_lower_trimmed == "play"
+            || q_lower_trimmed == "pause"
+            || q_lower_trimmed == "play/pause"
+            || q_lower_trimmed == "play pause"
+        {
             return vec![SearchResult {
                 entry: CatalogEntry {
                     id: "action.media.play_pause".to_string(),
@@ -2059,7 +2490,10 @@ fn format_relative_time(ts: i64) -> String {
                 score: 11.5,
             }];
         }
-        if q_lower_trimmed == "next" || q_lower_trimmed == "next track" || q_lower_trimmed == "skip track" {
+        if q_lower_trimmed == "next"
+            || q_lower_trimmed == "next track"
+            || q_lower_trimmed == "skip track"
+        {
             return vec![SearchResult {
                 entry: CatalogEntry {
                     id: "action.media.next".to_string(),
@@ -2073,7 +2507,11 @@ fn format_relative_time(ts: i64) -> String {
                 score: 11.5,
             }];
         }
-        if q_lower_trimmed == "prev" || q_lower_trimmed == "previous" || q_lower_trimmed == "prev track" || q_lower_trimmed == "previous track" {
+        if q_lower_trimmed == "prev"
+            || q_lower_trimmed == "previous"
+            || q_lower_trimmed == "prev track"
+            || q_lower_trimmed == "previous track"
+        {
             return vec![SearchResult {
                 entry: CatalogEntry {
                     id: "action.media.prev".to_string(),
@@ -2087,7 +2525,10 @@ fn format_relative_time(ts: i64) -> String {
                 score: 11.5,
             }];
         }
-        if q_lower_trimmed == "stop" || q_lower_trimmed == "stop track" || q_lower_trimmed == "stop music" {
+        if q_lower_trimmed == "stop"
+            || q_lower_trimmed == "stop track"
+            || q_lower_trimmed == "stop music"
+        {
             return vec![SearchResult {
                 entry: CatalogEntry {
                     id: "action.media.stop".to_string(),
@@ -2101,7 +2542,10 @@ fn format_relative_time(ts: i64) -> String {
                 score: 11.5,
             }];
         }
-        if q_lower_trimmed == "night light" || q_lower_trimmed == "nightlight" || q_lower_trimmed == "toggle night light" {
+        if q_lower_trimmed == "night light"
+            || q_lower_trimmed == "nightlight"
+            || q_lower_trimmed == "toggle night light"
+        {
             return vec![SearchResult {
                 entry: CatalogEntry {
                     id: "action.display.night_light".to_string(),
@@ -2109,13 +2553,16 @@ fn format_relative_time(ts: i64) -> String {
                     breadcrumb_path: "System > Display > Night Light settings".to_string(),
                     launch_command: "ms-settings:nightlight".to_string(),
                     source: "ACTION".to_string(),
-                    description: "Open the display settings page to toggle or adjust Night Light.".to_string(),
-                    synonyms: "night light settings display blue reduction color screen temp warmth".to_string(),
+                    description: "Open the display settings page to toggle or adjust Night Light."
+                        .to_string(),
+                    synonyms:
+                        "night light settings display blue reduction color screen temp warmth"
+                            .to_string(),
                 },
                 score: 11.5,
             }];
         }
-        
+
         // Intercept temporal context queries (e.g. yesterday before lunch)
         if let Some((start_time, end_time, clean_q)) = parse_time_range(q) {
             return self.search_timeline(start_time, end_time, &clean_q);
@@ -2130,12 +2577,20 @@ fn format_relative_time(ts: i64) -> String {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs() as i64;
-                let local_time = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-                let seconds_since_midnight = (local_time.wHour as i64 * 3600) + (local_time.wMinute as i64 * 60) + local_time.wSecond as i64;
+                let local_time =
+                    unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+                let seconds_since_midnight = (local_time.wHour as i64 * 3600)
+                    + (local_time.wMinute as i64 * 60)
+                    + local_time.wSecond as i64;
                 let today_start = now - seconds_since_midnight;
                 (today_start - 7 * 86400, now)
             };
-            return self.search_timeline_sequential(&anchor, &direction, time_range.0, time_range.1);
+            return self.search_timeline_sequential(
+                &anchor,
+                &direction,
+                time_range.0,
+                time_range.1,
+            );
         }
 
         if q.is_empty() {
@@ -2232,7 +2687,8 @@ fn format_relative_time(ts: i64) -> String {
                     launch_command: "img:".to_string(),
                     source: "FOLDER".to_string(),
                     description: "Search text inside images and screenshots (OCR)".to_string(),
-                    synonyms: "image images screenshot screenshots ocr photo picture text inside".to_string(),
+                    synonyms: "image images screenshot screenshots ocr photo picture text inside"
+                        .to_string(),
                 },
                 score: 3.15,
             });
@@ -2256,7 +2712,8 @@ fn format_relative_time(ts: i64) -> String {
                     launch_command: "agentchats:".to_string(),
                     source: "FOLDER".to_string(),
                     description: "Browse and reopen your past Agent runs".to_string(),
-                    synonyms: "agent chats history runs task runs previous saved hermes".to_string(),
+                    synonyms: "agent chats history runs task runs previous saved hermes"
+                        .to_string(),
                 },
                 score: 3.08,
             });
@@ -2354,11 +2811,21 @@ fn format_relative_time(ts: i64) -> String {
                     if let Some((ql_name, ql_url)) = self.check_quicklink_keyword(first_word) {
                         let encoded = url_encode(rest_query);
                         let final_url = ql_url.replace("{query}", &encoded);
-                        let display_rest = if rest_query.is_empty() { "..." } else { rest_query };
+                        let display_rest = if rest_query.is_empty() {
+                            "..."
+                        } else {
+                            rest_query
+                        };
                         return vec![SearchResult {
                             entry: CatalogEntry {
-                                id: format!("quicklink_trigger.{}", ql_name.to_lowercase().replace(' ', "_")),
-                                control_name: format!("Search {} for \"{}\"", ql_name, display_rest),
+                                id: format!(
+                                    "quicklink_trigger.{}",
+                                    ql_name.to_lowercase().replace(' ', "_")
+                                ),
+                                control_name: format!(
+                                    "Search {} for \"{}\"",
+                                    ql_name, display_rest
+                                ),
                                 breadcrumb_path: format!("Quicklink > Open in default browser"),
                                 launch_command: format!("open_quicklink:{}", final_url),
                                 source: "QUICKLINK".to_string(),
@@ -2400,7 +2867,6 @@ fn format_relative_time(ts: i64) -> String {
             let sub_query = q_lower_trimmed.strip_prefix("window:").unwrap().trim();
             return self.search_windows(sub_query);
         }
-
 
         if q_lower_trimmed.starts_with("clipboard:") {
             let sub_query = q_lower_trimmed.strip_prefix("clipboard:").unwrap().trim();
@@ -2465,7 +2931,11 @@ fn format_relative_time(ts: i64) -> String {
         const AI_PREFIXES: &[(&str, &str, &str)] = &[
             ("chatgpt", "ChatGPT", "https://chatgpt.com/?q="),
             ("claude", "Claude", "https://claude.ai/new?q="),
-            ("perplexity", "Perplexity", "https://www.perplexity.ai/search?q="),
+            (
+                "perplexity",
+                "Perplexity",
+                "https://www.perplexity.ai/search?q=",
+            ),
             ("gemini", "Gemini", "https://gemini.google.com/app?q="),
             ("deepseek", "DeepSeek", "https://chat.deepseek.com/?q="),
             ("grok", "Grok", "https://grok.com/?q="),
@@ -2480,7 +2950,10 @@ fn format_relative_time(ts: i64) -> String {
                         entry: CatalogEntry {
                             id: format!("{}_search", prefix),
                             control_name: format!("{}: {}", label, prompt),
-                            breadcrumb_path: format!("{} > Ask AI > Opens in default browser", label),
+                            breadcrumb_path: format!(
+                                "{} > Ask AI > Opens in default browser",
+                                label
+                            ),
                             launch_command: format!("{}{}", url, encoded),
                             source: "LIVE".to_string(),
                             description: format!("Send '{}' to {}", prompt, label),
@@ -2497,8 +2970,16 @@ fn format_relative_time(ts: i64) -> String {
             let lt = q_lower_trimmed.as_str();
             if lt.starts_with("hermes") {
                 let is_running = crate::ai::HERMES_GATEWAY_RUNNING.load(Ordering::Relaxed);
-                let status_label = if is_running { "Hermes Gateway: Running" } else { "Hermes Gateway: Stopped" };
-                let status_desc = if is_running { "Local gateway is active on port 8642." } else { "Local gateway is inactive. Start it to use Hermes Agent." };
+                let status_label = if is_running {
+                    "Hermes Gateway: Running"
+                } else {
+                    "Hermes Gateway: Stopped"
+                };
+                let status_desc = if is_running {
+                    "Local gateway is active on port 8642."
+                } else {
+                    "Local gateway is inactive. Start it to use Hermes Agent."
+                };
 
                 return vec![
                     SearchResult {
@@ -2520,7 +3001,8 @@ fn format_relative_time(ts: i64) -> String {
                             breadcrumb_path: "AI > Start background gateway".to_string(),
                             launch_command: "action:hermes:start".to_string(),
                             source: "AI".to_string(),
-                            description: "Launch 'hermes gateway' silently in the background".to_string(),
+                            description: "Launch 'hermes gateway' silently in the background"
+                                .to_string(),
                             synonyms: "hermes start run launch gateway".to_string(),
                         },
                         score: 104.0,
@@ -2544,7 +3026,8 @@ fn format_relative_time(ts: i64) -> String {
                             breadcrumb_path: "AI > Run native Windows installer".to_string(),
                             launch_command: "action:hermes:install".to_string(),
                             source: "AI".to_string(),
-                            description: "Download and run the hermes-agent installation script".to_string(),
+                            description: "Download and run the hermes-agent installation script"
+                                .to_string(),
                             synonyms: "hermes install setup download".to_string(),
                         },
                         score: 102.0,
@@ -2556,7 +3039,8 @@ fn format_relative_time(ts: i64) -> String {
                             breadcrumb_path: "Agent > Message the Hermes Agent".to_string(),
                             launch_command: "query:@Hermes: ".to_string(),
                             source: "AI".to_string(),
-                            description: "Start an autonomous task or execute a command".to_string(),
+                            description: "Start an autonomous task or execute a command"
+                                .to_string(),
                             synonyms: "hermes chat query run message".to_string(),
                         },
                         score: 101.0,
@@ -2574,18 +3058,35 @@ fn format_relative_time(ts: i64) -> String {
                 let mut endpoint_val = "Default (DeepSeek/OpenCodeZen auto)".to_string();
                 let mut model_val = "Default (DeepSeek/OpenCodeZen auto)".to_string();
                 let conn = &self.conn;
-                if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'api_key'", [], |row| row.get::<_, String>(0)) {
+                if let Ok(val) = conn.query_row(
+                    "SELECT value FROM ai_settings WHERE key = 'api_key'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                ) {
                     if val.chars().count() > 8 {
-                        key_masked = format!("{}...{}", take_chars(&val, 4), take_last_chars(&val, 4));
+                        key_masked =
+                            format!("{}...{}", take_chars(&val, 4), take_last_chars(&val, 4));
                     } else if !val.is_empty() {
                         key_masked = "****".to_string();
                     }
                 }
-                if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'endpoint'", [], |row| row.get::<_, String>(0)) {
-                    if !val.is_empty() { endpoint_val = val; }
+                if let Ok(val) = conn.query_row(
+                    "SELECT value FROM ai_settings WHERE key = 'endpoint'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                ) {
+                    if !val.is_empty() {
+                        endpoint_val = val;
+                    }
                 }
-                if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'model'", [], |row| row.get::<_, String>(0)) {
-                    if !val.is_empty() { model_val = val; }
+                if let Ok(val) = conn.query_row(
+                    "SELECT value FROM ai_settings WHERE key = 'model'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                ) {
+                    if !val.is_empty() {
+                        model_val = val;
+                    }
                 }
                 return vec![
                     SearchResult {
@@ -2681,7 +3182,11 @@ fn format_relative_time(ts: i64) -> String {
                     let subcmd = subcmd.trim();
                     let val = val.trim();
                     if subcmd == "key" || subcmd == "endpoint" || subcmd == "model" {
-                        let label = format!("Save AI {}: {}", subcmd, if subcmd == "key" { "****" } else { val });
+                        let label = format!(
+                            "Save AI {}: {}",
+                            subcmd,
+                            if subcmd == "key" { "****" } else { val }
+                        );
                         let mut raw_val = val.to_string();
                         if let Some(idx) = qt.to_lowercase().find(subcmd) {
                             let start_idx = idx + subcmd.len();
@@ -2696,14 +3201,26 @@ fn format_relative_time(ts: i64) -> String {
                                 breadcrumb_path: format!("AI Config > Save {}", subcmd),
                                 launch_command: format!("action:ai_config:{}:{}", subcmd, raw_val),
                                 source: "AI".to_string(),
-                                description: format!("Press Enter to save this {} to settings", subcmd),
+                                description: format!(
+                                    "Press Enter to save this {} to settings",
+                                    subcmd
+                                ),
                                 synonyms: format!("ai config save {}", subcmd),
                             },
                             score: 100.0,
                         }];
                     } else if subcmd == "preset" {
                         if val == "opencode" || val == "deepseek" || val == "hermes" {
-                            let label = format!("Apply {} Preset", if val == "opencode" { "OpenCode Zen" } else if val == "hermes" { "Hermes Agent" } else { "DeepSeek" });
+                            let label = format!(
+                                "Apply {} Preset",
+                                if val == "opencode" {
+                                    "OpenCode Zen"
+                                } else if val == "hermes" {
+                                    "Hermes Agent"
+                                } else {
+                                    "DeepSeek"
+                                }
+                            );
                             return vec![SearchResult {
                                 entry: CatalogEntry {
                                     id: format!("ai.config.preset.{}", val),
@@ -2711,7 +3228,10 @@ fn format_relative_time(ts: i64) -> String {
                                     breadcrumb_path: format!("AI Config > Apply Preset"),
                                     launch_command: format!("action:ai_config:preset:{}", val),
                                     source: "AI".to_string(),
-                                    description: format!("Press Enter to configure endpoint and model for {}", val),
+                                    description: format!(
+                                        "Press Enter to configure endpoint and model for {}",
+                                        val
+                                    ),
                                     synonyms: format!("ai config preset {}", val),
                                 },
                                 score: 100.0,
@@ -2753,15 +3273,41 @@ fn format_relative_time(ts: i64) -> String {
                     score: 12.0,
                 }]
             };
-            if let Some(r) = lt.strip_prefix("ask ")       { return mk(format!("Ask AI: {}", r.trim()), "ask", qt[4..].trim()); }
-            if let Some(r) = lt.strip_prefix("chat ")      { return mk(format!("Ask AI: {}", r.trim()), "ask", qt[5..].trim()); }
-            if let Some(r) = lt.strip_prefix("translate ") { return mk(format!("Translate: {}", r.trim()), "translate", qt[10..].trim()); }
-            if let Some(r) = lt.strip_prefix("explain ")   { return mk(format!("Explain: {}", r.trim()), "explain", qt[8..].trim()); }
-            if let Some(r) = lt.strip_prefix("summarize ") { return mk(format!("Summarize: {}", r.trim()), "summarize", qt[10..].trim()); }
-            if lt == "explain"                              { return mk("Explain clipboard".into(), "explain", ""); }
-            if lt == "fix grammar" || lt == "grammar" || lt == "fix spelling" { return mk("Fix grammar of clipboard".into(), "grammar", ""); }
-            if lt == "find bugs" || lt == "bugs"            { return mk("Find bugs in clipboard code".into(), "bugs", ""); }
-            if lt == "summarize"                            { return mk("Summarize clipboard".into(), "summarize", ""); }
+            if let Some(r) = lt.strip_prefix("ask ") {
+                return mk(format!("Ask AI: {}", r.trim()), "ask", qt[4..].trim());
+            }
+            if let Some(r) = lt.strip_prefix("chat ") {
+                return mk(format!("Ask AI: {}", r.trim()), "ask", qt[5..].trim());
+            }
+            if let Some(r) = lt.strip_prefix("translate ") {
+                return mk(
+                    format!("Translate: {}", r.trim()),
+                    "translate",
+                    qt[10..].trim(),
+                );
+            }
+            if let Some(r) = lt.strip_prefix("explain ") {
+                return mk(format!("Explain: {}", r.trim()), "explain", qt[8..].trim());
+            }
+            if let Some(r) = lt.strip_prefix("summarize ") {
+                return mk(
+                    format!("Summarize: {}", r.trim()),
+                    "summarize",
+                    qt[10..].trim(),
+                );
+            }
+            if lt == "explain" {
+                return mk("Explain clipboard".into(), "explain", "");
+            }
+            if lt == "fix grammar" || lt == "grammar" || lt == "fix spelling" {
+                return mk("Fix grammar of clipboard".into(), "grammar", "");
+            }
+            if lt == "find bugs" || lt == "bugs" {
+                return mk("Find bugs in clipboard code".into(), "bugs", "");
+            }
+            if lt == "summarize" {
+                return mk("Summarize clipboard".into(), "summarize", "");
+            }
         }
 
         // ── AI Agents: "create agent <name>: <goal>" and "@<name>: <message>" ─
@@ -2778,7 +3324,11 @@ fn format_relative_time(ts: i64) -> String {
                         entry: CatalogEntry {
                             id: "agent.create".into(),
                             control_name: format!("Create agent: {}", name),
-                            breadcrumb_path: if goal.is_empty() { "Agent > Press Enter to create".into() } else { format!("Agent > Goal: {}", goal) },
+                            breadcrumb_path: if goal.is_empty() {
+                                "Agent > Press Enter to create".into()
+                            } else {
+                                format!("Agent > Goal: {}", goal)
+                            },
                             launch_command: format!("mkagent:{}\u{1f}{}", name, goal),
                             source: "AI".into(),
                             description: "Create a persistent AI agent".into(),
@@ -2815,15 +3365,13 @@ fn format_relative_time(ts: i64) -> String {
         let (intent, q_clean) = clean_prompt(q);
 
         // ── Calculator: try the raw query, then the cleaned one ("what is 2+2") ─
-        let calc_hit = try_calc(q)
-            .map(|v| (q.to_string(), v))
-            .or_else(|| {
-                if !q_clean.is_empty() && q_clean != q.to_lowercase() {
-                    try_calc(&q_clean).map(|v| (q_clean.clone(), v))
-                } else {
-                    None
-                }
-            });
+        let calc_hit = try_calc(q).map(|v| (q.to_string(), v)).or_else(|| {
+            if !q_clean.is_empty() && q_clean != q.to_lowercase() {
+                try_calc(&q_clean).map(|v| (q_clean.clone(), v))
+            } else {
+                None
+            }
+        });
         let calc_result: Option<SearchResult> = calc_hit.map(|(expr, val)| {
             let display = if val.fract() == 0.0 && val.abs() < 1e15 {
                 format!("{}", val as i64)
@@ -2860,7 +3408,9 @@ fn format_relative_time(ts: i64) -> String {
                 },
                 score: 10.0,
             })
-        } else { None };
+        } else {
+            None
+        };
 
         // ── Process Kill: triggered by 'kill' or 'kill <name>' prefix ───────
         let q_lower = q.to_lowercase();
@@ -2871,7 +3421,9 @@ fn format_relative_time(ts: i64) -> String {
                 q_lower.strip_prefix("kill ").unwrap_or("").trim()
             };
             search_processes(proc_query)
-        } else { vec![] };
+        } else {
+            vec![]
+        };
         if !kill_results.is_empty() {
             return kill_results;
         }
@@ -2879,10 +3431,18 @@ fn format_relative_time(ts: i64) -> String {
         // Match on the cleaned, intent-stripped query so filler ("can you open …")
         // doesn't dilute the name/word matching below. Falls back to raw if cleaning
         // emptied it.
-        let q_lower = if q_clean.is_empty() { q_lower } else { q_clean.clone() };
+        let q_lower = if q_clean.is_empty() {
+            q_lower
+        } else {
+            q_clean.clone()
+        };
 
-        let stop_words = ["what", "is", "a", "the", "to", "for", "in", "of", "and", "or", "with", "on", "at", "by", "from", "about", "how", "this", "it", "my", "your"];
-        let q_words: Vec<&str> = q_lower.split_whitespace()
+        let stop_words = [
+            "what", "is", "a", "the", "to", "for", "in", "of", "and", "or", "with", "on", "at",
+            "by", "from", "about", "how", "this", "it", "my", "your",
+        ];
+        let q_words: Vec<&str> = q_lower
+            .split_whitespace()
             .filter(|w| !stop_words.contains(w))
             .collect();
         let q_char_count = q_lower.chars().count();
@@ -2900,7 +3460,10 @@ fn format_relative_time(ts: i64) -> String {
 
                 // 1. Semantic score
                 let sem_score: f32 = self.vecs[i * self.dim..][..self.dim]
-                    .iter().zip(&qvec).map(|(a, b)| a * b).sum();
+                    .iter()
+                    .zip(&qvec)
+                    .map(|(a, b)| a * b)
+                    .sum();
 
                 // 2. Lexical score
                 let mut lex_score = 0.0f32;
@@ -3016,15 +3579,17 @@ fn format_relative_time(ts: i64) -> String {
         let mut conv_results = self.get_conversational_results(&qvec);
 
         let mut final_results = get_live_results(q);
-        let mut vec_results: Vec<SearchResult> = scores.into_iter()
+        let mut vec_results: Vec<SearchResult> = scores
+            .into_iter()
             .filter(|(_, s)| *s > 0.62)
-            .map(|(i, score)| SearchResult { entry: self.meta[i].clone(), score })
+            .map(|(i, score)| SearchResult {
+                entry: self.meta[i].clone(),
+                score,
+            })
             .collect();
-            
+
         if !conv_results.is_empty() {
-            vec_results.retain(|vr| {
-                !conv_results.iter().any(|cr| cr.entry.id == vr.entry.id)
-            });
+            vec_results.retain(|vr| !conv_results.iter().any(|cr| cr.entry.id == vr.entry.id));
         }
 
         if !final_results.is_empty() {
@@ -3036,12 +3601,12 @@ fn format_relative_time(ts: i64) -> String {
                 })
             });
         }
-        
+
         let mut app_matches = Vec::new();
         for app in &self.apps {
             let app_lower = app.name.to_lowercase();
             let mut score = 0.0f32;
-            
+
             if app_lower == q_lower {
                 score = 120.0; // Exact app name wins the launcher, like Raycast/Flow Launcher.
             } else if app_lower.starts_with(&q_lower) && q_lower.chars().count() >= 2 {
@@ -3098,11 +3663,17 @@ fn format_relative_time(ts: i64) -> String {
                 });
             }
         }
-        
-        app_matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+        app_matches.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         if intent == Intent::LaunchApp {
-            for m in &mut app_matches { m.score += 1.5; }
+            for m in &mut app_matches {
+                m.score += 1.5;
+            }
         }
 
         // Recent files matching
@@ -3123,14 +3694,21 @@ fn format_relative_time(ts: i64) -> String {
             } else if name_lower.contains(&q_lower) {
                 score = 82.0;
             } else {
-                let name_words: Vec<&str> = name_no_ext.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+                let name_words: Vec<&str> = name_no_ext
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|w| !w.is_empty())
+                    .collect();
                 let mut matched = 0;
                 for qw in &q_words {
-                    if name_words.contains(qw) { matched += 1; }
+                    if name_words.contains(qw) {
+                        matched += 1;
+                    }
                 }
                 if matched > 0 && !q_words.is_empty() {
                     let ratio = matched as f32 / q_words.len() as f32;
-                    if ratio >= 0.5 { score = 78.0 + ratio; }
+                    if ratio >= 0.5 {
+                        score = 78.0 + ratio;
+                    }
                 }
             }
             if score > 0.0 {
@@ -3149,10 +3727,18 @@ fn format_relative_time(ts: i64) -> String {
                 });
             }
         }
-        recent_matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        recent_matches.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         recent_matches.truncate(5); // Cap at 5 recent file results
 
-        let web_query = if intent == Intent::WebSearch && !q_clean.is_empty() { q_clean.as_str() } else { q };
+        let web_query = if intent == Intent::WebSearch && !q_clean.is_empty() {
+            q_clean.as_str()
+        } else {
+            q
+        };
         let encoded_query = url_encode(web_query);
         let web_search = SearchResult {
             entry: CatalogEntry {
@@ -3161,14 +3747,25 @@ fn format_relative_time(ts: i64) -> String {
                 breadcrumb_path: "Web > Google Search > Open in default browser".to_string(),
                 launch_command: format!("https://www.google.com/search?q={}", encoded_query),
                 source: "web".to_string(),
-                description: format!("Opens default browser and searches Google for '{}'.", web_query),
+                description: format!(
+                    "Opens default browser and searches Google for '{}'.",
+                    web_query
+                ),
                 synonyms: "google search web internet online".to_string(),
             },
-            score: if intent == Intent::WebSearch { 92.0 } else { 50.0 },
+            score: if intent == Intent::WebSearch {
+                92.0
+            } else {
+                50.0
+            },
         };
 
         let mut file_matches = self.search_local_files(&q_lower);
-        file_matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        file_matches.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         file_matches.truncate(15); // Cap at 15 file results
         for m in &mut file_matches {
             // General file search only returns title/name hits; content-only search stays behind web in file:/code:/img: scopes.
@@ -3176,8 +3773,12 @@ fn format_relative_time(ts: i64) -> String {
         }
 
         if intent == Intent::FindFile {
-            for m in &mut file_matches { m.score += 1.5; }
-            for m in &mut recent_matches { m.score += 1.5; }
+            for m in &mut file_matches {
+                m.score += 1.5;
+            }
+            for m in &mut recent_matches {
+                m.score += 1.5;
+            }
         }
 
         // ── Cross-Source Entity Linker ("Project Auto-Entity") ──────────────
@@ -3185,32 +3786,42 @@ fn format_relative_time(ts: i64) -> String {
         if q.len() >= 3 {
             {
                 let conn = &self.conn;
-                
+
                 // Check git repos first
                 if let Ok(mut s) = conn.prepare("SELECT name FROM git_repos") {
-                    let names: Vec<String> = s.query_map([], |row| row.get::<_, String>(0))
+                    let names: Vec<String> = s
+                        .query_map([], |row| row.get::<_, String>(0))
                         .map(|m| m.filter_map(|r| r.ok()).collect())
                         .unwrap_or_default();
                     for name in names {
                         let name_lc = name.to_lowercase();
-                        if q_lower_trimmed == name_lc || q_lower_trimmed.contains(&name_lc) || name_lc.contains(&q_lower_trimmed) {
+                        if q_lower_trimmed == name_lc
+                            || q_lower_trimmed.contains(&name_lc)
+                            || name_lc.contains(&q_lower_trimmed)
+                        {
                             matched_project_name = Some(name);
                             break;
                         }
                     }
                 }
-                
+
                 // If not found in git repos, check folder names in indexed files
                 if matched_project_name.is_none() {
                     if let Ok(mut s) = conn.prepare("SELECT path FROM files WHERE is_dir = 1") {
-                        let paths: Vec<String> = s.query_map([], |row| row.get::<_, String>(0))
+                        let paths: Vec<String> = s
+                            .query_map([], |row| row.get::<_, String>(0))
                             .map(|m| m.filter_map(|r| r.ok()).collect())
                             .unwrap_or_default();
                         for path in paths {
                             if let Some(folder_name) = std::path::Path::new(&path).file_name() {
                                 let folder_name_lc = folder_name.to_string_lossy().to_lowercase();
-                                if !folder_name_lc.is_empty() && (q_lower_trimmed == folder_name_lc || q_lower_trimmed.contains(&folder_name_lc) || folder_name_lc.contains(&q_lower_trimmed)) {
-                                    matched_project_name = Some(folder_name.to_string_lossy().into_owned());
+                                if !folder_name_lc.is_empty()
+                                    && (q_lower_trimmed == folder_name_lc
+                                        || q_lower_trimmed.contains(&folder_name_lc)
+                                        || folder_name_lc.contains(&q_lower_trimmed))
+                                {
+                                    matched_project_name =
+                                        Some(folder_name.to_string_lossy().into_owned());
                                     break;
                                 }
                             }
@@ -3225,7 +3836,8 @@ fn format_relative_time(ts: i64) -> String {
             let mut repo_path = String::new();
             {
                 let conn = &self.conn;
-                if let Ok(mut s) = conn.prepare("SELECT path FROM git_repos WHERE name = ? LIMIT 1") {
+                if let Ok(mut s) = conn.prepare("SELECT path FROM git_repos WHERE name = ? LIMIT 1")
+                {
                     if let Ok(p) = s.query_row([project_name], |row| row.get::<_, String>(0)) {
                         repo_path = p;
                     }
@@ -3240,7 +3852,10 @@ fn format_relative_time(ts: i64) -> String {
                     launch_command: repo_path,
                     source: "PROJECT".to_string(),
                     description: format!("Active workspace for project '{}'", project_name),
-                    synonyms: format!("{} project workspace dashboard card", project_name.to_lowercase()),
+                    synonyms: format!(
+                        "{} project workspace dashboard card",
+                        project_name.to_lowercase()
+                    ),
                 },
                 score: 10.0,
             };
@@ -3258,20 +3873,25 @@ fn format_relative_time(ts: i64) -> String {
         merged.append(&mut self.search_quicklinks_name_matches(q));
         merged.append(&mut self.search_snippets_name_matches(q));
         merged.push(web_search.clone());
-        merged.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        merged.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         conv_results.append(&mut final_results);
         final_results = conv_results;
         final_results.append(&mut merged);
-        
+
         // Deduplicate final_results by id or non-empty launch_command
         let mut unique_results = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
         let mut seen_launches = std::collections::HashSet::new();
 
         for r in final_results {
-            let is_duplicate = seen_ids.contains(&r.entry.id) || 
-                (!r.entry.launch_command.is_empty() && seen_launches.contains(&r.entry.launch_command));
+            let is_duplicate = seen_ids.contains(&r.entry.id)
+                || (!r.entry.launch_command.is_empty()
+                    && seen_launches.contains(&r.entry.launch_command));
             if !is_duplicate {
                 seen_ids.insert(r.entry.id.clone());
                 if !r.entry.launch_command.is_empty() {
@@ -3281,17 +3901,19 @@ fn format_relative_time(ts: i64) -> String {
             }
         }
         final_results = unique_results;
-        
+
         final_results.truncate(top_k);
 
         // Quick system actions: match against query
         let mut action_matches = get_quick_actions(q);
         for am in &action_matches {
-            final_results.retain(|r| r.entry.control_name.to_lowercase() != am.entry.control_name.to_lowercase());
+            final_results.retain(|r| {
+                r.entry.control_name.to_lowercase() != am.entry.control_name.to_lowercase()
+            });
         }
         action_matches.append(&mut final_results);
         final_results = action_matches;
-        
+
         if let Some(calc) = calc_result {
             final_results.insert(0, calc);
         } else if let Some(unit) = unit_result {
@@ -3303,7 +3925,8 @@ fn format_relative_time(ts: i64) -> String {
             final_results.push(web_search);
         }
 
-        if looks_like_agent_task(q) && !final_results.iter().any(|r| r.entry.id == "agent.nlp_task") {
+        if looks_like_agent_task(q) && !final_results.iter().any(|r| r.entry.id == "agent.nlp_task")
+        {
             let launch_command = if let Some((id, _)) = self.find_agent_by_name("Hermes") {
                 format!("agent:{}\u{1f}{}", id, q)
             } else {
@@ -3321,7 +3944,10 @@ fn format_relative_time(ts: i64) -> String {
                 },
                 score: 1.09,
             };
-            if let Some(web_idx) = final_results.iter().position(|r| r.entry.id == "web_search") {
+            if let Some(web_idx) = final_results
+                .iter()
+                .position(|r| r.entry.id == "web_search")
+            {
                 final_results.insert(web_idx + 1, task_result);
             } else {
                 final_results.push(task_result);
@@ -3336,11 +3962,13 @@ fn format_relative_time(ts: i64) -> String {
         if let Some(cached) = self.query_cache.get(text) {
             return Ok(cached.clone());
         }
-        let enc = self.tokenizer.encode(text, true)
+        let enc = self
+            .tokenizer
+            .encode(text, true)
             .map_err(|e| anyhow::anyhow!("encode: {e}"))?;
 
-        let ids: Vec<i64>   = enc.get_ids().iter().map(|&x| x as i64).collect();
-        let mask: Vec<i64>  = enc.get_attention_mask().iter().map(|&x| x as i64).collect();
+        let ids: Vec<i64> = enc.get_ids().iter().map(|&x| x as i64).collect();
+        let mask: Vec<i64> = enc.get_attention_mask().iter().map(|&x| x as i64).collect();
         let types: Vec<i64> = enc.get_type_ids().iter().map(|&x| x as i64).collect();
         let seq = ids.len();
 
@@ -3348,7 +3976,7 @@ fn format_relative_time(ts: i64) -> String {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         let attn_mask_t = TensorRef::<i64>::from_array_view(([1usize, seq], mask.as_slice()))
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let type_ids_t  = TensorRef::<i64>::from_array_view(([1usize, seq], types.as_slice()))
+        let type_ids_t = TensorRef::<i64>::from_array_view(([1usize, seq], types.as_slice()))
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let outputs = self.session.run(ort::inputs![
@@ -3360,7 +3988,9 @@ fn format_relative_time(ts: i64) -> String {
         let (_, hidden) = outputs["last_hidden_state"].try_extract_tensor::<f32>()?;
 
         let result = mean_pool_norm(hidden, &mask, seq, self.dim);
-        if self.query_cache.len() > 100 { self.query_cache.clear(); }
+        if self.query_cache.len() > 100 {
+            self.query_cache.clear();
+        }
         self.query_cache.insert(text.to_string(), result.clone());
         Ok(result)
     }
@@ -3417,28 +4047,79 @@ pub enum Intent {
 
 pub fn clean_prompt(raw: &str) -> (Intent, String) {
     let mut q = raw.trim().to_lowercase();
-    q = q.trim_matches(|c: char| matches!(c, '.' | '?' | '!' | ',')).trim().to_string();
+    q = q
+        .trim_matches(|c: char| matches!(c, '.' | '?' | '!' | ','))
+        .trim()
+        .to_string();
 
     // 1. Peel leading politeness / framing / question words (no source intent).
     const LEAD_FILLER: &[&str] = &[
-        "please ", "can you ", "could you ", "would you ", "will you ", "can u ",
-        "i want to ", "i wanna ", "i want ", "i need to ", "i need ", "i'd like to ",
-        "i would like to ", "let's ", "lets ", "go ahead and ", "just ", "um ", "uh ",
-        "hey ", "ok ", "okay ", "yeah ", "so ", "well ", "help me ",
-        "what is the ", "what's the ", "whats the ", "what is ", "what's ", "whats ",
-        "what are ", "how much is ", "how many ", "calculate ", "compute ", "tell me ",
+        "please ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "will you ",
+        "can u ",
+        "i want to ",
+        "i wanna ",
+        "i want ",
+        "i need to ",
+        "i need ",
+        "i'd like to ",
+        "i would like to ",
+        "let's ",
+        "lets ",
+        "go ahead and ",
+        "just ",
+        "um ",
+        "uh ",
+        "hey ",
+        "ok ",
+        "okay ",
+        "yeah ",
+        "so ",
+        "well ",
+        "help me ",
+        "what is the ",
+        "what's the ",
+        "whats the ",
+        "what is ",
+        "what's ",
+        "whats ",
+        "what are ",
+        "how much is ",
+        "how many ",
+        "calculate ",
+        "compute ",
+        "tell me ",
     ];
     q = peel_prefixes(q, LEAD_FILLER);
 
     // 2. Detect + strip a leading intent verb (most specific first: web > file > app).
     const WEB_CUES: &[&str] = &[
-        "search the web for ", "search the web ", "search online for ",
-        "search the internet for ", "google for ", "look up ", "web search ",
+        "search the web for ",
+        "search the web ",
+        "search online for ",
+        "search the internet for ",
+        "google for ",
+        "look up ",
+        "web search ",
     ];
     const FILE_CUES: &[&str] = &[
-        "open the file ", "find the file ", "show me the file ", "where is the file ",
-        "i'm looking for ", "im looking for ", "looking for ",
-        "find my ", "find me ", "find ", "where is ", "where's ", "wheres ", "locate ",
+        "open the file ",
+        "find the file ",
+        "show me the file ",
+        "where is the file ",
+        "i'm looking for ",
+        "im looking for ",
+        "looking for ",
+        "find my ",
+        "find me ",
+        "find ",
+        "where is ",
+        "where's ",
+        "wheres ",
+        "locate ",
     ];
     const APP_CUES: &[&str] = &[
         "open up ", "open ", "launch ", "fire up ", "boot up ", "run ", "start ", "go to ",
@@ -3458,15 +4139,29 @@ pub fn clean_prompt(raw: &str) -> (Intent, String) {
 
     // 3. Peel generic verbs with no source intent, then any re-exposed filler.
     const LEAD_GENERIC: &[&str] = &[
-        "show me ", "show ", "give me ", "get me ", "bring up ", "pull up ", "take me to ",
+        "show me ",
+        "show ",
+        "give me ",
+        "get me ",
+        "bring up ",
+        "pull up ",
+        "take me to ",
     ];
     q = peel_prefixes(q, LEAD_GENERIC);
     q = peel_prefixes(q, LEAD_FILLER);
 
     // 4. Trailing fluff.
     const TRAIL_FILLER: &[&str] = &[
-        " right now", " for me", " please", " now", " thanks", " thank you",
-        " on my computer", " on my pc", " quickly", " real quick",
+        " right now",
+        " for me",
+        " please",
+        " now",
+        " thanks",
+        " thank you",
+        " on my computer",
+        " on my pc",
+        " quickly",
+        " real quick",
     ];
     loop {
         let before = q.clone();
@@ -3519,9 +4214,29 @@ fn looks_like_agent_task(raw: &str) -> bool {
     }
     // ponytail: simple verb heuristic; upgrade to an intent model only if this misclassifies real usage.
     const TASK_WORDS: &[&str] = &[
-        "clear", "flush", "restart", "stop", "kill", "delete", "remove", "clean",
-        "enable", "disable", "install", "uninstall", "update", "fix", "repair",
-        "configure", "set", "create", "make", "move", "rename", "run", "execute",
+        "clear",
+        "flush",
+        "restart",
+        "stop",
+        "kill",
+        "delete",
+        "remove",
+        "clean",
+        "enable",
+        "disable",
+        "install",
+        "uninstall",
+        "update",
+        "fix",
+        "repair",
+        "configure",
+        "set",
+        "create",
+        "make",
+        "move",
+        "rename",
+        "run",
+        "execute",
     ];
     q.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
@@ -3533,17 +4248,44 @@ mod nlp_tests {
     use super::{clean_prompt, looks_like_agent_task, Intent};
     #[test]
     fn cleans_and_classifies() {
-        assert_eq!(clean_prompt("Open Chrome, please"), (Intent::LaunchApp, "chrome".to_string()));
-        assert_eq!(clean_prompt("can you launch spotify"), (Intent::LaunchApp, "spotify".to_string()));
-        assert_eq!(clean_prompt("can you open brave for me"), (Intent::LaunchApp, "brave".to_string()));
-        assert_eq!(clean_prompt("find my budget spreadsheet"), (Intent::FindFile, "budget spreadsheet".to_string()));
-        assert_eq!(clean_prompt("look up rust lifetimes"), (Intent::WebSearch, "rust lifetimes".to_string()));
-        assert_eq!(clean_prompt("show me my downloads right now"), (Intent::General, "my downloads".to_string()));
-        assert_eq!(clean_prompt("settings"), (Intent::General, "settings".to_string()));
+        assert_eq!(
+            clean_prompt("Open Chrome, please"),
+            (Intent::LaunchApp, "chrome".to_string())
+        );
+        assert_eq!(
+            clean_prompt("can you launch spotify"),
+            (Intent::LaunchApp, "spotify".to_string())
+        );
+        assert_eq!(
+            clean_prompt("can you open brave for me"),
+            (Intent::LaunchApp, "brave".to_string())
+        );
+        assert_eq!(
+            clean_prompt("find my budget spreadsheet"),
+            (Intent::FindFile, "budget spreadsheet".to_string())
+        );
+        assert_eq!(
+            clean_prompt("look up rust lifetimes"),
+            (Intent::WebSearch, "rust lifetimes".to_string())
+        );
+        assert_eq!(
+            clean_prompt("show me my downloads right now"),
+            (Intent::General, "my downloads".to_string())
+        );
+        assert_eq!(
+            clean_prompt("settings"),
+            (Intent::General, "settings".to_string())
+        );
         // "google chrome" must stay an app query, not a web search.
-        assert_eq!(clean_prompt("google chrome"), (Intent::General, "google chrome".to_string()));
+        assert_eq!(
+            clean_prompt("google chrome"),
+            (Intent::General, "google chrome".to_string())
+        );
         // question-word framing exposes a math expression for the calc fallback.
-        assert_eq!(clean_prompt("what is 2+2"), (Intent::General, "2+2".to_string()));
+        assert_eq!(
+            clean_prompt("what is 2+2"),
+            (Intent::General, "2+2".to_string())
+        );
     }
 
     #[test]
@@ -3578,13 +4320,23 @@ fn mean_pool_norm(hidden: &[f32], mask: &[i64], seq: usize, dim: usize) -> Vec<f
     let mut count = 0u32;
     for t in 0..seq {
         if mask[t] == 1 {
-            for d in 0..dim { sum[d] += hidden[t * dim + d]; }
+            for d in 0..dim {
+                sum[d] += hidden[t * dim + d];
+            }
             count += 1;
         }
     }
-    if count > 0 { for x in &mut sum { *x /= count as f32; } }
+    if count > 0 {
+        for x in &mut sum {
+            *x /= count as f32;
+        }
+    }
     let norm = sum.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm > 1e-8 { for x in &mut sum { *x /= norm; } }
+    if norm > 1e-8 {
+        for x in &mut sum {
+            *x /= norm;
+        }
+    }
     sum
 }
 
@@ -3672,7 +4424,9 @@ mod tests {
             "action:window:center_three_fourths",
             "action:window:center_two_thirds",
         ] {
-            assert!(QUICK_ACTIONS.iter().any(|action| action.launch_command == command));
+            assert!(QUICK_ACTIONS
+                .iter()
+                .any(|action| action.launch_command == command));
         }
     }
 
@@ -3697,60 +4451,136 @@ mod tests {
         let parent = exe.parent().expect("failed to get parent");
         let mut model_path = parent.join("model_int8.onnx");
         if !model_path.exists() {
-            model_path = parent.parent().expect("failed to get grandparent").join("model_int8.onnx");
+            model_path = parent
+                .parent()
+                .expect("failed to get grandparent")
+                .join("model_int8.onnx");
         }
-        let mut engine = SearchEngine::new(&model_path, std::path::PathBuf::from("test_db.db")).expect("Failed to initialize engine");
-        
+        let mut engine = SearchEngine::new(&model_path, std::path::PathBuf::from("test_db.db"))
+            .expect("Failed to initialize engine");
+
         let queries = vec![
-            ("stop mouse from jumping", vec!["pointer precision", "pointer speed", "mouse"]),
+            (
+                "stop mouse from jumping",
+                vec!["pointer precision", "pointer speed", "mouse"],
+            ),
             ("disable startup programs", vec!["startup", "autostart"]),
             ("change time zone", vec!["time zone", "timezone"]),
             ("turn off notifications", vec!["notification"]),
-            ("fix blurry text", vec!["ccd cleartype", "cleartype", "dpi", "blurry", "scale"]),
+            (
+                "fix blurry text",
+                vec!["ccd cleartype", "cleartype", "dpi", "blurry", "scale"],
+            ),
             ("allow apps through firewall", vec!["firewall"]),
-            ("make text bigger", vec!["text size", "font size", "scale", "display"]),
+            (
+                "make text bigger",
+                vec!["text size", "font size", "scale", "display"],
+            ),
             ("change display brightness", vec!["brightness"]),
             ("connect to wifi", vec!["wi-fi", "wifi", "wireless"]),
             ("remove a printer", vec!["printer", "print"]),
-            ("enable dark mode", vec!["dark", "color mode", "theme", "appearance"]),
+            (
+                "enable dark mode",
+                vec!["dark", "color mode", "theme", "appearance"],
+            ),
             ("change screen resolution", vec!["resolution", "display"]),
-            ("set default browser", vec!["default app", "default browser", "browser"]),
+            (
+                "set default browser",
+                vec!["default app", "default browser", "browser"],
+            ),
             ("disable auto updates", vec!["update", "windows update"]),
             ("sleep settings", vec!["sleep", "power"]),
-            ("change wallpaper", vec!["wallpaper", "background", "desktop background"]),
+            (
+                "change wallpaper",
+                vec!["wallpaper", "background", "desktop background"],
+            ),
             ("enable bluetooth", vec!["bluetooth"]),
             ("disable touchpad", vec!["touchpad", "trackpad"]),
             ("configure microphone", vec!["microphone", "input device"]),
             ("change language", vec!["language", "region"]),
-            ("set up fingerprint login", vec!["fingerprint", "biometric", "windows hello"]),
-            ("clear storage space", vec!["storage", "disk cleanup", "disk space"]),
-            ("rename this computer", vec!["computer name", "rename pc", "device name"]),
-            ("change sound output device", vec!["sound output", "audio output", "speaker", "playback"]),
-            ("reduce eye strain at night", vec!["night light", "blue light", "color temperature"]),
-            ("stop apps from running in background", vec!["background app"]),
-            ("speed up animations", vec!["animation", "visual effect", "transition"]),
-            ("uninstall a program", vec!["uninstall", "remove app", "apps & features"]),
+            (
+                "set up fingerprint login",
+                vec!["fingerprint", "biometric", "windows hello"],
+            ),
+            (
+                "clear storage space",
+                vec!["storage", "disk cleanup", "disk space"],
+            ),
+            (
+                "rename this computer",
+                vec!["computer name", "rename pc", "device name"],
+            ),
+            (
+                "change sound output device",
+                vec!["sound output", "audio output", "speaker", "playback"],
+            ),
+            (
+                "reduce eye strain at night",
+                vec!["night light", "blue light", "color temperature"],
+            ),
+            (
+                "stop apps from running in background",
+                vec!["background app"],
+            ),
+            (
+                "speed up animations",
+                vec!["animation", "visual effect", "transition"],
+            ),
+            (
+                "uninstall a program",
+                vec!["uninstall", "remove app", "apps & features"],
+            ),
             ("disable cortana", vec!["cortana", "search"]),
             ("set proxy settings", vec!["proxy"]),
-            ("change mouse speed", vec!["pointer speed", "mouse speed", "cursor speed"]),
-            ("flip screen upside down", vec!["rotation", "orientation", "display"]),
+            (
+                "change mouse speed",
+                vec!["pointer speed", "mouse speed", "cursor speed"],
+            ),
+            (
+                "flip screen upside down",
+                vec!["rotation", "orientation", "display"],
+            ),
             ("enable remote desktop", vec!["remote desktop", "rdp"]),
             ("set up vpn", vec!["vpn", "virtual private"]),
-            ("configure parental controls", vec!["parental", "family safety", "child"]),
+            (
+                "configure parental controls",
+                vec!["parental", "family safety", "child"],
+            ),
             ("map network drive", vec!["network drive", "map drive"]),
-            ("change power plan", vec!["power plan", "battery saver", "performance"]),
+            (
+                "change power plan",
+                vec!["power plan", "battery saver", "performance"],
+            ),
             ("set up email account", vec!["email", "mail", "account"]),
             ("configure taskbar", vec!["taskbar"]),
             ("disable location services", vec!["location"]),
-            ("change keyboard layout", vec!["keyboard layout", "input method", "language"]),
+            (
+                "change keyboard layout",
+                vec!["keyboard layout", "input method", "language"],
+            ),
             ("enable magnifier", vec!["magnifier"]),
-            ("set up multiple monitors", vec!["multiple display", "second screen", "extend"]),
-            ("change user account picture", vec!["account picture", "profile picture", "user photo"]),
-            ("disable password requirement", vec!["password", "sign-in", "sign in option"]),
+            (
+                "set up multiple monitors",
+                vec!["multiple display", "second screen", "extend"],
+            ),
+            (
+                "change user account picture",
+                vec!["account picture", "profile picture", "user photo"],
+            ),
+            (
+                "disable password requirement",
+                vec!["password", "sign-in", "sign in option"],
+            ),
             ("configure storage sense", vec!["storage sense"]),
             ("enable developer mode", vec!["developer mode"]),
-            ("sync settings between devices", vec!["sync", "backup", "cloud"]),
-            ("change default search engine", vec!["search", "default search"]),
+            (
+                "sync settings between devices",
+                vec!["sync", "backup", "cloud"],
+            ),
+            (
+                "change default search engine",
+                vec!["search", "default search"],
+            ),
         ];
 
         let mut hits = 0;
@@ -3762,11 +4592,13 @@ mod tests {
             for r in &results {
                 let haystack = format!(
                     "{} {} {}",
-                    r.entry.control_name,
-                    r.entry.breadcrumb_path,
-                    r.entry.synonyms
-                ).to_lowercase();
-                if keywords.iter().any(|kw| haystack.contains(&kw.to_lowercase())) {
+                    r.entry.control_name, r.entry.breadcrumb_path, r.entry.synonyms
+                )
+                .to_lowercase();
+                if keywords
+                    .iter()
+                    .any(|kw| haystack.contains(&kw.to_lowercase()))
+                {
                     hit = true;
                     break;
                 }
@@ -3777,14 +4609,22 @@ mod tests {
                 let got = if results.is_empty() {
                     "None".to_string()
                 } else {
-                    format!("{} ({})", results[0].entry.control_name, results[0].entry.breadcrumb_path)
+                    format!(
+                        "{} ({})",
+                        results[0].entry.control_name, results[0].entry.breadcrumb_path
+                    )
                 };
                 misses.push((q, got));
             }
         }
 
         let hit_rate = (hits as f32 / queries.len() as f32) * 100.0;
-        println!("Rust Hit@3 rate: {}/{} = {:.1}%", hits, queries.len(), hit_rate);
+        println!(
+            "Rust Hit@3 rate: {}/{} = {:.1}%",
+            hits,
+            queries.len(),
+            hit_rate
+        );
         if !misses.is_empty() {
             println!("Misses:");
             for (q, got) in misses {
@@ -3792,38 +4632,65 @@ mod tests {
             }
         }
 
-        assert!(hit_rate >= 70.0, "Hit rate was only {:.1}% (target: >= 70.0%)", hit_rate);
+        assert!(
+            hit_rate >= 70.0,
+            "Hit rate was only {:.1}% (target: >= 70.0%)",
+            hit_rate
+        );
     }
 
     #[test]
     fn test_enumerate_apps_folder() {
-        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
-        use windows::Win32::UI::Shell::{SHGetKnownFolderItem, FOLDERID_AppsFolder, KF_FLAG_DEFAULT, IShellItem, IEnumShellItems, BHID_EnumItems, SIGDN_NORMALDISPLAY, SIGDN_DESKTOPABSOLUTEPARSING};
         use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::Com::{
+            CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+        };
+        use windows::Win32::UI::Shell::{
+            BHID_EnumItems, FOLDERID_AppsFolder, IEnumShellItems, IShellItem, SHGetKnownFolderItem,
+            KF_FLAG_DEFAULT, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_NORMALDISPLAY,
+        };
 
         unsafe {
             let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-            let apps_folder: IShellItem = SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, HANDLE::default()).unwrap();
-            let enum_items: IEnumShellItems = apps_folder.BindToHandler(None, &BHID_EnumItems).unwrap();
+            let apps_folder: IShellItem =
+                SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, HANDLE::default())
+                    .unwrap();
+            let enum_items: IEnumShellItems =
+                apps_folder.BindToHandler(None, &BHID_EnumItems).unwrap();
             let mut items = [None];
             let mut fetched = 0;
             let mut count = 0;
             while enum_items.Next(&mut items, Some(&mut fetched)).is_ok() && fetched == 1 {
                 if let Some(item) = &items[0] {
                     let display_name_ptr = item.GetDisplayName(SIGDN_NORMALDISPLAY).unwrap();
-                    let parsing_name_ptr = item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING).unwrap();
-                    
+                    let parsing_name_ptr =
+                        item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING).unwrap();
+
                     let mut len = 0;
-                    while *display_name_ptr.0.add(len) != 0 { len += 1; }
-                    let display_name = String::from_utf16_lossy(std::slice::from_raw_parts(display_name_ptr.0, len));
-                    
+                    while *display_name_ptr.0.add(len) != 0 {
+                        len += 1;
+                    }
+                    let display_name = String::from_utf16_lossy(std::slice::from_raw_parts(
+                        display_name_ptr.0,
+                        len,
+                    ));
+
                     let mut len = 0;
-                    while *parsing_name_ptr.0.add(len) != 0 { len += 1; }
-                    let parsing_name = String::from_utf16_lossy(std::slice::from_raw_parts(parsing_name_ptr.0, len));
-                    
+                    while *parsing_name_ptr.0.add(len) != 0 {
+                        len += 1;
+                    }
+                    let parsing_name = String::from_utf16_lossy(std::slice::from_raw_parts(
+                        parsing_name_ptr.0,
+                        len,
+                    ));
+
                     println!("App: {} -> {}", display_name, parsing_name);
-                    windows::Win32::System::Com::CoTaskMemFree(Some(display_name_ptr.0 as *const _));
-                    windows::Win32::System::Com::CoTaskMemFree(Some(parsing_name_ptr.0 as *const _));
+                    windows::Win32::System::Com::CoTaskMemFree(Some(
+                        display_name_ptr.0 as *const _,
+                    ));
+                    windows::Win32::System::Com::CoTaskMemFree(Some(
+                        parsing_name_ptr.0 as *const _,
+                    ));
                     count += 1;
                     if count >= 10 {
                         break;
@@ -3846,19 +4713,30 @@ mod tests {
         let parent = exe.parent().expect("failed to get parent");
         let mut model_path = parent.join("model_int8.onnx");
         if !model_path.exists() {
-            model_path = parent.parent().expect("failed to get grandparent").join("model_int8.onnx");
+            model_path = parent
+                .parent()
+                .expect("failed to get grandparent")
+                .join("model_int8.onnx");
         }
-        let mut engine = SearchEngine::new(&model_path, db_path).expect("Failed to initialize engine");
-        
+        let mut engine =
+            SearchEngine::new(&model_path, db_path).expect("Failed to initialize engine");
+
         println!("--- DIAGNOSTIC SEARCH TEST ---");
         let results = engine.search("resume", 10);
         println!("Combined search results for 'resume':");
         for (idx, r) in results.iter().enumerate() {
-            println!("  [{}] ID: {}, Name: {}, Source: {}, Breadcrumb: {}, Score: {}", idx, r.entry.id, r.entry.control_name, r.entry.source, r.entry.breadcrumb_path, r.score);
+            println!(
+                "  [{}] ID: {}, Name: {}, Source: {}, Breadcrumb: {}, Score: {}",
+                idx,
+                r.entry.id,
+                r.entry.control_name,
+                r.entry.source,
+                r.entry.breadcrumb_path,
+                r.score
+            );
         }
     }
 }
-
 
 #[repr(C)]
 struct SYSTEM_POWER_STATUS {
@@ -3929,15 +4807,19 @@ fn get_live_results(query: &str) -> Vec<SearchResult> {
                     } else {
                         "Unknown State"
                     };
-                    
+
                     results.push(SearchResult {
                         entry: CatalogEntry {
                             id: "live.battery".to_string(),
                             control_name: "Battery Status".to_string(),
-                            breadcrumb_path: format!("System > Power & battery > Currently {}% ({})", percent, state),
+                            breadcrumb_path: format!(
+                                "System > Power & battery > Currently {}% ({})",
+                                percent, state
+                            ),
                             launch_command: "ms-settings:powersleep".to_string(),
                             source: "LIVE".to_string(),
-                            description: "Shows the current battery level and power state.".to_string(),
+                            description: "Shows the current battery level and power state."
+                                .to_string(),
                             synonyms: "battery percentage power life status".to_string(),
                         },
                         score: 2.0,
@@ -3948,7 +4830,12 @@ fn get_live_results(query: &str) -> Vec<SearchResult> {
     }
 
     // 2. Local IP Address
-    if q.contains("ip") || q.contains("network") || q.contains("address") || q.contains("wifi") || q.contains("ethernet") {
+    if q.contains("ip")
+        || q.contains("network")
+        || q.contains("address")
+        || q.contains("wifi")
+        || q.contains("ethernet")
+    {
         if let Some(ip) = get_local_ip() {
             results.push(SearchResult {
                 entry: CatalogEntry {
@@ -3957,7 +4844,8 @@ fn get_live_results(query: &str) -> Vec<SearchResult> {
                     breadcrumb_path: format!("Network > Connection > {} (Press Enter to copy)", ip),
                     launch_command: format!("copy:{}", ip),
                     source: "ACTION".to_string(),
-                    description: "Copies your current local IP address to the clipboard.".to_string(),
+                    description: "Copies your current local IP address to the clipboard."
+                        .to_string(),
                     synonyms: "ip address local network connection".to_string(),
                 },
                 score: 2.0,
@@ -3987,10 +4875,15 @@ fn get_live_results(query: &str) -> Vec<SearchResult> {
                     entry: CatalogEntry {
                         id: "live.ram".to_string(),
                         control_name: "System Memory".to_string(),
-                        breadcrumb_path: format!("System > Performance > {:.1} GB free / {:.1} GB total ({}% used)", avail_gb, total_gb, load),
+                        breadcrumb_path: format!(
+                            "System > Performance > {:.1} GB free / {:.1} GB total ({}% used)",
+                            avail_gb, total_gb, load
+                        ),
                         launch_command: "taskmgr.exe".to_string(),
                         source: "LIVE".to_string(),
-                        description: "Shows currently free physical RAM and memory load percentage.".to_string(),
+                        description:
+                            "Shows currently free physical RAM and memory load percentage."
+                                .to_string(),
                         synonyms: "ram memory physical usage performance".to_string(),
                     },
                     score: 2.0,
@@ -4000,22 +4893,41 @@ fn get_live_results(query: &str) -> Vec<SearchResult> {
     }
 
     // 4. Disk Space
-    if q.contains("disk") || q.contains("storage") || q.contains("space") || q.contains("drive") || q.contains("free") {
+    if q.contains("disk")
+        || q.contains("storage")
+        || q.contains("space")
+        || q.contains("drive")
+        || q.contains("free")
+    {
         let mut free = 0u64;
         let mut total = 0u64;
         unsafe {
-            if GetDiskFreeSpaceExW(std::ptr::null(), &mut free, &mut total, std::ptr::null_mut()) != 0 {
+            if GetDiskFreeSpaceExW(
+                std::ptr::null(),
+                &mut free,
+                &mut total,
+                std::ptr::null_mut(),
+            ) != 0
+            {
                 let free_gb = free as f64 / 1024.0 / 1024.0 / 1024.0;
                 let total_gb = total as f64 / 1024.0 / 1024.0 / 1024.0;
-                let free_percent = if total > 0 { (free as f64 / total as f64) * 100.0 } else { 0.0 };
+                let free_percent = if total > 0 {
+                    (free as f64 / total as f64) * 100.0
+                } else {
+                    0.0
+                };
                 results.push(SearchResult {
                     entry: CatalogEntry {
                         id: "live.disk".to_string(),
                         control_name: "Disk Space (C:)".to_string(),
-                        breadcrumb_path: format!("System > Storage > {:.1} GB free of {:.1} GB ({:.1}% free)", free_gb, total_gb, free_percent),
+                        breadcrumb_path: format!(
+                            "System > Storage > {:.1} GB free of {:.1} GB ({:.1}% free)",
+                            free_gb, total_gb, free_percent
+                        ),
                         launch_command: "ms-settings:storagesense".to_string(),
                         source: "LIVE".to_string(),
-                        description: "Shows free space on your system partition (C: drive).".to_string(),
+                        description: "Shows free space on your system partition (C: drive)."
+                            .to_string(),
                         synonyms: "disk storage space free hard drive c".to_string(),
                     },
                     score: 2.0,
@@ -4031,7 +4943,9 @@ fn get_live_results(query: &str) -> Vec<SearchResult> {
 fn scan_recent_files() -> Vec<RecentFileInfo> {
     let mut results = Vec::new();
     unsafe {
-        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
+        use windows::Win32::System::Com::{
+            CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+        };
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     }
 
@@ -4049,7 +4963,8 @@ fn scan_recent_files() -> Vec<RecentFileInfo> {
     let mut file_entries: Vec<(std::path::PathBuf, std::time::SystemTime)> = entries
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.path().extension()
+            e.path()
+                .extension()
                 .and_then(|x| x.to_str())
                 .map(|x| x.eq_ignore_ascii_case("lnk"))
                 .unwrap_or(false)
@@ -4095,7 +5010,9 @@ fn scan_recent_files() -> Vec<RecentFileInfo> {
                 || path_lower.ends_with(".html")
                 || path_lower.ends_with(".css");
 
-            if !is_useful { continue; }
+            if !is_useful {
+                continue;
+            }
 
             // Get the file name from the target path
             let name = std::path::Path::new(&target)
@@ -4114,8 +5031,12 @@ fn scan_recent_files() -> Vec<RecentFileInfo> {
 fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     let len1 = s1.chars().count();
     let len2 = s2.chars().count();
-    if len1 == 0 { return len2; }
-    if len2 == 0 { return len1; }
+    if len1 == 0 {
+        return len2;
+    }
+    if len2 == 0 {
+        return len1;
+    }
 
     let mut row: Vec<usize> = (0..=len2).collect();
     let s1_chars: Vec<char> = s1.chars().collect();
@@ -4125,10 +5046,7 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
         let mut prev = i + 1;
         for j in 0..len2 {
             let cost = if s1_chars[i] == s2_chars[j] { 0 } else { 1 };
-            let val = std::cmp::min(
-                std::cmp::min(row[j + 1] + 1, prev + 1),
-                row[j] + cost
-            );
+            let val = std::cmp::min(std::cmp::min(row[j + 1] + 1, prev + 1), row[j] + cost);
             row[j] = prev;
             prev = val;
         }
@@ -4138,46 +5056,59 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 }
 
 pub fn resolve_lnk_path(lnk_path: &std::path::Path) -> Option<String> {
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, IPersistFile, STGM_READ};
-    use windows::Win32::UI::Shell::{ShellLink, IShellLinkW, SLGP_UNCPRIORITY};
-    use windows::core::{PCWSTR, Interface};
+    use windows::core::{Interface, PCWSTR};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_UNCPRIORITY};
 
     unsafe {
         let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
         let persist: IPersistFile = link.cast().ok()?;
-        let path_wide: Vec<u16> = lnk_path.to_str()?.encode_utf16().chain(std::iter::once(0)).collect();
+        let path_wide: Vec<u16> = lnk_path
+            .to_str()?
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         persist.Load(PCWSTR(path_wide.as_ptr()), STGM_READ).ok()?;
         let mut buffer = [0u16; 260];
-        link.GetPath(&mut buffer, std::ptr::null_mut(), SLGP_UNCPRIORITY.0 as u32).ok()?;
+        link.GetPath(&mut buffer, std::ptr::null_mut(), SLGP_UNCPRIORITY.0 as u32)
+            .ok()?;
         let target = String::from_utf16_lossy(&buffer);
         let trimmed = target.trim_matches('\0').trim().to_string();
-        if trimmed.is_empty() { None } else { Some(trimmed) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
     }
 }
 
 fn scan_apps() -> Vec<AppInfo> {
-
     let mut apps = Vec::new();
     unsafe {
-        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
-        use windows::Win32::UI::Shell::{
-            SHGetKnownFolderItem, FOLDERID_AppsFolder, KF_FLAG_DEFAULT, IShellItem, IEnumShellItems,
-            BHID_EnumItems, SIGDN_NORMALDISPLAY, SIGDN_DESKTOPABSOLUTEPARSING
-        };
         use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::Com::{
+            CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+        };
+        use windows::Win32::UI::Shell::{
+            BHID_EnumItems, FOLDERID_AppsFolder, IEnumShellItems, IShellItem, SHGetKnownFolderItem,
+            KF_FLAG_DEFAULT, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_NORMALDISPLAY,
+        };
 
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-        
-        let apps_folder: IShellItem = match SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, HANDLE::default()) {
-            Ok(folder) => folder,
-            Err(_) => return apps,
-        };
-        
+
+        let apps_folder: IShellItem =
+            match SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, HANDLE::default()) {
+                Ok(folder) => folder,
+                Err(_) => return apps,
+            };
+
         let enum_items: IEnumShellItems = match apps_folder.BindToHandler(None, &BHID_EnumItems) {
             Ok(e) => e,
             Err(_) => return apps,
         };
-        
+
         let mut items = [None];
         let mut fetched = 0;
         while enum_items.Next(&mut items, Some(&mut fetched)).is_ok() && fetched == 1 {
@@ -4189,22 +5120,30 @@ fn scan_apps() -> Vec<AppInfo> {
                 let parsing_name_ptr = match item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING) {
                     Ok(ptr) => ptr,
                     Err(_) => {
-                        windows::Win32::System::Com::CoTaskMemFree(Some(display_name_ptr.0 as *const _));
+                        windows::Win32::System::Com::CoTaskMemFree(Some(
+                            display_name_ptr.0 as *const _,
+                        ));
                         continue;
                     }
                 };
-                
+
                 let mut len = 0;
-                while *display_name_ptr.0.add(len) != 0 { len += 1; }
-                let display_name = String::from_utf16_lossy(std::slice::from_raw_parts(display_name_ptr.0, len));
-                
+                while *display_name_ptr.0.add(len) != 0 {
+                    len += 1;
+                }
+                let display_name =
+                    String::from_utf16_lossy(std::slice::from_raw_parts(display_name_ptr.0, len));
+
                 let mut len = 0;
-                while *parsing_name_ptr.0.add(len) != 0 { len += 1; }
-                let parsing_name = String::from_utf16_lossy(std::slice::from_raw_parts(parsing_name_ptr.0, len));
-                
+                while *parsing_name_ptr.0.add(len) != 0 {
+                    len += 1;
+                }
+                let parsing_name =
+                    String::from_utf16_lossy(std::slice::from_raw_parts(parsing_name_ptr.0, len));
+
                 windows::Win32::System::Com::CoTaskMemFree(Some(display_name_ptr.0 as *const _));
                 windows::Win32::System::Com::CoTaskMemFree(Some(parsing_name_ptr.0 as *const _));
-                
+
                 let display_name_lower = display_name.to_lowercase();
                 if display_name_lower.contains("uninstall")
                     || display_name_lower.contains("help")
@@ -4253,11 +5192,11 @@ fn scan_apps() -> Vec<AppInfo> {
                     || path_lower.ends_with(".zip")
                     || path_lower.ends_with(".rar")
                     || path_lower.ends_with(".7z");
-                
+
                 if is_document {
                     continue;
                 }
-                
+
                 apps.push(AppInfo {
                     name: display_name,
                     path: parsing_name,
@@ -4265,7 +5204,7 @@ fn scan_apps() -> Vec<AppInfo> {
             }
         }
     }
-    
+
     apps.sort_by(|a, b| a.name.cmp(&b.name));
     apps.dedup_by(|a, b| a.name == b.name);
     apps
@@ -4282,27 +5221,180 @@ struct QuickAction {
 }
 
 static QUICK_ACTIONS: &[QuickAction] = &[
-    QuickAction { triggers: &["settings", "preferences", "options", "general", "advanced", "shortcuts", "launcher settings"], name: "Open Settings", breadcrumb: "Settings & Management > Open Settings", launch_command: "action:open_settings", description: "Open settings folder to edit index.db or configs manually." },
-    QuickAction { triggers: &["about", "copy version"], name: "About / Copy Version", breadcrumb: "Settings & Management > About", launch_command: "action:copy_version", description: "Copy app version to clipboard." },
-    QuickAction { triggers: &["account", "organizations", "cloud sync", "affiliate dashboard"], name: "Account & Sync", breadcrumb: "Settings & Management > Account", launch_command: "https://github.com/PranshulSoni/Project-Raycast", description: "Manage account and sync settings online." },
-    QuickAction { triggers: &["changelog", "what's new"], name: "Changelog", breadcrumb: "Settings & Management > Changelog", launch_command: "https://github.com/PranshulSoni/Project-Raycast/commits/main", description: "View recent changes on GitHub." },
-    QuickAction { triggers: &["check for app updates", "update app", "check for extension updates"], name: "Check for App Updates", breadcrumb: "Settings & Management > Check for Updates", launch_command: "https://github.com/PranshulSoni/Project-Raycast", description: "Check GitHub repository for new launcher releases." },
-    QuickAction { triggers: &["check for updates", "windows update"], name: "Windows Update", breadcrumb: "System > Settings > Windows Update", launch_command: "ms-settings:windowsupdate", description: "Open Windows Update settings." },
-    QuickAction { triggers: &["copy logs", "show logs", "reveal logs"], name: "Copy / Reveal Logs", breadcrumb: "Settings & Management > Copy Logs", launch_command: "action:copy_logs", description: "Copy log file contents to clipboard." },
-    QuickAction { triggers: &["export settings", "import settings", "export data", "import data"], name: "Export / Import Data", breadcrumb: "Settings & Management > Data", launch_command: "action:open_settings", description: "Open settings folder to backup or restore index.db manually." },
-    QuickAction { triggers: &["open manual", "help", "documentation", "show onboarding"], name: "Open Manual", breadcrumb: "Settings & Management > Manual", launch_command: "https://github.com/PranshulSoni/Project-Raycast#readme", description: "Open documentation and onboarding guide." },
-    QuickAction { triggers: &["store", "share"], name: "Store & Share", breadcrumb: "Settings & Management > Store", launch_command: "https://github.com/PranshulSoni/Project-Raycast", description: "Visit the extension store or share the app." },
-    QuickAction { triggers: &["quick look"], name: "Quick Look", breadcrumb: "Settings & Management > Quick Look", launch_command: "action:quick_look", description: "Preview selected file (simulated)." },
-    QuickAction { triggers: &["set volume to 0%", "mute"], name: "Set Volume to 0%", breadcrumb: "System > Volume > 0%", launch_command: "action:volume:0", description: "Mute volume." },
-    QuickAction { triggers: &["set volume to 25%"], name: "Set Volume to 25%", breadcrumb: "System > Volume > 25%", launch_command: "action:volume:25", description: "Set volume to 25%." },
-    QuickAction { triggers: &["set volume to 50%"], name: "Set Volume to 50%", breadcrumb: "System > Volume > 50%", launch_command: "action:volume:50", description: "Set volume to 50%." },
-    QuickAction { triggers: &["set volume to 75%"], name: "Set Volume to 75%", breadcrumb: "System > Volume > 75%", launch_command: "action:volume:75", description: "Set volume to 75%." },
-    QuickAction { triggers: &["set volume to 100%", "max volume"], name: "Set Volume to 100%", breadcrumb: "System > Volume > 100%", launch_command: "action:volume:100", description: "Set volume to 100%." },
-    QuickAction { triggers: &["toggle theme", "dark mode", "light mode", "toggle system appearance"], name: "Toggle System Appearance", breadcrumb: "System > Personalization > Toggle Theme", launch_command: "action:toggle_theme", description: "Toggle Windows between Dark and Light mode." },
-    QuickAction { triggers: &["quit all apps"], name: "Quit All Apps", breadcrumb: "System > Quit All Apps", launch_command: "action:quit_all_apps", description: "Close all running applications." },
-    QuickAction { triggers: &["quit all apps except frontmost", "quit other apps"], name: "Quit All Apps Except Frontmost", breadcrumb: "System > Quit Other Apps", launch_command: "action:quit_other_apps", description: "Close all applications except the active one." },
-    QuickAction { triggers: &["hide all apps except frontmost", "hide other apps"], name: "Hide All Apps Except Frontmost", breadcrumb: "System > Hide Other Apps", launch_command: "action:hide_other_apps", description: "Minimize all windows except the active one." },
-    QuickAction { triggers: &["toggle hdr"], name: "Toggle HDR", breadcrumb: "System > Display > Toggle HDR", launch_command: "action:toggle_hdr", description: "Toggle HDR on/off via Win+Alt+B." },
+    QuickAction {
+        triggers: &[
+            "settings",
+            "preferences",
+            "options",
+            "general",
+            "advanced",
+            "shortcuts",
+            "launcher settings",
+        ],
+        name: "Open Settings",
+        breadcrumb: "Settings & Management > Open Settings",
+        launch_command: "action:open_settings",
+        description: "Open settings folder to edit index.db or configs manually.",
+    },
+    QuickAction {
+        triggers: &["about", "copy version"],
+        name: "About / Copy Version",
+        breadcrumb: "Settings & Management > About",
+        launch_command: "action:copy_version",
+        description: "Copy app version to clipboard.",
+    },
+    QuickAction {
+        triggers: &[
+            "account",
+            "organizations",
+            "cloud sync",
+            "affiliate dashboard",
+        ],
+        name: "Account & Sync",
+        breadcrumb: "Settings & Management > Account",
+        launch_command: "https://github.com/PranshulSoni/Project-Raycast",
+        description: "Manage account and sync settings online.",
+    },
+    QuickAction {
+        triggers: &["changelog", "what's new"],
+        name: "Changelog",
+        breadcrumb: "Settings & Management > Changelog",
+        launch_command: "https://github.com/PranshulSoni/Project-Raycast/commits/main",
+        description: "View recent changes on GitHub.",
+    },
+    QuickAction {
+        triggers: &[
+            "check for app updates",
+            "update app",
+            "check for extension updates",
+        ],
+        name: "Check for App Updates",
+        breadcrumb: "Settings & Management > Check for Updates",
+        launch_command: "https://github.com/PranshulSoni/Project-Raycast",
+        description: "Check GitHub repository for new launcher releases.",
+    },
+    QuickAction {
+        triggers: &["check for updates", "windows update"],
+        name: "Windows Update",
+        breadcrumb: "System > Settings > Windows Update",
+        launch_command: "ms-settings:windowsupdate",
+        description: "Open Windows Update settings.",
+    },
+    QuickAction {
+        triggers: &["copy logs", "show logs", "reveal logs"],
+        name: "Copy / Reveal Logs",
+        breadcrumb: "Settings & Management > Copy Logs",
+        launch_command: "action:copy_logs",
+        description: "Copy log file contents to clipboard.",
+    },
+    QuickAction {
+        triggers: &[
+            "export settings",
+            "import settings",
+            "export data",
+            "import data",
+        ],
+        name: "Export / Import Data",
+        breadcrumb: "Settings & Management > Data",
+        launch_command: "action:open_settings",
+        description: "Open settings folder to backup or restore index.db manually.",
+    },
+    QuickAction {
+        triggers: &["open manual", "help", "documentation", "show onboarding"],
+        name: "Open Manual",
+        breadcrumb: "Settings & Management > Manual",
+        launch_command: "https://github.com/PranshulSoni/Project-Raycast#readme",
+        description: "Open documentation and onboarding guide.",
+    },
+    QuickAction {
+        triggers: &["store", "share"],
+        name: "Store & Share",
+        breadcrumb: "Settings & Management > Store",
+        launch_command: "https://github.com/PranshulSoni/Project-Raycast",
+        description: "Visit the extension store or share the app.",
+    },
+    QuickAction {
+        triggers: &["quick look"],
+        name: "Quick Look",
+        breadcrumb: "Settings & Management > Quick Look",
+        launch_command: "action:quick_look",
+        description: "Preview selected file (simulated).",
+    },
+    QuickAction {
+        triggers: &["set volume to 0%", "mute"],
+        name: "Set Volume to 0%",
+        breadcrumb: "System > Volume > 0%",
+        launch_command: "action:volume:0",
+        description: "Mute volume.",
+    },
+    QuickAction {
+        triggers: &["set volume to 25%"],
+        name: "Set Volume to 25%",
+        breadcrumb: "System > Volume > 25%",
+        launch_command: "action:volume:25",
+        description: "Set volume to 25%.",
+    },
+    QuickAction {
+        triggers: &["set volume to 50%"],
+        name: "Set Volume to 50%",
+        breadcrumb: "System > Volume > 50%",
+        launch_command: "action:volume:50",
+        description: "Set volume to 50%.",
+    },
+    QuickAction {
+        triggers: &["set volume to 75%"],
+        name: "Set Volume to 75%",
+        breadcrumb: "System > Volume > 75%",
+        launch_command: "action:volume:75",
+        description: "Set volume to 75%.",
+    },
+    QuickAction {
+        triggers: &["set volume to 100%", "max volume"],
+        name: "Set Volume to 100%",
+        breadcrumb: "System > Volume > 100%",
+        launch_command: "action:volume:100",
+        description: "Set volume to 100%.",
+    },
+    QuickAction {
+        triggers: &[
+            "toggle theme",
+            "dark mode",
+            "light mode",
+            "toggle system appearance",
+        ],
+        name: "Toggle System Appearance",
+        breadcrumb: "System > Personalization > Toggle Theme",
+        launch_command: "action:toggle_theme",
+        description: "Toggle Windows between Dark and Light mode.",
+    },
+    QuickAction {
+        triggers: &["quit all apps"],
+        name: "Quit All Apps",
+        breadcrumb: "System > Quit All Apps",
+        launch_command: "action:quit_all_apps",
+        description: "Close all running applications.",
+    },
+    QuickAction {
+        triggers: &["quit all apps except frontmost", "quit other apps"],
+        name: "Quit All Apps Except Frontmost",
+        breadcrumb: "System > Quit Other Apps",
+        launch_command: "action:quit_other_apps",
+        description: "Close all applications except the active one.",
+    },
+    QuickAction {
+        triggers: &["hide all apps except frontmost", "hide other apps"],
+        name: "Hide All Apps Except Frontmost",
+        breadcrumb: "System > Hide Other Apps",
+        launch_command: "action:hide_other_apps",
+        description: "Minimize all windows except the active one.",
+    },
+    QuickAction {
+        triggers: &["toggle hdr"],
+        name: "Toggle HDR",
+        breadcrumb: "System > Display > Toggle HDR",
+        launch_command: "action:toggle_hdr",
+        description: "Toggle HDR on/off via Win+Alt+B.",
+    },
     QuickAction {
         triggers: &["move to desktop 1", "move to virtual desktop 1"],
         name: "Move to Desktop 1",
@@ -4437,7 +5529,11 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Switch to virtual desktop 9.",
     },
     QuickAction {
-        triggers: &["open desktop 10", "switch to desktop 10", "go to desktop 10"],
+        triggers: &[
+            "open desktop 10",
+            "switch to desktop 10",
+            "go to desktop 10",
+        ],
         name: "Open Desktop 10",
         breadcrumb: "Window Management > Open Desktop 10",
         launch_command: "action:window:open_desktop_10",
@@ -4472,7 +5568,10 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Move the active window to the next virtual desktop.",
     },
     QuickAction {
-        triggers: &["move to previous desktop", "move to previous virtual desktop"],
+        triggers: &[
+            "move to previous desktop",
+            "move to previous virtual desktop",
+        ],
         name: "Move to Previous Desktop",
         breadcrumb: "Window Management > Move to Previous Desktop",
         launch_command: "action:window:move_previous_desktop",
@@ -4507,7 +5606,13 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Lock the screen immediately.",
     },
     QuickAction {
-        triggers: &["shutdown", "shut down", "power off", "turn off computer", "turn off pc"],
+        triggers: &[
+            "shutdown",
+            "shut down",
+            "power off",
+            "turn off computer",
+            "turn off pc",
+        ],
         name: "Shut Down",
         breadcrumb: "System > Power > Shut down this computer",
         launch_command: "action:shutdown",
@@ -4542,7 +5647,12 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Sign out of Windows.",
     },
     QuickAction {
-        triggers: &["sleep displays", "turn off displays", "turn off monitor", "screen off"],
+        triggers: &[
+            "sleep displays",
+            "turn off displays",
+            "turn off monitor",
+            "screen off",
+        ],
         name: "Sleep Displays",
         breadcrumb: "System > Power > Turn displays off",
         launch_command: "action:sleep_displays",
@@ -4563,14 +5673,22 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Open clipboard history inside the launcher.",
     },
     QuickAction {
-        triggers: &["paste latest screenshot", "paste screenshot", "latest screenshot"],
+        triggers: &[
+            "paste latest screenshot",
+            "paste screenshot",
+            "latest screenshot",
+        ],
         name: "Paste Latest Screenshot",
         breadcrumb: "Screenshots > Paste latest screenshot",
         launch_command: "action:paste_latest_screenshot",
         description: "Paste the newest screenshot from Clipboard History.",
     },
     QuickAction {
-        triggers: &["reset window position", "reset launcher window", "center launcher"],
+        triggers: &[
+            "reset window position",
+            "reset launcher window",
+            "center launcher",
+        ],
         name: "Reset Window Position",
         breadcrumb: "Settings > Launcher > Reset window position",
         launch_command: "action:reset_window_position",
@@ -4598,21 +5716,36 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Open the Windows Run dialog.",
     },
     QuickAction {
-        triggers: &["quit active app", "close active app", "close current window", "close foreground window"],
+        triggers: &[
+            "quit active app",
+            "close active app",
+            "close current window",
+            "close foreground window",
+        ],
         name: "Quit Active App",
         breadcrumb: "Windows > Active app > Close",
         launch_command: "action:quit_active_app",
         description: "Ask the previously active app window to close.",
     },
     QuickAction {
-        triggers: &["empty recycle bin", "clear recycle bin", "empty trash", "recycle bin"],
+        triggers: &[
+            "empty recycle bin",
+            "clear recycle bin",
+            "empty trash",
+            "recycle bin",
+        ],
         name: "Empty Recycle Bin",
         breadcrumb: "System > Storage > Empty the Recycle Bin",
         launch_command: "action:recycle",
         description: "Permanently delete all items in the Recycle Bin.",
     },
     QuickAction {
-        triggers: &["open recycle bin", "recycle bin folder", "open trash", "trash folder"],
+        triggers: &[
+            "open recycle bin",
+            "recycle bin folder",
+            "open trash",
+            "trash folder",
+        ],
         name: "Open Recycle Bin",
         breadcrumb: "File System > Recycle Bin",
         launch_command: "action:open_recycle_bin",
@@ -4640,7 +5773,12 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Open the Documents folder.",
     },
     QuickAction {
-        triggers: &["open pictures", "pictures folder", "my pictures", "photos folder"],
+        triggers: &[
+            "open pictures",
+            "pictures folder",
+            "my pictures",
+            "photos folder",
+        ],
         name: "Open Pictures",
         breadcrumb: "File System > User > Pictures",
         launch_command: "action:folder:pictures",
@@ -4696,7 +5834,12 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Open the Windows Registry Editor.",
     },
     QuickAction {
-        triggers: &["open environment variables", "environment variables", "env variables", "path variable"],
+        triggers: &[
+            "open environment variables",
+            "environment variables",
+            "env variables",
+            "path variable",
+        ],
         name: "Environment Variables",
         breadcrumb: "System > Advanced System Settings > Environment Variables",
         launch_command: "action:envvars",
@@ -4718,21 +5861,39 @@ static QUICK_ACTIONS: &[QuickAction] = &[
     },
     // ── Windows Settings ────────────────────────────────────────────────────
     QuickAction {
-        triggers: &["wifi", "wifi settings", "wireless", "network settings", "connect wifi"],
+        triggers: &[
+            "wifi",
+            "wifi settings",
+            "wireless",
+            "network settings",
+            "connect wifi",
+        ],
         name: "Wi-Fi Settings",
         breadcrumb: "Settings > Network & Internet > Wi-Fi",
         launch_command: "ms-settings:network-wifi",
         description: "Manage Wi-Fi connections.",
     },
     QuickAction {
-        triggers: &["bluetooth", "bluetooth settings", "pair device", "bluetooth devices"],
+        triggers: &[
+            "bluetooth",
+            "bluetooth settings",
+            "pair device",
+            "bluetooth devices",
+        ],
         name: "Bluetooth Settings",
         breadcrumb: "Settings > Bluetooth & Devices",
         launch_command: "ms-settings:bluetooth",
         description: "Pair and manage Bluetooth devices.",
     },
     QuickAction {
-        triggers: &["display settings", "screen resolution", "resolution", "display", "monitor", "brightness"],
+        triggers: &[
+            "display settings",
+            "screen resolution",
+            "resolution",
+            "display",
+            "monitor",
+            "brightness",
+        ],
         name: "Display Settings",
         breadcrumb: "Settings > System > Display",
         launch_command: "ms-settings:display",
@@ -4746,56 +5907,104 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Reduce blue light with Night Light.",
     },
     QuickAction {
-        triggers: &["sound settings", "audio settings", "volume settings", "sound output", "speaker", "microphone"],
+        triggers: &[
+            "sound settings",
+            "audio settings",
+            "volume settings",
+            "sound output",
+            "speaker",
+            "microphone",
+        ],
         name: "Sound Settings",
         breadcrumb: "Settings > System > Sound",
         launch_command: "ms-settings:sound",
         description: "Manage audio output and input devices.",
     },
     QuickAction {
-        triggers: &["notifications", "notification settings", "do not disturb", "focus assist", "app notifications"],
+        triggers: &[
+            "notifications",
+            "notification settings",
+            "do not disturb",
+            "focus assist",
+            "app notifications",
+        ],
         name: "Notification Settings",
         breadcrumb: "Settings > System > Notifications",
         launch_command: "ms-settings:notifications",
         description: "Control app notifications and Do Not Disturb.",
     },
     QuickAction {
-        triggers: &["power settings", "battery settings", "sleep settings", "power plan", "battery saver"],
+        triggers: &[
+            "power settings",
+            "battery settings",
+            "sleep settings",
+            "power plan",
+            "battery saver",
+        ],
         name: "Power & Battery Settings",
         breadcrumb: "Settings > System > Power & Battery",
         launch_command: "ms-settings:powersleep",
         description: "Configure power plan and battery saver.",
     },
     QuickAction {
-        triggers: &["apps settings", "installed apps", "uninstall app", "remove app", "add remove programs"],
+        triggers: &[
+            "apps settings",
+            "installed apps",
+            "uninstall app",
+            "remove app",
+            "add remove programs",
+        ],
         name: "Installed Apps",
         breadcrumb: "Settings > Apps > Installed Apps",
         launch_command: "ms-settings:appsfeatures",
         description: "View, modify or uninstall installed apps.",
     },
     QuickAction {
-        triggers: &["default apps", "default browser", "set default", "default programs"],
+        triggers: &[
+            "default apps",
+            "default browser",
+            "set default",
+            "default programs",
+        ],
         name: "Default Apps",
         breadcrumb: "Settings > Apps > Default Apps",
         launch_command: "ms-settings:defaultapps",
         description: "Set default apps for file types and protocols.",
     },
     QuickAction {
-        triggers: &["startup apps", "startup programs", "autostart", "apps on startup"],
+        triggers: &[
+            "startup apps",
+            "startup programs",
+            "autostart",
+            "apps on startup",
+        ],
         name: "Startup Apps",
         breadcrumb: "Settings > Apps > Startup",
         launch_command: "ms-settings:startupapps",
         description: "Control which apps launch on startup.",
     },
     QuickAction {
-        triggers: &["accounts", "account settings", "your info", "microsoft account", "user account"],
+        triggers: &[
+            "accounts",
+            "account settings",
+            "your info",
+            "microsoft account",
+            "user account",
+        ],
         name: "Your Account",
         breadcrumb: "Settings > Accounts > Your Info",
         launch_command: "ms-settings:yourinfo",
         description: "View your Microsoft account info.",
     },
     QuickAction {
-        triggers: &["sign in options", "pin", "windows hello", "fingerprint", "face recognition", "password settings"],
+        triggers: &[
+            "sign in options",
+            "pin",
+            "windows hello",
+            "fingerprint",
+            "face recognition",
+            "password settings",
+        ],
         name: "Sign-In Options",
         breadcrumb: "Settings > Accounts > Sign-In Options",
         launch_command: "ms-settings:signinoptions",
@@ -4816,21 +6025,39 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Configure proxy for network connections.",
     },
     QuickAction {
-        triggers: &["windows update", "check updates", "update windows", "updates"],
+        triggers: &[
+            "windows update",
+            "check updates",
+            "update windows",
+            "updates",
+        ],
         name: "Windows Update",
         breadcrumb: "Settings > Windows Update",
         launch_command: "ms-settings:windowsupdate",
         description: "Check for and install Windows updates.",
     },
     QuickAction {
-        triggers: &["storage settings", "disk space", "storage", "storage sense", "free up space"],
+        triggers: &[
+            "storage settings",
+            "disk space",
+            "storage",
+            "storage sense",
+            "free up space",
+        ],
         name: "Storage Settings",
         breadcrumb: "Settings > System > Storage",
         launch_command: "ms-settings:storagesense",
         description: "Manage disk storage and Storage Sense.",
     },
     QuickAction {
-        triggers: &["privacy settings", "privacy", "location", "camera access", "microphone access", "app permissions"],
+        triggers: &[
+            "privacy settings",
+            "privacy",
+            "location",
+            "camera access",
+            "microphone access",
+            "app permissions",
+        ],
         name: "Privacy Settings",
         breadcrumb: "Settings > Privacy & Security",
         launch_command: "ms-settings:privacy",
@@ -4851,35 +6078,65 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Control which apps can access your camera.",
     },
     QuickAction {
-        triggers: &["date time settings", "date and time", "clock settings", "time zone", "set time"],
+        triggers: &[
+            "date time settings",
+            "date and time",
+            "clock settings",
+            "time zone",
+            "set time",
+        ],
         name: "Date & Time Settings",
         breadcrumb: "Settings > Time & Language > Date & Time",
         launch_command: "ms-settings:dateandtime",
         description: "Set date, time and time zone.",
     },
     QuickAction {
-        triggers: &["language settings", "region settings", "keyboard language", "input language", "add language"],
+        triggers: &[
+            "language settings",
+            "region settings",
+            "keyboard language",
+            "input language",
+            "add language",
+        ],
         name: "Language & Region",
         breadcrumb: "Settings > Time & Language > Language & Region",
         launch_command: "ms-settings:regionlanguage",
         description: "Add or change display and input language.",
     },
     QuickAction {
-        triggers: &["mouse settings", "pointer speed", "scroll speed", "mouse buttons"],
+        triggers: &[
+            "mouse settings",
+            "pointer speed",
+            "scroll speed",
+            "mouse buttons",
+        ],
         name: "Mouse Settings",
         breadcrumb: "Settings > Bluetooth & Devices > Mouse",
         launch_command: "ms-settings:mousetouchpad",
         description: "Configure mouse pointer and scroll settings.",
     },
     QuickAction {
-        triggers: &["touchpad settings", "trackpad", "gestures", "touchpad sensitivity"],
+        triggers: &[
+            "touchpad settings",
+            "trackpad",
+            "gestures",
+            "touchpad sensitivity",
+        ],
         name: "Touchpad Settings",
         breadcrumb: "Settings > Bluetooth & Devices > Touchpad",
         launch_command: "ms-settings:devices-touchpad",
         description: "Configure touchpad gestures and sensitivity.",
     },
     QuickAction {
-        triggers: &["personalization", "wallpaper", "desktop background", "theme", "dark mode", "light mode", "colors"],
+        triggers: &[
+            "personalization",
+            "wallpaper",
+            "desktop background",
+            "theme",
+            "dark mode",
+            "light mode",
+            "colors",
+        ],
         name: "Personalization",
         breadcrumb: "Settings > Personalization",
         launch_command: "ms-settings:personalization",
@@ -4893,7 +6150,14 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Customize the taskbar.",
     },
     QuickAction {
-        triggers: &["accessibility", "ease of access", "narrator", "magnifier", "high contrast", "color filters"],
+        triggers: &[
+            "accessibility",
+            "ease of access",
+            "narrator",
+            "magnifier",
+            "high contrast",
+            "color filters",
+        ],
         name: "Accessibility Settings",
         breadcrumb: "Settings > Accessibility",
         launch_command: "ms-settings:easeofaccess-display",
@@ -4907,7 +6171,12 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Enable developer mode and sideloading.",
     },
     QuickAction {
-        triggers: &["activate windows", "windows activation", "product key", "license"],
+        triggers: &[
+            "activate windows",
+            "windows activation",
+            "product key",
+            "license",
+        ],
         name: "Windows Activation",
         breadcrumb: "Settings > System > Activation",
         launch_command: "ms-settings:activation",
@@ -4915,49 +6184,97 @@ static QUICK_ACTIONS: &[QuickAction] = &[
     },
     // ── System Control Actions ───────────────────────────────────────────────
     QuickAction {
-        triggers: &["restart explorer", "restart explorer.exe", "restart file explorer", "restart taskbar", "explorer restart"],
+        triggers: &[
+            "restart explorer",
+            "restart explorer.exe",
+            "restart file explorer",
+            "restart taskbar",
+            "explorer restart",
+        ],
         name: "Restart Explorer",
         breadcrumb: "System > Process > Restart Windows Explorer",
         launch_command: "action:restart_explorer",
         description: "Kill and restart Windows Explorer (shell).",
     },
     QuickAction {
-        triggers: &["volume up", "increase volume", "louder", "turn up volume", "volume increase"],
+        triggers: &[
+            "volume up",
+            "increase volume",
+            "louder",
+            "turn up volume",
+            "volume increase",
+        ],
         name: "Volume Up",
         breadcrumb: "System > Audio > Increase master volume",
         launch_command: "action:volume_up",
         description: "Increase master volume by 10%.",
     },
     QuickAction {
-        triggers: &["volume down", "decrease volume", "quieter", "turn down volume", "volume decrease", "lower volume"],
+        triggers: &[
+            "volume down",
+            "decrease volume",
+            "quieter",
+            "turn down volume",
+            "volume decrease",
+            "lower volume",
+        ],
         name: "Volume Down",
         breadcrumb: "System > Audio > Decrease master volume",
         launch_command: "action:volume_down",
         description: "Decrease master volume by 10%.",
     },
     QuickAction {
-        triggers: &["mute", "unmute", "toggle mute", "mute volume", "silence", "toggle volume"],
+        triggers: &[
+            "mute",
+            "unmute",
+            "toggle mute",
+            "mute volume",
+            "silence",
+            "toggle volume",
+        ],
         name: "Toggle Mute",
         breadcrumb: "System > Audio > Toggle mute/unmute",
         launch_command: "action:toggle_mute",
         description: "Toggle master audio mute on/off.",
     },
     QuickAction {
-        triggers: &["toggle bluetooth", "bluetooth on", "bluetooth off", "turn on bluetooth", "turn off bluetooth", "bt toggle"],
+        triggers: &[
+            "toggle bluetooth",
+            "bluetooth on",
+            "bluetooth off",
+            "turn on bluetooth",
+            "turn off bluetooth",
+            "bt toggle",
+        ],
         name: "Toggle Bluetooth",
         breadcrumb: "System > Bluetooth > Toggle on/off",
         launch_command: "action:toggle_bluetooth",
         description: "Toggle Bluetooth radio on or off.",
     },
     QuickAction {
-        triggers: &["toggle wifi", "wifi on", "wifi off", "turn on wifi", "turn off wifi", "airplane mode", "toggle wireless"],
+        triggers: &[
+            "toggle wifi",
+            "wifi on",
+            "wifi off",
+            "turn on wifi",
+            "turn off wifi",
+            "airplane mode",
+            "toggle wireless",
+        ],
         name: "Toggle Wi-Fi",
         breadcrumb: "System > Network > Toggle Wi-Fi on/off",
         launch_command: "action:toggle_wifi",
         description: "Toggle Wi-Fi radio on or off.",
     },
     QuickAction {
-        triggers: &["ip config", "ip address", "my ip", "show ip", "ipconfig", "network info"],
+        triggers: &[
+            "ip config",
+            "ip address",
+            "my ip",
+            "show ip",
+            "ipconfig",
+            "network info",
+        ],
         name: "Show IP Configuration",
         breadcrumb: "Network > IP > Show IP configuration",
         launch_command: "action:ipconfig",
@@ -4978,84 +6295,155 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Renew the DHCP IP address.",
     },
     QuickAction {
-        triggers: &["event viewer", "event log", "events", "view events", "windows logs"],
+        triggers: &[
+            "event viewer",
+            "event log",
+            "events",
+            "view events",
+            "windows logs",
+        ],
         name: "Event Viewer",
         breadcrumb: "System > Diagnostics > Event Viewer",
         launch_command: "eventvwr.msc",
         description: "Open Windows Event Viewer.",
     },
     QuickAction {
-        triggers: &["device manager", "devices", "hardware", "driver manager", "device settings"],
+        triggers: &[
+            "device manager",
+            "devices",
+            "hardware",
+            "driver manager",
+            "device settings",
+        ],
         name: "Device Manager",
         breadcrumb: "System > Hardware > Device Manager",
         launch_command: "devmgmt.msc",
         description: "View and manage hardware devices and drivers.",
     },
     QuickAction {
-        triggers: &["services", "services manager", "windows services", "service manager", "start service", "stop service"],
+        triggers: &[
+            "services",
+            "services manager",
+            "windows services",
+            "service manager",
+            "start service",
+            "stop service",
+        ],
         name: "Services Manager",
         breadcrumb: "System > Services > Windows Services",
         launch_command: "services.msc",
         description: "Start, stop or configure Windows services.",
     },
     QuickAction {
-        triggers: &["disk cleanup", "clean disk", "free up disk", "disk cleanup tool", "cleanup"],
+        triggers: &[
+            "disk cleanup",
+            "clean disk",
+            "free up disk",
+            "disk cleanup tool",
+            "cleanup",
+        ],
         name: "Disk Cleanup",
         breadcrumb: "System > Storage > Disk Cleanup",
         launch_command: "cleanmgr.exe",
         description: "Free up disk space by removing temporary files.",
     },
     QuickAction {
-        triggers: &["group policy", "gpedit", "group policy editor", "local group policy"],
+        triggers: &[
+            "group policy",
+            "gpedit",
+            "group policy editor",
+            "local group policy",
+        ],
         name: "Group Policy Editor",
         breadcrumb: "System > Advanced > Group Policy Editor",
         launch_command: "gpedit.msc",
         description: "Edit local group policy settings.",
     },
     QuickAction {
-        triggers: &["performance monitor", "perfmon", "performance", "resource monitor", "system performance"],
+        triggers: &[
+            "performance monitor",
+            "perfmon",
+            "performance",
+            "resource monitor",
+            "system performance",
+        ],
         name: "Performance Monitor",
         breadcrumb: "System > Diagnostics > Performance Monitor",
         launch_command: "perfmon.msc",
         description: "Monitor system performance and resource usage.",
     },
     QuickAction {
-        triggers: &["system restore", "restore point", "create restore", "system protection"],
+        triggers: &[
+            "system restore",
+            "restore point",
+            "create restore",
+            "system protection",
+        ],
         name: "System Restore",
         breadcrumb: "System > Recovery > System Restore",
         launch_command: "rundll32.exe shell32.dll,Control_RunDLL sysdm.cpl,,4",
         description: "Configure or start System Restore.",
     },
     QuickAction {
-        triggers: &["system info", "system information", "sysinfo", "computer info", "about pc", "pc info"],
+        triggers: &[
+            "system info",
+            "system information",
+            "sysinfo",
+            "computer info",
+            "about pc",
+            "pc info",
+        ],
         name: "System Information",
         breadcrumb: "System > Info > System Information",
         launch_command: "msinfo32.exe",
         description: "View detailed system hardware and software info.",
     },
     QuickAction {
-        triggers: &["disk management", "partition", "format disk", "manage disks", "volumes"],
+        triggers: &[
+            "disk management",
+            "partition",
+            "format disk",
+            "manage disks",
+            "volumes",
+        ],
         name: "Disk Management",
         breadcrumb: "System > Storage > Disk Management",
         launch_command: "diskmgmt.msc",
         description: "Manage disk partitions and volumes.",
     },
     QuickAction {
-        triggers: &["task scheduler", "scheduled tasks", "schedule task", "auto tasks"],
+        triggers: &[
+            "task scheduler",
+            "scheduled tasks",
+            "schedule task",
+            "auto tasks",
+        ],
         name: "Task Scheduler",
         breadcrumb: "System > Scheduled > Task Scheduler",
         launch_command: "taskschd.msc",
         description: "View and manage scheduled tasks.",
     },
     QuickAction {
-        triggers: &["certificate manager", "certificates", "certmgr", "ssl certificates", "manage certificates"],
+        triggers: &[
+            "certificate manager",
+            "certificates",
+            "certmgr",
+            "ssl certificates",
+            "manage certificates",
+        ],
         name: "Certificate Manager",
         breadcrumb: "System > Security > Certificate Manager",
         launch_command: "certmgr.msc",
         description: "Manage security certificates.",
     },
     QuickAction {
-        triggers: &["local users", "user management", "manage users", "lusrmgr", "local users and groups"],
+        triggers: &[
+            "local users",
+            "user management",
+            "manage users",
+            "lusrmgr",
+            "local users and groups",
+        ],
         name: "Local Users & Groups",
         breadcrumb: "System > Security > Local Users and Groups",
         launch_command: "lusrmgr.msc",
@@ -5069,28 +6457,52 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Manage COM+ applications and DCOM config.",
     },
     QuickAction {
-        triggers: &["shared folders", "file sharing", "shared resources", "network shares", "share folders"],
+        triggers: &[
+            "shared folders",
+            "file sharing",
+            "shared resources",
+            "network shares",
+            "share folders",
+        ],
         name: "Shared Folders",
         breadcrumb: "System > Network > Shared Folders",
         launch_command: "fsmgmt.msc",
         description: "View and manage shared folders and sessions.",
     },
     QuickAction {
-        triggers: &["wifi password", "show wifi password", "wireless password", "network key", "wifi key"],
+        triggers: &[
+            "wifi password",
+            "show wifi password",
+            "wireless password",
+            "network key",
+            "wifi key",
+        ],
         name: "Show Wi-Fi Password",
         breadcrumb: "Network > Wi-Fi > Show saved Wi-Fi passwords",
         launch_command: "action:wifi_password",
         description: "Show saved Wi-Fi network passwords.",
     },
     QuickAction {
-        triggers: &["kill process", "end process", "force kill", "kill app", "terminate process"],
+        triggers: &[
+            "kill process",
+            "end process",
+            "force kill",
+            "kill app",
+            "terminate process",
+        ],
         name: "Kill Process by Name",
         breadcrumb: "System > Process > Kill a running process",
         launch_command: "action:kill_process_prompt",
         description: "Type a process name to force-kill it.",
     },
     QuickAction {
-        triggers: &["eject cd", "eject disk", "open tray", "eject dvd", "open cd tray"],
+        triggers: &[
+            "eject cd",
+            "eject disk",
+            "open tray",
+            "eject dvd",
+            "open cd tray",
+        ],
         name: "Eject CD/DVD Tray",
         breadcrumb: "System > Hardware > Eject optical disc tray",
         launch_command: "action:eject_cd",
@@ -5202,14 +6614,22 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Tile the active window to the top right quarter.",
     },
     QuickAction {
-        triggers: &["bottom left quarter", "snap bottom left", "tile bottom left"],
+        triggers: &[
+            "bottom left quarter",
+            "snap bottom left",
+            "tile bottom left",
+        ],
         name: "Tile Bottom Left Quarter",
         breadcrumb: "Window Management > Bottom Left Quarter",
         launch_command: "action:window:bottom_left_quarter",
         description: "Tile the active window to the bottom left quarter.",
     },
     QuickAction {
-        triggers: &["bottom right quarter", "snap bottom right", "tile bottom right"],
+        triggers: &[
+            "bottom right quarter",
+            "snap bottom right",
+            "tile bottom right",
+        ],
         name: "Tile Bottom Right Quarter",
         breadcrumb: "Window Management > Bottom Right Quarter",
         launch_command: "action:window:bottom_right_quarter",
@@ -5524,7 +6944,12 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Tile the active window to the center two thirds.",
     },
     QuickAction {
-        triggers: &["toggle always on top", "always on top", "pin window", "pin on top"],
+        triggers: &[
+            "toggle always on top",
+            "always on top",
+            "pin window",
+            "pin on top",
+        ],
         name: "Toggle Always on Top",
         breadcrumb: "Window Management > Always on Top",
         launch_command: "action:window:toggle_always_on_top",
@@ -5587,7 +7012,13 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Import quicklinks from quicklinks_import.json on your Desktop.",
     },
     QuickAction {
-        triggers: &["mute", "mute sound", "silence pc", "mute volume", "turn off sound"],
+        triggers: &[
+            "mute",
+            "mute sound",
+            "silence pc",
+            "mute volume",
+            "turn off sound",
+        ],
         name: "Mute Audio",
         breadcrumb: "System > Audio > Mute sound output",
         launch_command: "action:mute",
@@ -5601,7 +7032,12 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Unmute the master system audio volume.",
     },
     QuickAction {
-        triggers: &["toggle hidden files", "show hidden files", "hide hidden files", "hidden folders"],
+        triggers: &[
+            "toggle hidden files",
+            "show hidden files",
+            "hide hidden files",
+            "hidden folders",
+        ],
         name: "Toggle Hidden Files",
         breadcrumb: "System > Explorer > Show or hide hidden files",
         launch_command: "action:toggle_hidden_files",
@@ -5636,14 +7072,27 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Stop media playback.",
     },
     QuickAction {
-        triggers: &["night light", "nightlight", "blue light settings", "screen warmth"],
+        triggers: &[
+            "night light",
+            "nightlight",
+            "blue light settings",
+            "screen warmth",
+        ],
         name: "Night Light Settings",
         breadcrumb: "System > Display > Night Light settings",
         launch_command: "ms-settings:nightlight",
         description: "Open the Display settings page to toggle or configure Night Light.",
     },
     QuickAction {
-        triggers: &["color picker", "colorpicker", "picker", "hex picker", "eye dropper", "eyedropper", "pick color"],
+        triggers: &[
+            "color picker",
+            "colorpicker",
+            "picker",
+            "hex picker",
+            "eye dropper",
+            "eyedropper",
+            "pick color",
+        ],
         name: "Color Picker",
         breadcrumb: "System > GDI > Capture screen pixel color",
         launch_command: "action:color_picker",
@@ -5651,10 +7100,11 @@ static QUICK_ACTIONS: &[QuickAction] = &[
     },
 ];
 
-
 fn get_quick_actions(query: &str) -> Vec<SearchResult> {
     let q = query.trim().to_lowercase();
-    if q.len() < 2 { return vec![]; }
+    if q.len() < 2 {
+        return vec![];
+    }
 
     let mut matches = Vec::new();
     for action in QUICK_ACTIONS {
@@ -5678,12 +7128,18 @@ fn get_quick_actions(query: &str) -> Vec<SearchResult> {
                 let matched = q_words.iter().filter(|w| t_words.contains(w)).count();
                 if matched > 0 {
                     let ratio = matched as f32 / q_words.len().max(1) as f32;
-                    if ratio >= 0.5 { 1.5 + ratio } else { 0.0 }
+                    if ratio >= 0.5 {
+                        1.5 + ratio
+                    } else {
+                        0.0
+                    }
                 } else {
                     0.0
                 }
             };
-            if score > best_score { best_score = score; }
+            if score > best_score {
+                best_score = score;
+            }
         }
         if best_score > 0.0 {
             matches.push(SearchResult {
@@ -5700,7 +7156,11 @@ fn get_quick_actions(query: &str) -> Vec<SearchResult> {
             });
         }
     }
-    matches.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    matches.sort_unstable_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     matches
 }
 
@@ -5711,7 +7171,9 @@ fn get_quick_actions(query: &str) -> Vec<SearchResult> {
 pub fn try_calc(input: &str) -> Option<f64> {
     let s = input.trim();
     // Must contain at least one digit to be a math expression
-    if !s.chars().any(|c| c.is_ascii_digit()) { return None; }
+    if !s.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
 
     // Handle "X% of Y" shorthand
     let s = if let Some(pct_of) = try_pct_of(s) {
@@ -5725,10 +7187,14 @@ pub fn try_calc(input: &str) -> Option<f64> {
     let result = parse_expr(&tokens, &mut pos)?;
     // Consume any trailing whitespace tokens
     while pos < tokens.len() {
-        if tokens[pos] != Token::EOF { return None; }
+        if tokens[pos] != Token::EOF {
+            return None;
+        }
         pos += 1;
     }
-    if result.is_nan() || result.is_infinite() { return None; }
+    if result.is_nan() || result.is_infinite() {
+        return None;
+    }
     Some(result)
 }
 
@@ -5746,8 +7212,14 @@ fn try_pct_of(s: &str) -> Option<f64> {
 #[derive(Debug, PartialEq, Clone)]
 enum Token {
     Num(f64),
-    Plus, Minus, Star, Slash, Caret, Percent,
-    LParen, RParen,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Caret,
+    Percent,
+    LParen,
+    RParen,
     Ident(String),
     EOF,
 }
@@ -5758,26 +7230,58 @@ fn tokenize(s: &str) -> Option<Vec<Token>> {
     let mut i = 0;
     while i < chars.len() {
         match chars[i] {
-            ' ' | '\t' => { i += 1; }
-            '+' => { tokens.push(Token::Plus);    i += 1; }
-            '-' => { tokens.push(Token::Minus);   i += 1; }
-            '*' | '×' => { tokens.push(Token::Star);  i += 1; }
-            '/' | '÷' => { tokens.push(Token::Slash); i += 1; }
-            '^' => { tokens.push(Token::Caret);   i += 1; }
-            '%' => { tokens.push(Token::Percent); i += 1; }
-            '(' => { tokens.push(Token::LParen);  i += 1; }
-            ')' => { tokens.push(Token::RParen);  i += 1; }
-            ',' => { i += 1; } // ignore comma separators
+            ' ' | '\t' => {
+                i += 1;
+            }
+            '+' => {
+                tokens.push(Token::Plus);
+                i += 1;
+            }
+            '-' => {
+                tokens.push(Token::Minus);
+                i += 1;
+            }
+            '*' | '×' => {
+                tokens.push(Token::Star);
+                i += 1;
+            }
+            '/' | '÷' => {
+                tokens.push(Token::Slash);
+                i += 1;
+            }
+            '^' => {
+                tokens.push(Token::Caret);
+                i += 1;
+            }
+            '%' => {
+                tokens.push(Token::Percent);
+                i += 1;
+            }
+            '(' => {
+                tokens.push(Token::LParen);
+                i += 1;
+            }
+            ')' => {
+                tokens.push(Token::RParen);
+                i += 1;
+            }
+            ',' => {
+                i += 1;
+            } // ignore comma separators
             c if c.is_ascii_digit() || c == '.' => {
                 let start = i;
-                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') { i += 1; }
+                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                    i += 1;
+                }
                 let num_str: String = chars[start..i].iter().collect();
                 let n: f64 = num_str.parse().ok()?;
                 tokens.push(Token::Num(n));
             }
             c if c.is_alphabetic() || c == '_' => {
                 let start = i;
-                while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') { i += 1; }
+                while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                    i += 1;
+                }
                 let word: String = chars[start..i].iter().collect();
                 tokens.push(Token::Ident(word.to_lowercase()));
             }
@@ -5793,8 +7297,14 @@ fn parse_expr(tokens: &[Token], pos: &mut usize) -> Option<f64> {
     let mut left = parse_term(tokens, pos)?;
     loop {
         match tokens.get(*pos) {
-            Some(Token::Plus)  => { *pos += 1; left += parse_term(tokens, pos)?; }
-            Some(Token::Minus) => { *pos += 1; left -= parse_term(tokens, pos)?; }
+            Some(Token::Plus) => {
+                *pos += 1;
+                left += parse_term(tokens, pos)?;
+            }
+            Some(Token::Minus) => {
+                *pos += 1;
+                left -= parse_term(tokens, pos)?;
+            }
             _ => break,
         }
     }
@@ -5806,8 +7316,18 @@ fn parse_term(tokens: &[Token], pos: &mut usize) -> Option<f64> {
     let mut left = parse_power(tokens, pos)?;
     loop {
         match tokens.get(*pos) {
-            Some(Token::Star)    => { *pos += 1; left *= parse_power(tokens, pos)?; }
-            Some(Token::Slash)   => { *pos += 1; let r = parse_power(tokens, pos)?; if r == 0.0 { return None; } left /= r; }
+            Some(Token::Star) => {
+                *pos += 1;
+                left *= parse_power(tokens, pos)?;
+            }
+            Some(Token::Slash) => {
+                *pos += 1;
+                let r = parse_power(tokens, pos)?;
+                if r == 0.0 {
+                    return None;
+                }
+                left /= r;
+            }
             Some(Token::Percent) => {
                 // Check if next token is 'of' (handled earlier) or treat as modulo
                 *pos += 1;
@@ -5854,11 +7374,16 @@ fn parse_unary(tokens: &[Token], pos: &mut usize) -> Option<f64> {
 // primary = number | ident '(' expr ')' | '(' expr ')'
 fn parse_primary(tokens: &[Token], pos: &mut usize) -> Option<f64> {
     match tokens.get(*pos)?.clone() {
-        Token::Num(n) => { *pos += 1; Some(n) }
+        Token::Num(n) => {
+            *pos += 1;
+            Some(n)
+        }
         Token::LParen => {
             *pos += 1;
             let val = parse_expr(tokens, pos)?;
-            if tokens.get(*pos) == Some(&Token::RParen) { *pos += 1; }
+            if tokens.get(*pos) == Some(&Token::RParen) {
+                *pos += 1;
+            }
             Some(val)
         }
         Token::Ident(name) => {
@@ -5867,25 +7392,27 @@ fn parse_primary(tokens: &[Token], pos: &mut usize) -> Option<f64> {
             if tokens.get(*pos) == Some(&Token::LParen) {
                 *pos += 1;
                 let arg = parse_expr(tokens, pos)?;
-                if tokens.get(*pos) == Some(&Token::RParen) { *pos += 1; }
+                if tokens.get(*pos) == Some(&Token::RParen) {
+                    *pos += 1;
+                }
                 match name.as_str() {
                     "sqrt" => Some(arg.sqrt()),
-                    "abs"  => Some(arg.abs()),
-                    "round"=> Some(arg.round()),
-                    "floor"=> Some(arg.floor()),
+                    "abs" => Some(arg.abs()),
+                    "round" => Some(arg.round()),
+                    "floor" => Some(arg.floor()),
                     "ceil" => Some(arg.ceil()),
-                    "sin"  => Some(arg.to_radians().sin()),
-                    "cos"  => Some(arg.to_radians().cos()),
-                    "tan"  => Some(arg.to_radians().tan()),
-                    "log"  => Some(arg.log10()),
-                    "ln"   => Some(arg.ln()),
+                    "sin" => Some(arg.to_radians().sin()),
+                    "cos" => Some(arg.to_radians().cos()),
+                    "tan" => Some(arg.to_radians().tan()),
+                    "log" => Some(arg.log10()),
+                    "ln" => Some(arg.ln()),
                     _ => None,
                 }
             } else {
                 // Named constants
                 match name.as_str() {
                     "pi" | "π" => Some(std::f64::consts::PI),
-                    "e"        => Some(std::f64::consts::E),
+                    "e" => Some(std::f64::consts::E),
                     _ => None,
                 }
             }
@@ -5899,7 +7426,9 @@ fn get_bmp_dimensions(path: &str) -> Option<(i32, i32)> {
     let mut file = std::fs::File::open(path).ok()?;
     let mut header = [0u8; 26];
     file.read_exact(&mut header).ok()?;
-    if &header[0..2] != b"BM" { return None; }
+    if &header[0..2] != b"BM" {
+        return None;
+    }
     let width = i32::from_le_bytes(header[18..22].try_into().ok()?);
     let height = i32::from_le_bytes(header[22..26].try_into().ok()?);
     Some((width.abs(), height.abs()))
@@ -5911,21 +7440,23 @@ fn parse_time_range(query: &str) -> Option<(i64, i64, String)> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
-    
+
     let local_time = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-    
+
     let mut time_zone_info = windows::Win32::System::Time::TIME_ZONE_INFORMATION::default();
     let _ = unsafe { windows::Win32::System::Time::GetTimeZoneInformation(&mut time_zone_info) };
     let _bias_minutes = time_zone_info.Bias;
-    
-    let seconds_since_midnight = (local_time.wHour as i64 * 3600) + (local_time.wMinute as i64 * 60) + local_time.wSecond as i64;
+
+    let seconds_since_midnight = (local_time.wHour as i64 * 3600)
+        + (local_time.wMinute as i64 * 60)
+        + local_time.wSecond as i64;
     let today_start = now - seconds_since_midnight;
     let yesterday_start = today_start - 86400;
-    
+
     let mut start_time = 0;
     let mut end_time = 0;
     let mut time_phrase = "";
-    
+
     if q.contains("yesterday before lunch") {
         time_phrase = "yesterday before lunch";
         start_time = yesterday_start + 8 * 3600;
@@ -5971,12 +7502,15 @@ fn parse_time_range(query: &str) -> Option<(i64, i64, String)> {
         start_time = today_start - 30 * 86400;
         end_time = now;
     }
-    
+
     if !time_phrase.is_empty() {
         let clean_phrase = q.replace(time_phrase, "");
         let mut clean_query = clean_phrase.trim().to_string();
-        
-        for word in &["opened", "edited", "visited", "used", "the", "file", "code", "before", "after", "during", "i", "at"] {
+
+        for word in &[
+            "opened", "edited", "visited", "used", "the", "file", "code", "before", "after",
+            "during", "i", "at",
+        ] {
             if clean_query.starts_with(word) {
                 clean_query = clean_query.strip_prefix(word).unwrap().trim().to_string();
             }
@@ -5984,10 +7518,10 @@ fn parse_time_range(query: &str) -> Option<(i64, i64, String)> {
                 clean_query = clean_query.strip_suffix(word).unwrap().trim().to_string();
             }
         }
-        
+
         return Some((start_time, end_time, clean_query));
     }
-    
+
     None
 }
 
@@ -5998,49 +7532,67 @@ fn parse_sequential_query(query: &str) -> Option<(String, String, i64, i64)> {
         .unwrap_or_default()
         .as_secs() as i64;
     let local_time = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-    let seconds_since_midnight = (local_time.wHour as i64 * 3600) + (local_time.wMinute as i64 * 60) + local_time.wSecond as i64;
+    let seconds_since_midnight = (local_time.wHour as i64 * 3600)
+        + (local_time.wMinute as i64 * 60)
+        + local_time.wSecond as i64;
     let today_start = now - seconds_since_midnight;
     let yesterday_start = today_start - 86400;
 
     let (direction, anchor, time_start, time_end) = if let Some(rest) = q.strip_prefix("after ") {
-        let (app, ts, te) = parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
+        let (app, ts, te) =
+            parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
         ("after".to_string(), app, ts, te)
     } else if let Some(rest) = q.strip_prefix("before ") {
-        let (app, ts, te) = parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
+        let (app, ts, te) =
+            parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
         ("before".to_string(), app, ts, te)
     } else if let Some(rest) = q.strip_prefix("what did i use after ") {
-        let (app, ts, te) = parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
+        let (app, ts, te) =
+            parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
         ("after".to_string(), app, ts, te)
     } else if let Some(rest) = q.strip_prefix("what did i use before ") {
-        let (app, ts, te) = parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
+        let (app, ts, te) =
+            parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
         ("before".to_string(), app, ts, te)
     } else if let Some(rest) = q.strip_prefix("what was i doing after ") {
-        let (app, ts, te) = parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
+        let (app, ts, te) =
+            parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
         ("after".to_string(), app, ts, te)
     } else if let Some(rest) = q.strip_prefix("what was i doing before ") {
-        let (app, ts, te) = parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
+        let (app, ts, te) =
+            parse_sequential_anchor_and_time(rest.trim(), today_start, yesterday_start, now);
         ("before".to_string(), app, ts, te)
     } else if let Some(idx) = q.find(" after ") {
         let app = q[idx + 7..].trim().to_string();
-        let (clean_app, ts, te) = parse_sequential_anchor_and_time(&app, today_start, yesterday_start, now);
+        let (clean_app, ts, te) =
+            parse_sequential_anchor_and_time(&app, today_start, yesterday_start, now);
         ("after".to_string(), clean_app, ts, te)
     } else if let Some(idx) = q.find(" before ") {
         let app = q[idx + 8..].trim().to_string();
-        let (clean_app, ts, te) = parse_sequential_anchor_and_time(&app, today_start, yesterday_start, now);
+        let (clean_app, ts, te) =
+            parse_sequential_anchor_and_time(&app, today_start, yesterday_start, now);
         ("before".to_string(), clean_app, ts, te)
     } else if let Some(idx) = q.find(" then ") {
         let after_app = q[..idx].trim().to_string();
-        let (clean_app, ts, te) = parse_sequential_anchor_and_time(&after_app, today_start, yesterday_start, now);
+        let (clean_app, ts, te) =
+            parse_sequential_anchor_and_time(&after_app, today_start, yesterday_start, now);
         ("after".to_string(), clean_app, ts, te)
     } else {
         return None;
     };
 
-    if anchor.is_empty() { return None; }
+    if anchor.is_empty() {
+        return None;
+    }
     Some((anchor, direction, time_start, time_end))
 }
 
-fn parse_sequential_anchor_and_time(s: &str, today_start: i64, yesterday_start: i64, now: i64) -> (String, i64, i64) {
+fn parse_sequential_anchor_and_time(
+    s: &str,
+    today_start: i64,
+    yesterday_start: i64,
+    now: i64,
+) -> (String, i64, i64) {
     let s = s.trim();
     if s.contains("yesterday") {
         let app = s.replace("yesterday", "").trim().to_string();
@@ -6112,7 +7664,7 @@ fn format_timestamp_local(timestamp: i64) -> String {
         let _ = windows::Win32::Storage::FileSystem::FileTimeToLocalFileTime(&ft, &mut local_ft);
         let _ = windows::Win32::System::Time::FileTimeToSystemTime(&local_ft, &mut st);
     }
-    
+
     let am_pm = if st.wHour >= 12 { "PM" } else { "AM" };
     let hour = if st.wHour == 0 {
         12
@@ -6121,43 +7673,72 @@ fn format_timestamp_local(timestamp: i64) -> String {
     } else {
         st.wHour
     };
-    
-    format!("{:04}-{:02}-{:02} {:02}:{:02} {}", st.wYear, st.wMonth, st.wDay, hour, st.wMinute, am_pm)
+
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02} {}",
+        st.wYear, st.wMonth, st.wDay, hour, st.wMinute, am_pm
+    )
 }
 
 fn extract_path_or_url(text: &str) -> Option<String> {
     // First check for explicit http:// or https:// links
     if let Some(idx) = text.find("https://") {
         let part = &text[idx..];
-        let end = part.find(|c: char| c == ' ' || c == '\t').unwrap_or(part.len());
-        return Some(part[..end].trim_end_matches(|c: char| c == '.' || c == ')' || c == ']').to_string());
+        let end = part
+            .find(|c: char| c == ' ' || c == '\t')
+            .unwrap_or(part.len());
+        return Some(
+            part[..end]
+                .trim_end_matches(|c: char| c == '.' || c == ')' || c == ']')
+                .to_string(),
+        );
     }
     if let Some(idx) = text.find("http://") {
         let part = &text[idx..];
-        let end = part.find(|c: char| c == ' ' || c == '\t').unwrap_or(part.len());
-        return Some(part[..end].trim_end_matches(|c: char| c == '.' || c == ')' || c == ']').to_string());
+        let end = part
+            .find(|c: char| c == ' ' || c == '\t')
+            .unwrap_or(part.len());
+        return Some(
+            part[..end]
+                .trim_end_matches(|c: char| c == '.' || c == ')' || c == ']')
+                .to_string(),
+        );
     }
     // Detect well-known meeting/service domains without protocol prefix in window titles
     let meeting_domains = [
-        "meet.google.com", "zoom.us", "teams.microsoft.com", "teams.live.com",
-        "webex.com", "gotomeeting.com", "bluejeans.com", "whereby.com",
+        "meet.google.com",
+        "zoom.us",
+        "teams.microsoft.com",
+        "teams.live.com",
+        "webex.com",
+        "gotomeeting.com",
+        "bluejeans.com",
+        "whereby.com",
     ];
     for domain in &meeting_domains {
         if let Some(idx) = text.to_lowercase().find(domain) {
             // Walk backwards to find 'https://' or start of token
-            let start = if idx >= 8 && &text[idx-8..idx] == "https://" {
+            let start = if idx >= 8 && &text[idx - 8..idx] == "https://" {
                 idx - 8
-            } else if idx >= 7 && &text[idx-7..idx] == "http://" {
+            } else if idx >= 7 && &text[idx - 7..idx] == "http://" {
                 idx - 7
             } else {
                 // Construct a proper URL
                 let end_of_domain = &text[idx..];
-                let end = end_of_domain.find(|c: char| c == ' ' || c == '\t' || c == '|' || c == '-').unwrap_or(end_of_domain.len());
+                let end = end_of_domain
+                    .find(|c: char| c == ' ' || c == '\t' || c == '|' || c == '-')
+                    .unwrap_or(end_of_domain.len());
                 return Some(format!("https://{}", end_of_domain[..end].trim()));
             };
             let end_text = &text[start..];
-            let end = end_text.find(|c: char| c == ' ' || c == '\t').unwrap_or(end_text.len());
-            return Some(end_text[..end].trim_end_matches(|c: char| c == '.' || c == ')' || c == ']').to_string());
+            let end = end_text
+                .find(|c: char| c == ' ' || c == '\t')
+                .unwrap_or(end_text.len());
+            return Some(
+                end_text[..end]
+                    .trim_end_matches(|c: char| c == '.' || c == ')' || c == ']')
+                    .to_string(),
+            );
         }
     }
     // Windows absolute path (e.g. C:\Users\...)
@@ -6195,70 +7776,111 @@ fn extract_path_or_url(text: &str) -> Option<String> {
 // "5 km to miles", "100 lbs to kg", "32 f to c", "1 gb to mb", etc.
 pub fn try_unit_convert(input: &str) -> Option<(String, String)> {
     let s = input.trim().to_lowercase();
-    let sep = if s.contains(" to ") { " to " } else if s.contains(" in ") { " in " } else { return None; };
+    let sep = if s.contains(" to ") {
+        " to "
+    } else if s.contains(" in ") {
+        " in "
+    } else {
+        return None;
+    };
     let parts: Vec<&str> = s.splitn(2, sep).collect();
-    if parts.len() != 2 { return None; }
+    if parts.len() != 2 {
+        return None;
+    }
     let left = parts[0].trim();
     let to_unit = parts[1].trim();
-    let num_end = left.find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-').unwrap_or(left.len());
-    if num_end == 0 { return None; }
+    let num_end = left
+        .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
+        .unwrap_or(left.len());
+    if num_end == 0 {
+        return None;
+    }
     let num: f64 = left[..num_end].parse().ok()?;
     let from_unit = left[num_end..].trim();
 
     // Temperature
-    let tc = |u: &str| -> Option<&str> { match u { "c"|"celsius" => Some("C"), "f"|"fahrenheit" => Some("F"), "k"|"kelvin" => Some("K"), _ => None } };
+    let tc = |u: &str| -> Option<&str> {
+        match u {
+            "c" | "celsius" => Some("C"),
+            "f" | "fahrenheit" => Some("F"),
+            "k" | "kelvin" => Some("K"),
+            _ => None,
+        }
+    };
     if let (Some(tf), Some(tt)) = (tc(from_unit), tc(to_unit)) {
-        let c = match tf { "C" => num, "F" => (num-32.0)*5.0/9.0, "K" => num-273.15, _ => return None };
-        let r = match tt { "C" => c, "F" => c*9.0/5.0+32.0, "K" => c+273.15, _ => return None };
+        let c = match tf {
+            "C" => num,
+            "F" => (num - 32.0) * 5.0 / 9.0,
+            "K" => num - 273.15,
+            _ => return None,
+        };
+        let r = match tt {
+            "C" => c,
+            "F" => c * 9.0 / 5.0 + 32.0,
+            "K" => c + 273.15,
+            _ => return None,
+        };
         let d = fmt_conv(r);
         return Some((format!("{} {} = {} {}", num, tf, d, tt), d));
     }
 
     // Linear unit table: (aliases, base_unit, to_base_multiplier, category)
     let table: &[(&[&str], &str, f64, &str)] = &[
-        (&["mm","millimeter","millimeters"],    "m",   0.001,              "len"),
-        (&["cm","centimeter","centimeters"],    "m",   0.01,               "len"),
-        (&["m","meter","meters"],               "m",   1.0,                "len"),
-        (&["km","kilometer","kilometers"],      "m",   1000.0,             "len"),
-        (&["in","inch","inches"],               "m",   0.0254,             "len"),
-        (&["ft","foot","feet"],                 "m",   0.3048,             "len"),
-        (&["yd","yard","yards"],                "m",   0.9144,             "len"),
-        (&["mi","mile","miles"],                "m",   1609.344,           "len"),
-        (&["mg","milligram","milligrams"],      "kg",  0.000001,           "mass"),
-        (&["g","gram","grams"],                 "kg",  0.001,              "mass"),
-        (&["kg","kilogram","kilograms"],        "kg",  1.0,                "mass"),
-        (&["lb","lbs","pound","pounds"],        "kg",  0.453592,           "mass"),
-        (&["oz","ounce","ounces"],              "kg",  0.0283495,          "mass"),
-        (&["t","tonne","metric ton"],           "kg",  1000.0,             "mass"),
-        (&["b","byte","bytes"],                 "b",   1.0,                "data"),
-        (&["kb","kilobyte","kilobytes"],        "b",   1024.0,             "data"),
-        (&["mb","megabyte","megabytes"],        "b",   1048576.0,          "data"),
-        (&["gb","gigabyte","gigabytes"],        "b",   1073741824.0,       "data"),
-        (&["tb","terabyte","terabytes"],        "b",   1099511627776.0,    "data"),
-        (&["kph","kmh","km/h"],                 "ms",  0.277778,           "speed"),
-        (&["mph"],                              "ms",  0.44704,            "speed"),
-        (&["m/s","mps"],                        "ms",  1.0,                "speed"),
-        (&["s","sec","second","seconds"],       "s",   1.0,                "time"),
-        (&["min","minute","minutes"],           "s",   60.0,               "time"),
-        (&["h","hr","hour","hours"],            "s",   3600.0,             "time"),
-        (&["d","day","days"],                   "s",   86400.0,            "time"),
-        (&["week","weeks"],                     "s",   604800.0,           "time"),
+        (&["mm", "millimeter", "millimeters"], "m", 0.001, "len"),
+        (&["cm", "centimeter", "centimeters"], "m", 0.01, "len"),
+        (&["m", "meter", "meters"], "m", 1.0, "len"),
+        (&["km", "kilometer", "kilometers"], "m", 1000.0, "len"),
+        (&["in", "inch", "inches"], "m", 0.0254, "len"),
+        (&["ft", "foot", "feet"], "m", 0.3048, "len"),
+        (&["yd", "yard", "yards"], "m", 0.9144, "len"),
+        (&["mi", "mile", "miles"], "m", 1609.344, "len"),
+        (&["mg", "milligram", "milligrams"], "kg", 0.000001, "mass"),
+        (&["g", "gram", "grams"], "kg", 0.001, "mass"),
+        (&["kg", "kilogram", "kilograms"], "kg", 1.0, "mass"),
+        (&["lb", "lbs", "pound", "pounds"], "kg", 0.453592, "mass"),
+        (&["oz", "ounce", "ounces"], "kg", 0.0283495, "mass"),
+        (&["t", "tonne", "metric ton"], "kg", 1000.0, "mass"),
+        (&["b", "byte", "bytes"], "b", 1.0, "data"),
+        (&["kb", "kilobyte", "kilobytes"], "b", 1024.0, "data"),
+        (&["mb", "megabyte", "megabytes"], "b", 1048576.0, "data"),
+        (&["gb", "gigabyte", "gigabytes"], "b", 1073741824.0, "data"),
+        (
+            &["tb", "terabyte", "terabytes"],
+            "b",
+            1099511627776.0,
+            "data",
+        ),
+        (&["kph", "kmh", "km/h"], "ms", 0.277778, "speed"),
+        (&["mph"], "ms", 0.44704, "speed"),
+        (&["m/s", "mps"], "ms", 1.0, "speed"),
+        (&["s", "sec", "second", "seconds"], "s", 1.0, "time"),
+        (&["min", "minute", "minutes"], "s", 60.0, "time"),
+        (&["h", "hr", "hour", "hours"], "s", 3600.0, "time"),
+        (&["d", "day", "days"], "s", 86400.0, "time"),
+        (&["week", "weeks"], "s", 604800.0, "time"),
     ];
 
     let lookup = |u: &str| -> Option<(f64, &str, &str)> {
-        table.iter().find(|(aliases,_,_,_)| aliases.contains(&u)).map(|(_,base,f,cat)| (*f, *base, *cat))
+        table
+            .iter()
+            .find(|(aliases, _, _, _)| aliases.contains(&u))
+            .map(|(_, base, f, cat)| (*f, *base, *cat))
     };
 
     let (ff, fb, fc) = lookup(from_unit)?;
     let (tf2, tb, tc2) = lookup(to_unit)?;
-    if fb != tb || fc != tc2 { return None; }
+    if fb != tb || fc != tc2 {
+        return None;
+    }
     let result = (num * ff) / tf2;
     let d = fmt_conv(result);
     Some((format!("{} {} = {} {}", num, from_unit, d, to_unit), d))
 }
 
 fn fmt_conv(v: f64) -> String {
-    if v.fract() == 0.0 && v.abs() < 1e12 { return format!("{}", v as i64); }
+    if v.fract() == 0.0 && v.abs() < 1e12 {
+        return format!("{}", v as i64);
+    }
     let s = format!("{:.6}", v);
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
@@ -6268,7 +7890,9 @@ pub fn search_processes(query: &str) -> Vec<SearchResult> {
     #[cfg(target_os = "windows")]
     use std::os::windows::process::CommandExt;
     let q = query.trim().to_lowercase();
-    if !q.is_empty() && q.len() < 2 { return vec![]; }
+    if !q.is_empty() && q.len() < 2 {
+        return vec![];
+    }
 
     let output = match std::process::Command::new("tasklist")
         .args(["/FO", "CSV", "/NH"])
@@ -6279,29 +7903,52 @@ pub fn search_processes(query: &str) -> Vec<SearchResult> {
         Err(_) => return vec![],
     };
 
-    let protected = ["system","smss.exe","csrss.exe","wininit.exe","services.exe",
-                     "lsass.exe","svchost.exe","dwm.exe","winlogon.exe","registry"];
+    let protected = [
+        "system",
+        "smss.exe",
+        "csrss.exe",
+        "wininit.exe",
+        "services.exe",
+        "lsass.exe",
+        "svchost.exe",
+        "dwm.exe",
+        "winlogon.exe",
+        "registry",
+    ];
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut results = Vec::new();
 
     for line in stdout.lines() {
         let fields: Vec<&str> = line.split(',').collect();
-        if fields.len() < 2 { continue; }
+        if fields.len() < 2 {
+            continue;
+        }
         let name = fields[0].trim_matches('"');
         let pid_str = fields[1].trim_matches('"');
         let name_lower = name.to_lowercase();
-        if !q.is_empty() && !name_lower.contains(&q) { continue; }
-        if protected.iter().any(|p| name_lower == *p) { continue; }
+        if !q.is_empty() && !name_lower.contains(&q) {
+            continue;
+        }
+        if protected.iter().any(|p| name_lower == *p) {
+            continue;
+        }
         let pid: u32 = pid_str.parse().unwrap_or(0);
-        let mem_kb = fields.get(4)
+        let mem_kb = fields
+            .get(4)
             .map(|m| m.trim_matches('"').replace(",", "").replace(" K", ""))
             .and_then(|kb| kb.parse::<u64>().ok())
             .unwrap_or(0);
-        
+
         let score = if q.is_empty() {
             mem_kb as f32
         } else {
-            let base = if name_lower == q { 3.0 } else if name_lower.starts_with(&q) { 2.0 } else { 1.0 };
+            let base = if name_lower == q {
+                3.0
+            } else if name_lower.starts_with(&q) {
+                2.0
+            } else {
+                1.0
+            };
             base + (mem_kb as f32 / 10_000_000.0) // Small boost for memory usage to break ties
         };
 
@@ -6320,7 +7967,11 @@ pub fn search_processes(query: &str) -> Vec<SearchResult> {
             score,
         });
     }
-    results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_unstable_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results.truncate(8);
     results
 }
@@ -6330,32 +7981,35 @@ struct WindowInfo {
     title: String,
 }
 
-unsafe extern "system" fn enum_windows_callback(hwnd: windows::Win32::Foundation::HWND, lparam: windows::Win32::Foundation::LPARAM) -> windows::Win32::Foundation::BOOL {
+unsafe extern "system" fn enum_windows_callback(
+    hwnd: windows::Win32::Foundation::HWND,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::BOOL {
     use windows::Win32::UI::WindowsAndMessaging::{
-        IsWindowVisible, GetWindowTextW, GetWindowLongW,
-        GWL_EXSTYLE, GWL_STYLE, WS_EX_TOOLWINDOW, WS_CHILD
+        GetWindowLongW, GetWindowTextW, IsWindowVisible, GWL_EXSTYLE, GWL_STYLE, WS_CHILD,
+        WS_EX_TOOLWINDOW,
     };
-    
+
     if IsWindowVisible(hwnd).as_bool() {
         let mut title = [0u16; 512];
         let len = GetWindowTextW(hwnd, &mut title);
         if len > 0 {
             let title_str = String::from_utf16_lossy(&title[..len as usize]);
             let title_trimmed = title_str.trim_matches('\0').trim().to_string();
-            
+
             if !title_trimmed.is_empty() {
                 let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
                 let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-                
+
                 let is_tool = (ex_style & WS_EX_TOOLWINDOW.0) != 0;
                 let is_child = (style & WS_CHILD.0) != 0;
-                
+
                 // Skip common Windows/Shell system background windows
-                let is_ignored = title_trimmed == "Program Manager" 
-                    || title_trimmed == "Settings" 
-                    || title_trimmed == "Start" 
+                let is_ignored = title_trimmed == "Program Manager"
+                    || title_trimmed == "Settings"
+                    || title_trimmed == "Start"
                     || title_trimmed == "Windows Input Experience";
-                
+
                 if !is_tool && !is_child && !is_ignored {
                     let list = &mut *(lparam.0 as *mut Vec<WindowInfo>);
                     list.push(WindowInfo {
@@ -6378,14 +8032,14 @@ impl SearchEngine {
                 windows::Win32::Foundation::LPARAM(&mut list as *mut _ as isize),
             );
         }
-        
+
         let q_lower = query.trim().to_lowercase();
         let mut results = Vec::new();
-        
+
         for win in list {
             let win_lower = win.title.to_lowercase();
             let mut score = 0.0f32;
-            
+
             if q_lower.is_empty() {
                 score = 1.0;
             } else if win_lower == q_lower {
@@ -6406,7 +8060,7 @@ impl SearchEngine {
                     }
                 }
             }
-            
+
             if score > 0.0 {
                 results.push(SearchResult {
                     entry: CatalogEntry {
@@ -6422,15 +8076,23 @@ impl SearchEngine {
                 });
             }
         }
-        
-        results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+        results.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results
     }
 
     pub fn check_quicklink_keyword(&self, first_word: &str) -> Option<(String, String)> {
         let conn = &self.conn;
-        let mut stmt = conn.prepare("SELECT name, url FROM quicklinks WHERE keyword = ?1 LIMIT 1").ok()?;
-        let mut rows = stmt.query(rusqlite::params![first_word.to_lowercase()]).ok()?;
+        let mut stmt = conn
+            .prepare("SELECT name, url FROM quicklinks WHERE keyword = ?1 LIMIT 1")
+            .ok()?;
+        let mut rows = stmt
+            .query(rusqlite::params![first_word.to_lowercase()])
+            .ok()?;
         if let Some(row) = rows.next().ok()? {
             let name: String = row.get(0).ok()?;
             let url: String = row.get(1).ok()?;
@@ -6444,22 +8106,37 @@ impl SearchEngine {
         let mut results = Vec::new();
         let conn = &self.conn;
         let q = query.trim();
-        if q.is_empty() { return results; }
-        
+        if q.is_empty() {
+            return results;
+        }
+
         let q_lower = q.to_lowercase();
-        let mut stmt = match conn.prepare("SELECT name, url, keyword FROM quicklinks WHERE name LIKE ?1 OR keyword = ?2 LIMIT 5") {
+        let mut stmt = match conn.prepare(
+            "SELECT name, url, keyword FROM quicklinks WHERE name LIKE ?1 OR keyword = ?2 LIMIT 5",
+        ) {
             Ok(s) => s,
             Err(_) => return results,
         };
-        let iter = match stmt.query_map(rusqlite::params![format!("%{}%", q), q_lower.clone()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-        }) {
+        let iter = match stmt.query_map(
+            rusqlite::params![format!("%{}%", q), q_lower.clone()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        ) {
             Ok(it) => it,
             Err(_) => return results,
         };
         for item in iter {
             if let Ok((name, url, keyword)) = item {
-                let display_keyword = if keyword.is_empty() { "".to_string() } else { format!(" [{}]", keyword) };
+                let display_keyword = if keyword.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" [{}]", keyword)
+                };
                 results.push(SearchResult {
                     entry: CatalogEntry {
                         id: format!("quicklink.{}", name.to_lowercase().replace(' ', "_")),
@@ -6481,23 +8158,36 @@ impl SearchEngine {
         let mut results = Vec::new();
         let conn = &self.conn;
         let q = query.trim();
-        if q.is_empty() { return results; }
-        
+        if q.is_empty() {
+            return results;
+        }
+
         let q_lower = q.to_lowercase();
         let mut stmt = match conn.prepare("SELECT name, content, keyword FROM snippets WHERE name LIKE ?1 OR keyword = ?2 LIMIT 5") {
             Ok(s) => s,
             Err(_) => return results,
         };
-        let iter = match stmt.query_map(rusqlite::params![format!("%{}%", q), q_lower.clone()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
-        }) {
+        let iter = match stmt.query_map(
+            rusqlite::params![format!("%{}%", q), q_lower.clone()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        ) {
             Ok(it) => it,
             Err(_) => return results,
         };
         for item in iter {
             if let Ok((name, content, keyword)) = item {
                 let kw_str = keyword.clone().unwrap_or_default();
-                let display_keyword = if kw_str.is_empty() { "".to_string() } else { format!(" [{}]", kw_str) };
+                let display_keyword = if kw_str.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" [{}]", kw_str)
+                };
                 results.push(SearchResult {
                     entry: CatalogEntry {
                         id: format!("snippet.{}", name.to_lowercase().replace(' ', "_")),
@@ -6540,7 +8230,11 @@ impl SearchEngine {
         };
 
         let iter = match stmt.query_map(rusqlite::params_from_iter(params), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         }) {
             Ok(it) => it,
             Err(_) => return results,
@@ -6548,7 +8242,11 @@ impl SearchEngine {
 
         for item in iter {
             if let Ok((name, url, keyword)) = item {
-                let display_keyword = if keyword.is_empty() { "".to_string() } else { format!(" [{}]", keyword) };
+                let display_keyword = if keyword.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" [{}]", keyword)
+                };
                 results.push(SearchResult {
                     entry: CatalogEntry {
                         id: format!("quicklink.{}", name.to_lowercase().replace(' ', "_")),
@@ -6591,7 +8289,11 @@ impl SearchEngine {
         };
 
         let iter = match stmt.query_map(rusqlite::params_from_iter(params), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         }) {
             Ok(it) => it,
             Err(_) => return results,
@@ -6600,7 +8302,11 @@ impl SearchEngine {
         for item in iter {
             if let Ok((name, content, keyword)) = item {
                 let kw_str = keyword.clone().unwrap_or_default();
-                let display_keyword = if kw_str.is_empty() { "".to_string() } else { format!(" [{}]", kw_str) };
+                let display_keyword = if kw_str.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" [{}]", kw_str)
+                };
                 results.push(SearchResult {
                     entry: CatalogEntry {
                         id: format!("snippet.{}", name.to_lowercase().replace(' ', "_")),

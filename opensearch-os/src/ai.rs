@@ -3,8 +3,8 @@
 //! worker thread so the UI never stalls.
 
 use anyhow::{anyhow, Result};
-use std::sync::atomic::AtomicBool;
 use std::os::windows::process::CommandExt;
+use std::sync::atomic::AtomicBool;
 
 pub static HERMES_GATEWAY_RUNNING: AtomicBool = AtomicBool::new(false);
 pub static ALWAYS_APPROVE: AtomicBool = AtomicBool::new(false);
@@ -27,7 +27,9 @@ pub struct AiConfig {
 
 fn get_db_conn() -> Option<rusqlite::Connection> {
     let appdata = std::env::var("APPDATA").ok()?;
-    let path = std::path::PathBuf::from(appdata).join("opensearch-os").join("file_index.db");
+    let path = std::path::PathBuf::from(appdata)
+        .join("opensearch-os")
+        .join("file_index.db");
     let conn = rusqlite::Connection::open(&path).ok()?;
     let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
     Some(conn)
@@ -40,7 +42,11 @@ pub fn get_config() -> Result<AiConfig> {
 
     // Check SQLite settings table
     if let Some(conn) = get_db_conn() {
-        if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'api_key'", [], |row| row.get::<_, String>(0)) {
+        if let Ok(val) = conn.query_row(
+            "SELECT value FROM ai_settings WHERE key = 'api_key'",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
             let val_trimmed = val.trim().to_string();
             if !val_trimmed.is_empty() {
                 if val_trimmed.starts_with("sk-oc-") || val_trimmed.contains("opencode") {
@@ -78,7 +84,9 @@ pub fn get_config() -> Result<AiConfig> {
     // Check AppData files
     if api_key.is_none() {
         if let Ok(appdata) = std::env::var("APPDATA") {
-            let p = std::path::Path::new(&appdata).join("opensearch-os").join("opencode_key.txt");
+            let p = std::path::Path::new(&appdata)
+                .join("opensearch-os")
+                .join("opencode_key.txt");
             if let Ok(s) = std::fs::read_to_string(&p) {
                 let k = s.trim().to_string();
                 if !k.is_empty() {
@@ -90,7 +98,9 @@ pub fn get_config() -> Result<AiConfig> {
     }
     if api_key.is_none() {
         if let Ok(appdata) = std::env::var("APPDATA") {
-            let p = std::path::Path::new(&appdata).join("opensearch-os").join("ai_key.txt");
+            let p = std::path::Path::new(&appdata)
+                .join("opensearch-os")
+                .join("ai_key.txt");
             if let Ok(s) = std::fs::read_to_string(&p) {
                 let k = s.trim().to_string();
                 if !k.is_empty() {
@@ -119,7 +129,11 @@ pub fn get_config() -> Result<AiConfig> {
 
     // Check SQLite
     if let Some(conn) = get_db_conn() {
-        if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'endpoint'", [], |row| row.get::<_, String>(0)) {
+        if let Ok(val) = conn.query_row(
+            "SELECT value FROM ai_settings WHERE key = 'endpoint'",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
             let val_trimmed = val.trim().to_string();
             if !val_trimmed.is_empty() {
                 endpoint = Some(val_trimmed);
@@ -139,7 +153,9 @@ pub fn get_config() -> Result<AiConfig> {
     // Check AppData files
     if endpoint.is_none() {
         if let Ok(appdata) = std::env::var("APPDATA") {
-            let p = std::path::Path::new(&appdata).join("opensearch-os").join("ai_endpoint.txt");
+            let p = std::path::Path::new(&appdata)
+                .join("opensearch-os")
+                .join("ai_endpoint.txt");
             if let Ok(s) = std::fs::read_to_string(&p) {
                 let ep = s.trim().to_string();
                 if !ep.is_empty() {
@@ -163,7 +179,11 @@ pub fn get_config() -> Result<AiConfig> {
 
     // Check SQLite
     if let Some(conn) = get_db_conn() {
-        if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'model'", [], |row| row.get::<_, String>(0)) {
+        if let Ok(val) = conn.query_row(
+            "SELECT value FROM ai_settings WHERE key = 'model'",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
             let val_trimmed = val.trim().to_string();
             if !val_trimmed.is_empty() {
                 model = Some(val_trimmed);
@@ -183,7 +203,9 @@ pub fn get_config() -> Result<AiConfig> {
     // Check AppData files
     if model.is_none() {
         if let Ok(appdata) = std::env::var("APPDATA") {
-            let p = std::path::Path::new(&appdata).join("opensearch-os").join("ai_model.txt");
+            let p = std::path::Path::new(&appdata)
+                .join("opensearch-os")
+                .join("ai_model.txt");
             if let Ok(s) = std::fs::read_to_string(&p) {
                 let m = s.trim().to_string();
                 if !m.is_empty() {
@@ -234,12 +256,17 @@ pub fn complete(system: &str, user: &str) -> Result<String> {
         Ok(r) => r,
         Err(ureq::Error::Status(code, r)) => {
             let msg = r.into_string().unwrap_or_default();
-            return Err(anyhow!("AI error {code}: {}", msg.chars().take(300).collect::<String>()));
+            return Err(anyhow!(
+                "AI error {code}: {}",
+                msg.chars().take(300).collect::<String>()
+            ));
         }
         Err(e) => return Err(anyhow!("AI request failed: {e}")),
     };
 
-    let v: serde_json::Value = resp.into_json().map_err(|e| anyhow!("bad AI response: {e}"))?;
+    let v: serde_json::Value = resp
+        .into_json()
+        .map_err(|e| anyhow!("bad AI response: {e}"))?;
     let text = v["choices"][0]["message"]["content"]
         .as_str()
         .ok_or_else(|| anyhow!("AI response had no content"))?;
@@ -247,7 +274,12 @@ pub fn complete(system: &str, user: &str) -> Result<String> {
 }
 
 /// Multi-turn chat completion. Passes conversation history to the API.
-pub fn complete_chat(system: &str, prev_user: &str, prev_assistant: &str, user: &str) -> Result<String> {
+pub fn complete_chat(
+    system: &str,
+    prev_user: &str,
+    prev_assistant: &str,
+    user: &str,
+) -> Result<String> {
     let cfg = get_config()?;
 
     let body = serde_json::json!({
@@ -273,12 +305,17 @@ pub fn complete_chat(system: &str, prev_user: &str, prev_assistant: &str, user: 
         Ok(r) => r,
         Err(ureq::Error::Status(code, r)) => {
             let msg = r.into_string().unwrap_or_default();
-            return Err(anyhow!("AI error {code}: {}", msg.chars().take(300).collect::<String>()));
+            return Err(anyhow!(
+                "AI error {code}: {}",
+                msg.chars().take(300).collect::<String>()
+            ));
         }
         Err(e) => return Err(anyhow!("AI request failed: {e}")),
     };
 
-    let v: serde_json::Value = resp.into_json().map_err(|e| anyhow!("bad AI response: {e}"))?;
+    let v: serde_json::Value = resp
+        .into_json()
+        .map_err(|e| anyhow!("bad AI response: {e}"))?;
     let text = v["choices"][0]["message"]["content"]
         .as_str()
         .ok_or_else(|| anyhow!("AI response had no content"))?;
@@ -298,13 +335,21 @@ fn get_hermes_config() -> AiConfig {
         }
     }
     if let Some(conn) = get_db_conn() {
-        if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'hermes_api_key'", [], |row| row.get::<_, String>(0)) {
+        if let Ok(val) = conn.query_row(
+            "SELECT value FROM ai_settings WHERE key = 'hermes_api_key'",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
             let val_trimmed = val.trim().to_string();
             if !val_trimmed.is_empty() {
                 api_key = val_trimmed;
             }
         }
-        if let Ok(val) = conn.query_row("SELECT value FROM ai_settings WHERE key = 'always_approve'", [], |row| row.get::<_, String>(0)) {
+        if let Ok(val) = conn.query_row(
+            "SELECT value FROM ai_settings WHERE key = 'always_approve'",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
             ALWAYS_APPROVE.store(val.trim() == "1", std::sync::atomic::Ordering::Relaxed);
         }
     }
@@ -314,8 +359,6 @@ fn get_hermes_config() -> AiConfig {
         api_key,
     }
 }
-
-
 
 pub fn get_hermes_executable() -> String {
     if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
@@ -350,7 +393,12 @@ pub fn start_hermes_gateway_daemon() {
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .status();
         let _ = std::process::Command::new(&hermes_cmd)
-            .args(["config", "set", "platforms.api_server.extra.host", "127.0.0.1"])
+            .args([
+                "config",
+                "set",
+                "platforms.api_server.extra.host",
+                "127.0.0.1",
+            ])
             .creation_flags(0x08000000)
             .status();
         let _ = std::process::Command::new(&hermes_cmd)
@@ -368,9 +416,15 @@ pub fn start_hermes_gateway_daemon() {
         let _ = std::fs::create_dir_all(&log_dir);
         let log_file = log_dir.join("hermes_gateway.log");
         if let Ok(meta) = std::fs::metadata(&log_file) {
-            if meta.len() > 1024 * 1024 { let _ = std::fs::remove_file(&log_file); }
+            if meta.len() > 1024 * 1024 {
+                let _ = std::fs::remove_file(&log_file);
+            }
         }
-        if let Ok(file) = std::fs::OpenOptions::new().create(true).append(true).open(log_file) {
+        if let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_file)
+        {
             let _ = std::process::Command::new(&hermes_cmd)
                 .args(["gateway", "run", "--replace", "--accept-hooks"])
                 .stdout(file.try_clone().unwrap())
@@ -403,8 +457,9 @@ fn ensure_hermes_gateway_running() -> Result<()> {
         // Double check status
         let running = std::net::TcpStream::connect_timeout(
             &"127.0.0.1:8642".parse().unwrap(),
-            std::time::Duration::from_millis(300)
-        ).is_ok();
+            std::time::Duration::from_millis(300),
+        )
+        .is_ok();
         if running {
             HERMES_GATEWAY_RUNNING.store(true, std::sync::atomic::Ordering::Relaxed);
             return Ok(());
@@ -417,8 +472,9 @@ fn ensure_hermes_gateway_running() -> Result<()> {
             std::thread::sleep(std::time::Duration::from_millis(500));
             let running = std::net::TcpStream::connect_timeout(
                 &"127.0.0.1:8642".parse().unwrap(),
-                std::time::Duration::from_millis(300)
-            ).is_ok();
+                std::time::Duration::from_millis(300),
+            )
+            .is_ok();
             if running {
                 HERMES_GATEWAY_RUNNING.store(true, std::sync::atomic::Ordering::Relaxed);
                 started = true;
@@ -460,7 +516,11 @@ fn get_agent_config() -> AiConfig {
 
 /// Human-readable label for errors, based on which backend the request hit.
 fn agent_label(cfg: &AiConfig) -> &'static str {
-    if cfg.model == "hermes-agent" { "Hermes" } else { "AI" }
+    if cfg.model == "hermes-agent" {
+        "Hermes"
+    } else {
+        "AI"
+    }
 }
 
 pub fn complete_agent(system: &str, user: &str) -> Result<String> {
@@ -486,18 +546,28 @@ pub fn complete_agent(system: &str, user: &str) -> Result<String> {
         Ok(r) => r,
         Err(ureq::Error::Status(code, r)) => {
             let msg = r.into_string().unwrap_or_default();
-            return Err(anyhow!("{label} error {code}: {}", msg.chars().take(300).collect::<String>()));
+            return Err(anyhow!(
+                "{label} error {code}: {}",
+                msg.chars().take(300).collect::<String>()
+            ));
         }
         Err(e) => return Err(anyhow!("{label} request failed: {e}")),
     };
-    let v: serde_json::Value = resp.into_json().map_err(|e| anyhow!("bad {label} response: {e}"))?;
+    let v: serde_json::Value = resp
+        .into_json()
+        .map_err(|e| anyhow!("bad {label} response: {e}"))?;
     let text = v["choices"][0]["message"]["content"]
         .as_str()
         .ok_or_else(|| anyhow!("{label} response had no content"))?;
     Ok(text.trim().to_string())
 }
 
-pub fn complete_chat_agent(system: &str, prev_user: &str, prev_assistant: &str, user: &str) -> Result<String> {
+pub fn complete_chat_agent(
+    system: &str,
+    prev_user: &str,
+    prev_assistant: &str,
+    user: &str,
+) -> Result<String> {
     let cfg = get_agent_config();
     ensure_hermes_gateway_running()?;
     let timeout_secs = 300;
@@ -522,11 +592,16 @@ pub fn complete_chat_agent(system: &str, prev_user: &str, prev_assistant: &str, 
         Ok(r) => r,
         Err(ureq::Error::Status(code, r)) => {
             let msg = r.into_string().unwrap_or_default();
-            return Err(anyhow!("{label} error {code}: {}", msg.chars().take(300).collect::<String>()));
+            return Err(anyhow!(
+                "{label} error {code}: {}",
+                msg.chars().take(300).collect::<String>()
+            ));
         }
         Err(e) => return Err(anyhow!("{label} request failed: {e}")),
     };
-    let v: serde_json::Value = resp.into_json().map_err(|e| anyhow!("bad {label} response: {e}"))?;
+    let v: serde_json::Value = resp
+        .into_json()
+        .map_err(|e| anyhow!("bad {label} response: {e}"))?;
     let text = v["choices"][0]["message"]["content"]
         .as_str()
         .ok_or_else(|| anyhow!("{label} response had no content"))?;
@@ -605,7 +680,8 @@ pub fn supports_runs_api() -> bool {
                     None => return false,
                 }
             }
-            cur.as_bool().unwrap_or(cur.as_str().map_or(false, |s| s == "enabled"))
+            cur.as_bool()
+                .unwrap_or(cur.as_str().map_or(false, |s| s == "enabled"))
                 || cur.as_array().map_or(false, |_| true)
         })
     };
@@ -648,7 +724,10 @@ pub fn resolve_run_approval(approval: &HermesApproval, approved: bool) -> Result
                 Ok(())
             } else {
                 let msg = r.into_string().unwrap_or_default();
-                Err(anyhow!("approval error {code}: {}", msg.chars().take(200).collect::<String>()))
+                Err(anyhow!(
+                    "approval error {code}: {}",
+                    msg.chars().take(200).collect::<String>()
+                ))
             }
         }
         Err(e) => Err(anyhow!("approval request failed: {e}")),
@@ -673,15 +752,21 @@ pub fn run_agent_streaming(system: &str, user: &str, cb: &dyn RunCallbacks) -> R
         .timeout(std::time::Duration::from_secs(30))
         .send_json(start_body);
     let start_v: serde_json::Value = match start {
-        Ok(r) => r.into_json().map_err(|e| anyhow!("bad run start response: {e}"))?,
+        Ok(r) => r
+            .into_json()
+            .map_err(|e| anyhow!("bad run start response: {e}"))?,
         Err(ureq::Error::Status(code, r)) => {
             let msg = r.into_string().unwrap_or_default();
-            return Err(anyhow!("run start {code}: {}", msg.chars().take(300).collect::<String>()));
+            return Err(anyhow!(
+                "run start {code}: {}",
+                msg.chars().take(300).collect::<String>()
+            ));
         }
         Err(e) => return Err(anyhow!("run start failed: {e}")),
     };
     let run_id = start_v
-        .get("run_id").or_else(|| start_v.get("id"))
+        .get("run_id")
+        .or_else(|| start_v.get("id"))
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("run start response had no run_id"))?
         .to_string();
@@ -699,7 +784,10 @@ pub fn run_agent_streaming(system: &str, user: &str, cb: &dyn RunCallbacks) -> R
         Ok(r) => r,
         Err(ureq::Error::Status(code, r)) => {
             let msg = r.into_string().unwrap_or_default();
-            return Err(anyhow!("events {code}: {}", msg.chars().take(300).collect::<String>()));
+            return Err(anyhow!(
+                "events {code}: {}",
+                msg.chars().take(300).collect::<String>()
+            ));
         }
         Err(e) => return Err(anyhow!("events request failed: {e}")),
     };
@@ -711,7 +799,10 @@ pub fn run_agent_streaming(system: &str, user: &str, cb: &dyn RunCallbacks) -> R
     let mut done_ok: Option<bool> = None;
 
     for line in reader.lines() {
-        let line = match line { Ok(l) => l, Err(_) => break };
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
         let payload = if let Some(d) = line.strip_prefix("data:") {
             d.trim().to_string()
         } else if line.starts_with("event:") || line.is_empty() {
@@ -746,7 +837,10 @@ pub fn run_agent_streaming(system: &str, user: &str, cb: &dyn RunCallbacks) -> R
                 done_ok = Some(true);
             }
             "failed" | "error" | "run.failed" => {
-                let msg = v.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str())
+                let msg = v
+                    .get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(|m| m.as_str())
                     .or_else(|| v.get("message").and_then(|m| m.as_str()))
                     .unwrap_or("agent run failed");
                 cb.on_done(false, msg);
@@ -760,10 +854,7 @@ pub fn run_agent_streaming(system: &str, user: &str, cb: &dyn RunCallbacks) -> R
                 } else if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
                     final_text.push_str(text);
                     cb.on_progress(&final_text);
-                } else if let Some(content) = v
-                    .pointer("/delta/content")
-                    .and_then(|c| c.as_str())
-                {
+                } else if let Some(content) = v.pointer("/delta/content").and_then(|c| c.as_str()) {
                     final_text.push_str(content);
                     cb.on_progress(&final_text);
                 }
@@ -794,18 +885,30 @@ pub fn run_agent_streaming(system: &str, user: &str, cb: &dyn RunCallbacks) -> R
 /// look like an approval request.
 fn extract_approval(v: &serde_json::Value, run_id: &str) -> Option<HermesApproval> {
     // Type-based detection first.
-    let kind = v.get("type")
+    let kind = v
+        .get("type")
         .or_else(|| v.get("event"))
         .and_then(|t| t.as_str())
         .unwrap_or("");
     let approval_types = [
-        "approval_required", "approval.requested", "approval.request", "tool_call_pending",
-        "approval_pending", "requires_approval", "permission_request",
+        "approval_required",
+        "approval.requested",
+        "approval.request",
+        "tool_call_pending",
+        "approval_pending",
+        "requires_approval",
+        "permission_request",
     ];
     let mut looks_like_approval = approval_types.contains(&kind);
 
     // Key-based detection: presence of any of these keys signals approval.
-    let approval_keys = ["approval_id", "approval", "permission_id", "needs_approval", "requires_approval"];
+    let approval_keys = [
+        "approval_id",
+        "approval",
+        "permission_id",
+        "needs_approval",
+        "requires_approval",
+    ];
     for k in approval_keys {
         if v.get(k).is_some() {
             looks_like_approval = true;
@@ -818,7 +921,10 @@ fn extract_approval(v: &serde_json::Value, run_id: &str) -> Option<HermesApprova
 
     // opt(key) returns the first non-empty string value found at `key`.
     let opt = |key: &str| -> Option<String> {
-        v.get(key).and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string())
+        v.get(key)
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
     };
     let approval_id = opt("approval_id")
         .or_else(|| opt("approval"))
@@ -826,7 +932,11 @@ fn extract_approval(v: &serde_json::Value, run_id: &str) -> Option<HermesApprova
         .or_else(|| opt("id"))
         .unwrap_or_default();
 
-    let tool = opt("tool").or_else(|| opt("tool_name")).or_else(|| opt("command")).or_else(|| opt("name")).unwrap_or_default();
+    let tool = opt("tool")
+        .or_else(|| opt("tool_name"))
+        .or_else(|| opt("command"))
+        .or_else(|| opt("name"))
+        .unwrap_or_default();
     let summary = opt("summary")
         .or_else(|| opt("description"))
         .or_else(|| opt("message"))
@@ -834,7 +944,9 @@ fn extract_approval(v: &serde_json::Value, run_id: &str) -> Option<HermesApprova
         .or_else(|| {
             // Some payloads nest the tool call under "data" / "payload".
             let d = v.get("data").or_else(|| v.get("payload"))?;
-            d.get("command").and_then(|c| c.as_str()).map(|c| c.to_string())
+            d.get("command")
+                .and_then(|c| c.as_str())
+                .map(|c| c.to_string())
         })
         .unwrap_or_default();
 
@@ -851,7 +963,9 @@ fn extract_approval(v: &serde_json::Value, run_id: &str) -> Option<HermesApprova
 pub fn run(cmd: &str, input: &str) -> Result<String> {
     let input = input.trim();
     if input.is_empty() {
-        return Err(anyhow!("Nothing to send — type text or copy something first."));
+        return Err(anyhow!(
+            "Nothing to send — type text or copy something first."
+        ));
     }
     let (system, user): (&str, String) = match cmd {
         "ask" | "chat" => (
@@ -951,9 +1065,21 @@ mod tests {
         HERMES_GATEWAY_RUNNING.store(false, std::sync::atomic::Ordering::Relaxed);
 
         let conn = rusqlite::Connection::open(app_dir.join("file_index.db")).unwrap();
-        conn.execute("CREATE TABLE IF NOT EXISTS ai_settings (key TEXT PRIMARY KEY, value TEXT);", []).unwrap();
-        conn.execute("INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('model', 'hermes-agent');", []).unwrap();
-        conn.execute("INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('api_key', 'sk-H-test-key');", []).unwrap();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ai_settings (key TEXT PRIMARY KEY, value TEXT);",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('model', 'hermes-agent');",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('api_key', 'sk-H-test-key');",
+            [],
+        )
+        .unwrap();
         drop(conn);
 
         let cfg = get_agent_config();
@@ -1009,7 +1135,8 @@ pub fn poll_and_stream_existing_run(run_id: &str, cb: &dyn RunCallbacks) -> Resu
                         run_id: run_id.to_string(),
                         approval_id: "".to_string(),
                         tool: "System command".to_string(),
-                        summary: "Hermes is waiting for your approval to run a command.".to_string(),
+                        summary: "Hermes is waiting for your approval to run a command."
+                            .to_string(),
                     });
                 }
             }
@@ -1019,7 +1146,9 @@ pub fn poll_and_stream_existing_run(run_id: &str, cb: &dyn RunCallbacks) -> Resu
                 break;
             }
             "failed" => {
-                let err = status_resp.error.unwrap_or_else(|| "Run failed".to_string());
+                let err = status_resp
+                    .error
+                    .unwrap_or_else(|| "Run failed".to_string());
                 cb.on_done(false, &err);
                 break;
             }
@@ -1031,4 +1160,3 @@ pub fn poll_and_stream_existing_run(run_id: &str, cb: &dyn RunCallbacks) -> Resu
     }
     Ok(())
 }
-

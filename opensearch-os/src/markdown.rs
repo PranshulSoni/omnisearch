@@ -16,18 +16,33 @@ pub enum MdInline {
     Code(String),
     /// `url` is retained for future "open link" rendering; today we only draw the label.
     #[allow(dead_code)]
-    Link { label: String, url: String },
+    Link {
+        label: String,
+        url: String,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum MdBlock {
-    Heading { level: u8, runs: Vec<MdInline> },
-    Paragraph { runs: Vec<MdInline> },
+    Heading {
+        level: u8,
+        runs: Vec<MdInline>,
+    },
+    Paragraph {
+        runs: Vec<MdInline>,
+    },
     /// `lang` is retained for future syntax-aware highlighting; today code blocks
     /// are rendered as plain monospace.
     #[allow(dead_code)]
-    Code { lang: String, text: String },
-    ListItem { runs: Vec<MdInline>, ordered: bool, index: u32 },
+    Code {
+        lang: String,
+        text: String,
+    },
+    ListItem {
+        runs: Vec<MdInline>,
+        ordered: bool,
+        index: u32,
+    },
     /// A blank separator line (kept so the renderer can add vertical rhythm).
     Spacer,
 }
@@ -194,7 +209,11 @@ fn strip_list_item(line: &str) -> Option<(&str, bool)> {
     while j < bytes.len() && bytes[j].is_ascii_digit() {
         j += 1;
     }
-    if j > 0 && j + 1 < bytes.len() && (bytes[j] == b'.' || bytes[j] == b')') && bytes[j + 1] == b' ' {
+    if j > 0
+        && j + 1 < bytes.len()
+        && (bytes[j] == b'.' || bytes[j] == b')')
+        && bytes[j + 1] == b' '
+    {
         return Some((t[j + 2..].trim_start(), true));
     }
     None
@@ -334,10 +353,15 @@ fn parse_link(s: &str) -> Option<(String, String, usize)> {
     while j < bytes.len() {
         match bytes[j] {
             b'\\' => j += 2, // skip escaped char
-            b'[' => { depth += 1; j += 1; }
+            b'[' => {
+                depth += 1;
+                j += 1;
+            }
             b']' => {
                 depth -= 1;
-                if depth == 0 { break; }
+                if depth == 0 {
+                    break;
+                }
                 j += 1;
             }
             _ => j += 1,
@@ -354,7 +378,9 @@ fn parse_link(s: &str) -> Option<(String, String, usize)> {
     let url_start = j + 2;
     let mut k = url_start;
     while k < bytes.len() && bytes[k] != b')' {
-        if bytes[k] == b'\\' { k += 1; }
+        if bytes[k] == b'\\' {
+            k += 1;
+        }
         k += 1;
     }
     if k >= bytes.len() {
@@ -399,7 +425,13 @@ mod tests {
         let blocks = parse("- a\n- b\n1. c\n2. d");
         let items: Vec<_> = blocks
             .iter()
-            .filter_map(|b| if let MdBlock::ListItem { ordered, index, .. } = b { Some((*ordered, *index)) } else { None })
+            .filter_map(|b| {
+                if let MdBlock::ListItem { ordered, index, .. } = b {
+                    Some((*ordered, *index))
+                } else {
+                    None
+                }
+            })
             .collect();
         assert_eq!(items, vec![(false, 0), (false, 0), (true, 1), (true, 2)]);
     }
@@ -407,18 +439,23 @@ mod tests {
     #[test]
     fn inline_link_and_code() {
         let runs = parse_inline("see [docs](https://x.io) and `code`");
-        assert!(runs.iter().any(|r| matches!(r, MdInline::Link { url, .. } if url == "https://x.io")));
+        assert!(runs
+            .iter()
+            .any(|r| matches!(r, MdInline::Link { url, .. } if url == "https://x.io")));
         assert!(runs.iter().any(|r| matches!(r, MdInline::Code(_))));
     }
 
     #[test]
     fn unmatched_markers_render_verbatim() {
         let runs = parse_inline("a * b with stray *");
-        let joined: String = runs.iter().map(|r| match r {
-            MdInline::Plain(s) => s.as_str(),
-            MdInline::Bold(s) | MdInline::Italic(s) | MdInline::Code(s) => s.as_str(),
-            MdInline::Link { label, .. } => label.as_str(),
-        }).collect();
+        let joined: String = runs
+            .iter()
+            .map(|r| match r {
+                MdInline::Plain(s) => s.as_str(),
+                MdInline::Bold(s) | MdInline::Italic(s) | MdInline::Code(s) => s.as_str(),
+                MdInline::Link { label, .. } => label.as_str(),
+            })
+            .collect();
         assert!(joined.contains("stray *"));
     }
 }

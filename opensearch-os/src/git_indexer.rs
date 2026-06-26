@@ -1,16 +1,18 @@
-use std::path::{Path, PathBuf};
-use std::thread;
-use std::process::Command;
-use std::os::windows::process::CommandExt;
-use std::io::Write;
-use walkdir::WalkDir;
-use rusqlite::{Connection, params};
 use crate::indexer::get_scan_folders;
+use rusqlite::{params, Connection};
+use std::io::Write;
+use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::thread;
+use walkdir::WalkDir;
 
 /// Recursively find top-level git repos under `dir`, pruning when a repo is found.
 /// This avoids descending into submodules or deeply nested build dirs.
 fn find_repos_recursive(dir: &Path, found: &mut Vec<PathBuf>, depth: usize) {
-    if depth > 8 { return; }
+    if depth > 8 {
+        return;
+    }
     // If this dir IS a git repo, add it and stop (don't recurse into submodules)
     if dir.join(".git").exists() {
         found.push(dir.to_path_buf());
@@ -31,13 +33,14 @@ fn find_repos_recursive(dir: &Path, found: &mut Vec<PathBuf>, depth: usize) {
             }
             Err(_) => false,
         };
-        if !is_dir { continue; }
+        if !is_dir {
+            continue;
+        }
         let name = entry.file_name().to_string_lossy().to_lowercase();
         // Skip heavy non-source directories
         match name.as_str() {
-            "node_modules" | "target" | ".git" | "dist" | "build" |
-            "venv" | ".venv" | "appdata" | "obj" | "out" |
-            ".next" | ".nuxt" | ".cache" | "cache" => continue,
+            "node_modules" | "target" | ".git" | "dist" | "build" | "venv" | ".venv"
+            | "appdata" | "obj" | "out" | ".next" | ".nuxt" | ".cache" | "cache" => continue,
             _ => {}
         }
         find_repos_recursive(&entry.path(), found, depth + 1);
@@ -50,9 +53,15 @@ fn log_git(msg: &str) {
             .join("opensearch-os")
             .join("git_indexer.log");
         if let Ok(meta) = std::fs::metadata(&log_path) {
-            if meta.len() > 1024 * 1024 { let _ = std::fs::remove_file(&log_path); }
+            if meta.len() > 1024 * 1024 {
+                let _ = std::fs::remove_file(&log_path);
+            }
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
             let _ = writeln!(f, "{msg}");
         }
     }
@@ -62,7 +71,9 @@ pub fn start_git_indexer(db_path: PathBuf) {
     thread::spawn(move || {
         // Set low priority to run strictly in the background without affecting foreground apps
         unsafe {
-            use windows::Win32::System::Threading::{SetThreadPriority, GetCurrentThread, THREAD_PRIORITY_BELOW_NORMAL};
+            use windows::Win32::System::Threading::{
+                GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
+            };
             let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
         }
         log_git("[start_git_indexer] thread started");
@@ -138,12 +149,21 @@ fn run_git_indexer(db_path: &Path) -> anyhow::Result<()> {
 
     for folder in &folders {
         log_git(&format!("[step1] walking: {:?}", folder));
-        if !folder.exists() { continue; }
+        if !folder.exists() {
+            continue;
+        }
         find_repos_recursive(folder, &mut found_repos, 0);
-        log_git(&format!("[step1] done walking {:?}, found {} repos so far", folder, found_repos.len()));
+        log_git(&format!(
+            "[step1] done walking {:?}, found {} repos so far",
+            folder,
+            found_repos.len()
+        ));
     }
 
-    log_git(&format!("[step1] total repos to index: {}", found_repos.len()));
+    log_git(&format!(
+        "[step1] total repos to index: {}",
+        found_repos.len()
+    ));
     for r in &found_repos {
         log_git(&format!("[step1] repo: {:?}", r));
     }
@@ -155,7 +175,8 @@ fn run_git_indexer(db_path: &Path) -> anyhow::Result<()> {
             Some(s) => s.to_string(),
             None => continue,
         };
-        let repo_name = repo_path.file_name()
+        let repo_name = repo_path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("Unknown Repo")
             .to_string();
@@ -165,11 +186,13 @@ fn run_git_indexer(db_path: &Path) -> anyhow::Result<()> {
             params![repo_path_str, repo_name],
         );
 
-        let repo_id: Option<i64> = conn.query_row(
-            "SELECT id FROM git_repos WHERE path = ?",
-            [&repo_path_str],
-            |row| row.get(0),
-        ).ok();
+        let repo_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM git_repos WHERE path = ?",
+                [&repo_path_str],
+                |row| row.get(0),
+            )
+            .ok();
 
         if let Some(r_id) = repo_id {
             active_repo_ids.push(r_id);
@@ -183,7 +206,9 @@ fn run_git_indexer(db_path: &Path) -> anyhow::Result<()> {
     // Collect rows first (explicit loop) to release the stmt borrow before writing.
     let stale_ids: Vec<i64> = {
         let mut stmt = conn.prepare("SELECT id, path FROM git_repos")?;
-        let rows = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
         let mut ids = Vec::new();
         for row in rows.flatten() {
             let (r_id, r_path) = row;
@@ -208,12 +233,14 @@ fn index_single_repo(conn: &mut Connection, repo_id: i64, repo_path: &Path) -> a
         .current_dir(repo_path)
         .creation_flags(0x08000000)
         .output();
-    
+
     if let Ok(out) = branch_output {
         let text = String::from_utf8_lossy(&out.stdout);
         for line in text.lines() {
             let line = line.trim();
-            if line.is_empty() { continue; }
+            if line.is_empty() {
+                continue;
+            }
             let (is_head, name) = if line.starts_with('*') {
                 (1, line.strip_prefix('*').unwrap().trim().to_string())
             } else {
@@ -226,7 +253,7 @@ fn index_single_repo(conn: &mut Connection, repo_id: i64, repo_path: &Path) -> a
     // 2. Collect recent commits in memory (up to 100)
     let mut commits = Vec::new();
     let log_output = Command::new("git")
-        .args(["log", "--max-count=100", "--format=%H|%an|%at|%s"])
+        .args(["log", "--max-count=100", "--format=%H%x1F%an%x1F%at%x1F%s"])
         .current_dir(repo_path)
         .creation_flags(0x08000000)
         .output();
@@ -234,8 +261,10 @@ fn index_single_repo(conn: &mut Connection, repo_id: i64, repo_path: &Path) -> a
     if let Ok(out) = log_output {
         let text = String::from_utf8_lossy(&out.stdout);
         for line in text.lines() {
-            let parts: Vec<&str> = line.split('|').collect();
-            if parts.len() < 4 { continue; }
+            let parts: Vec<&str> = line.split('\x1F').collect();
+            if parts.len() < 4 {
+                continue;
+            }
             let hash = parts[0].to_string();
             let author = parts[1].to_string();
             let date = parts[2].parse::<i64>().unwrap_or(0);
@@ -246,48 +275,51 @@ fn index_single_repo(conn: &mut Connection, repo_id: i64, repo_path: &Path) -> a
 
     // 3. Scan TODOs in memory
     let mut todos = Vec::new();
-    let walker = WalkDir::new(repo_path)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy().to_lowercase();
-            if name == "node_modules" 
-                || name == "target" 
-                || name == "build" 
-                || name == "dist" 
-                || name == "venv" 
-                || name == ".venv"
-                || name == ".git"
-                || name == "appdata"
-                || name == "obj"
-                || name == "bin"
-                || name == "out"
-                || name == ".next"
-                || name == ".nuxt"
-                || name == ".cache"
-                || name == "cache"
-            {
-                return false;
-            }
-            if e.depth() > 0 && e.path().join(".git").exists() {
-                return false;
-            }
-            true
-        });
+    let walker = WalkDir::new(repo_path).into_iter().filter_entry(|e| {
+        let name = e.file_name().to_string_lossy().to_lowercase();
+        if name == "node_modules"
+            || name == "target"
+            || name == "build"
+            || name == "dist"
+            || name == "venv"
+            || name == ".venv"
+            || name == ".git"
+            || name == "appdata"
+            || name == "obj"
+            || name == "bin"
+            || name == "out"
+            || name == ".next"
+            || name == ".nuxt"
+            || name == ".cache"
+            || name == "cache"
+        {
+            return false;
+        }
+        if e.depth() > 0 && e.path().join(".git").exists() {
+            return false;
+        }
+        true
+    });
 
     let allowed_extensions = [
-        "rs", "py", "js", "ts", "go", "cpp", "c", "h", "java", "kt", "cs", "md", "txt"
+        "rs", "py", "js", "ts", "go", "cpp", "c", "h", "java", "kt", "cs", "md", "txt",
     ];
 
     for entry in walker.filter_map(|e| e.ok()) {
         let path = entry.path();
-        if !path.is_file() { continue; }
-        
-        let ext = path.extension()
+        if !path.is_file() {
+            continue;
+        }
+
+        let ext = path
+            .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
-        
-        if !allowed_extensions.contains(&ext.as_str()) { continue; }
+
+        if !allowed_extensions.contains(&ext.as_str()) {
+            continue;
+        }
 
         // Skip files larger than 1MB
         if let Ok(meta) = entry.metadata() {
@@ -304,7 +336,15 @@ fn index_single_repo(conn: &mut Connection, repo_id: i64, repo_path: &Path) -> a
         if let Ok(content) = std::fs::read_to_string(path) {
             for (idx, line) in content.lines().enumerate() {
                 let trimmed = line.trim();
-                if trimmed.contains("TODO") || trimmed.contains("FIXME") || trimmed.contains("BUG") {
+                if (trimmed.starts_with("//")
+                    || trimmed.starts_with("#")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with("--")
+                    || trimmed.starts_with("<!--"))
+                    && (trimmed.contains("TODO")
+                        || trimmed.contains("FIXME")
+                        || trimmed.contains("BUG"))
+                {
                     let line_number = (idx + 1) as i32;
                     todos.push((path_str.clone(), line_number, trimmed.to_string()));
                 }

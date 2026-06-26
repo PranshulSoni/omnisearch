@@ -1,9 +1,9 @@
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::thread;
+use rusqlite::{params, Connection};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::WalkDir;
-use rusqlite::{Connection, params};
 
 fn log_indexer(msg: &str) {
     use std::fs::OpenOptions;
@@ -15,7 +15,9 @@ fn log_indexer(msg: &str) {
     let _ = std::fs::create_dir_all(&log_dir);
     let log_path = log_dir.join("indexer.log");
     if let Ok(meta) = std::fs::metadata(&log_path) {
-        if meta.len() > 1024 * 1024 { let _ = std::fs::remove_file(&log_path); }
+        if meta.len() > 1024 * 1024 {
+            let _ = std::fs::remove_file(&log_path);
+        }
     }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
         let _ = writeln!(file, "{}", msg);
@@ -27,14 +29,18 @@ pub fn start_indexer(db_path: PathBuf) {
     thread::spawn(move || {
         log_indexer("Indexer thread started");
         // Initialize COM for WinRT OCR
-        let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(
-            None,
-            windows::Win32::System::Com::COINIT_MULTITHREADED
-        ) };
+        let _ = unsafe {
+            windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_MULTITHREADED,
+            )
+        };
 
         // Set low priority so indexing never slows down foreground apps
         unsafe {
-            use windows::Win32::System::Threading::{SetThreadPriority, GetCurrentThread, THREAD_PRIORITY_BELOW_NORMAL};
+            use windows::Win32::System::Threading::{
+                GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
+            };
             let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
         }
 
@@ -63,24 +69,31 @@ pub fn start_indexer(db_path: PathBuf) {
 fn get_priority_folders() -> Vec<PathBuf> {
     let mut folders = Vec::new();
     unsafe {
-        use windows::Win32::UI::Shell::{
-            SHGetKnownFolderPath, KF_FLAG_DEFAULT,
-            FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Pictures,
-        };
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::Com::CoTaskMemFree;
+        use windows::Win32::UI::Shell::{
+            FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Pictures,
+            SHGetKnownFolderPath, KF_FLAG_DEFAULT,
+        };
 
         let get_folder = |guid| -> Option<PathBuf> {
             let result = SHGetKnownFolderPath(guid, KF_FLAG_DEFAULT, HANDLE::default()).ok()?;
             let mut len = 0;
-            while *result.0.add(len) != 0 { len += 1; }
+            while *result.0.add(len) != 0 {
+                len += 1;
+            }
             let s = String::from_utf16_lossy(std::slice::from_raw_parts(result.0, len));
             CoTaskMemFree(Some(result.0 as *const _));
             Some(PathBuf::from(s))
         };
 
         // Put Documents last so it doesn't block Desktop/Downloads/Pictures from being indexed immediately
-        for guid in [&FOLDERID_Desktop, &FOLDERID_Downloads, &FOLDERID_Pictures, &FOLDERID_Documents] {
+        for guid in [
+            &FOLDERID_Desktop,
+            &FOLDERID_Downloads,
+            &FOLDERID_Pictures,
+            &FOLDERID_Documents,
+        ] {
             if let Some(p) = get_folder(guid) {
                 folders.push(p);
             }
@@ -95,12 +108,38 @@ fn is_ignored_dir(name: &str) -> bool {
         return true;
     }
     match name_lower.as_str() {
-        "node_modules" | "target" | "build" | "dist" | "venv" | ".venv" | ".git" |
-        "appdata" | "obj" | "bin" | "out" | ".next" | ".nuxt" | ".cache" | "cache" |
-        ".cargo" | ".rustup" | ".npm" | ".m2" | ".nuget" | "vendor" |
-        "cmake-build-debug" | "cmake-build-release" | ".yarn" | "__pycache__" |
-        ".idea" | ".vscode" | ".gradle" | ".metadata" | "system volume information" |
-        "temp" | "tmp" => true,
+        "node_modules"
+        | "target"
+        | "build"
+        | "dist"
+        | "venv"
+        | ".venv"
+        | ".git"
+        | "appdata"
+        | "obj"
+        | "bin"
+        | "out"
+        | ".next"
+        | ".nuxt"
+        | ".cache"
+        | "cache"
+        | ".cargo"
+        | ".rustup"
+        | ".npm"
+        | ".m2"
+        | ".nuget"
+        | "vendor"
+        | "cmake-build-debug"
+        | "cmake-build-release"
+        | ".yarn"
+        | "__pycache__"
+        | ".idea"
+        | ".vscode"
+        | ".gradle"
+        | ".metadata"
+        | "system volume information"
+        | "temp"
+        | "tmp" => true,
         _ => false,
     }
 }
@@ -134,12 +173,9 @@ fn flush_updates(conn: &mut Connection, updates: &mut Vec<PendingUpdate>) -> any
         let mut insert_file_stmt = tx.prepare(
             "INSERT OR REPLACE INTO files (path, name, extension, modified, size, is_dir) VALUES (?, ?, ?, ?, ?, ?)"
         )?;
-        let mut delete_fts_stmt = tx.prepare(
-            "DELETE FROM files_fts WHERE path = ?"
-        )?;
-        let mut insert_fts_stmt = tx.prepare(
-            "INSERT INTO files_fts (path, content) VALUES (?, ?)"
-        )?;
+        let mut delete_fts_stmt = tx.prepare("DELETE FROM files_fts WHERE path = ?")?;
+        let mut insert_fts_stmt =
+            tx.prepare("INSERT INTO files_fts (path, content) VALUES (?, ?)")?;
 
         for update in updates.drain(..) {
             // Clone path before moving into params! so FTS statements can use it afterwards
@@ -164,11 +200,14 @@ fn flush_updates(conn: &mut Connection, updates: &mut Vec<PendingUpdate>) -> any
 }
 
 fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<()> {
-    log_indexer(&format!("run_indexer_folders started with folders: {:?}", folders));
+    log_indexer(&format!(
+        "run_indexer_folders started with folders: {:?}",
+        folders
+    ));
     let mut conn = Connection::open(db_path)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
-    
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS files (
             path TEXT PRIMARY KEY,
@@ -182,9 +221,15 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
     )?;
 
     // Migrate existing databases that may lack the new columns
-    let _ = conn.execute("ALTER TABLE files ADD COLUMN size INTEGER NOT NULL DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE files ADD COLUMN is_dir INTEGER NOT NULL DEFAULT 0", []);
-    
+    let _ = conn.execute(
+        "ALTER TABLE files ADD COLUMN size INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE files ADD COLUMN is_dir INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+
     conn.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
             path UNINDEXED,
@@ -204,21 +249,21 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
             continue;
         }
         log_indexer(&format!("Folder exists, starting WalkDir: {:?}", folder));
-        let walker = WalkDir::new(&folder)
-            .into_iter()
-            .filter_entry(|e| {
-                let name = e.file_name().to_string_lossy();
-                !is_ignored_dir(&name)
-            });
-            
+        let walker = WalkDir::new(&folder).into_iter().filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            !e.file_type().is_dir() || !is_ignored_dir(&name)
+        });
+
         let mut folder_file_count = 0;
         for entry in walker.filter_map(|e| e.ok()) {
             folder_file_count += 1;
             let path = entry.path();
             let is_file = path.is_file();
             let is_dir = path.is_dir();
-            if !is_file && !is_dir { continue; }
-            
+            if !is_file && !is_dir {
+                continue;
+            }
+
             let path_str = match path.to_str() {
                 Some(s) => s.to_string(),
                 None => continue,
@@ -233,7 +278,8 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
                     .to_lowercase()
             };
 
-            let name = path.file_name()
+            let name = path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
@@ -244,12 +290,15 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
                 name
             };
 
-            if is_file && is_ignored_file(&name, &ext) { continue; }
+            if is_file && is_ignored_file(&name, &ext) {
+                continue;
+            }
 
             // seen_paths.insert(path_str.clone()); // skipped for memory (#8)
 
             let metadata = entry.metadata().ok();
-            let modified = metadata.as_ref()
+            let modified = metadata
+                .as_ref()
                 .and_then(|m| m.modified().ok())
                 .unwrap_or(SystemTime::UNIX_EPOCH)
                 .duration_since(UNIX_EPOCH)
@@ -258,29 +307,36 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
             let file_size = metadata.as_ref().map(|m| m.len() as i64).unwrap_or(0);
 
             let db_modified = {
-                let mut stmt = conn.prepare_cached("SELECT modified FROM files WHERE path = ?").unwrap();
+                let mut stmt = conn
+                    .prepare_cached("SELECT modified FROM files WHERE path = ?")
+                    .unwrap();
                 stmt.query_row([&path_str], |row| row.get::<_, i64>(0)).ok()
             };
-            
+
             let text_extensions = [
-                "txt", "md", "rs", "py", "js", "ts", "jsx", "tsx", "json", "html", "css",
-                "c", "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat",
-                "ps1", "yaml", "yml", "toml", "ini", "sql", "xml",
-                "rb", "php", "lua", "swift", "dart", "vue", "svelte", "csv",
-                "tex", "rst", "adoc", "conf", "env"
+                "txt", "md", "rs", "py", "js", "ts", "jsx", "tsx", "json", "html", "css", "c",
+                "cpp", "h", "hpp", "cs", "go", "java", "kt", "sh", "bat", "ps1", "yaml", "yml",
+                "toml", "ini", "sql", "xml", "rb", "php", "lua", "swift", "dart", "vue", "svelte",
+                "csv", "tex", "rst", "adoc", "conf", "env",
             ];
             let image_extensions = ["png", "jpg", "jpeg", "bmp", "gif"];
 
-            let is_text_or_doc = is_file && (text_extensions.contains(&ext.as_str()) || ext == "pdf" || ext == "docx");
+            let is_text_or_doc = is_file
+                && (text_extensions.contains(&ext.as_str()) || ext == "pdf" || ext == "docx");
             let is_image = is_file && image_extensions.contains(&ext.as_str());
             let should_fts = is_text_or_doc || is_image;
             let needs_fts_check = should_fts && {
-                let mut stmt = conn.prepare_cached("SELECT 1 FROM files_fts WHERE path = ?").unwrap();
+                let mut stmt = conn
+                    .prepare_cached("SELECT 1 FROM files_fts WHERE path = ?")
+                    .unwrap();
                 !stmt.exists([&path_str]).unwrap_or(false)
             };
 
             if is_image {
-                log_indexer(&format!("Found image in WalkDir: {} (modified={}, db_mod={:?}, needs_fts={})", path_str, modified, db_modified, needs_fts_check));
+                log_indexer(&format!(
+                    "Found image in WalkDir: {} (modified={}, db_mod={:?}, needs_fts={})",
+                    path_str, modified, db_modified, needs_fts_check
+                ));
             }
 
             if db_modified.is_none() || db_modified.unwrap() != modified || needs_fts_check {
@@ -306,7 +362,10 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
                     } else if is_image {
                         log_indexer(&format!("Extracting OCR text from image: {}", path_str));
                         let extracted = extract_ocr_text(path);
-                        log_indexer(&format!("OCR finished for: {}. Text found: {:?}", path_str, extracted));
+                        log_indexer(&format!(
+                            "OCR finished for: {}. Text found: {:?}",
+                            path_str, extracted
+                        ));
                         content = Some(extracted.unwrap_or_default());
                         thread::sleep(std::time::Duration::from_millis(100));
                     }
@@ -334,7 +393,10 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
                 thread::sleep(std::time::Duration::from_millis(5));
             }
         }
-        log_indexer(&format!("Finished WalkDir for {:?}: scanned {} total entries", folder, folder_file_count));
+        log_indexer(&format!(
+            "Finished WalkDir for {:?}: scanned {} total entries",
+            folder, folder_file_count
+        ));
     }
 
     log_indexer("Flushing remaining index updates to database...");
@@ -348,21 +410,23 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
 
 pub fn get_scan_folders() -> Vec<PathBuf> {
     let mut folders = Vec::new();
-    
+
     let system_drive = std::env::var("SystemDrive")
         .unwrap_or_else(|_| "C:".to_string())
         .to_uppercase();
 
     // 1. Get the User Profile folder
     unsafe {
-        use windows::Win32::UI::Shell::{SHGetKnownFolderPath, FOLDERID_Profile, KF_FLAG_DEFAULT};
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::Com::CoTaskMemFree;
-        
+        use windows::Win32::UI::Shell::{FOLDERID_Profile, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+
         let get_folder = |guid| -> Option<PathBuf> {
             let result = SHGetKnownFolderPath(guid, KF_FLAG_DEFAULT, HANDLE::default()).ok()?;
             let mut len = 0;
-            while *result.0.add(len) != 0 { len += 1; }
+            while *result.0.add(len) != 0 {
+                len += 1;
+            }
             let s = String::from_utf16_lossy(std::slice::from_raw_parts(result.0, len));
             CoTaskMemFree(Some(result.0 as *const _));
             Some(PathBuf::from(s))
@@ -390,7 +454,8 @@ pub fn get_scan_folders() -> Vec<PathBuf> {
         unsafe {
             use windows::Win32::Storage::FileSystem::GetDriveTypeW;
             let drive_type = GetDriveTypeW(windows::core::PCWSTR(wide_path.as_ptr()));
-            if drive_type == 3 { // 3 corresponds to DRIVE_FIXED in Win32
+            if drive_type == 3 {
+                // 3 corresponds to DRIVE_FIXED in Win32
                 folders.push(PathBuf::from(drive_path_str));
             }
         }
@@ -446,56 +511,78 @@ fn safe_extract_docx_text(path: &Path) -> Option<String> {
 fn read_text_file(path: &Path) -> std::io::Result<String> {
     use std::fs::File;
     use std::io::Read;
-    
+
     let mut file = File::open(path)?;
     let mut buf = vec![0u8; 50 * 1024]; // Limit to 50KB
     let n = file.read(&mut buf)?;
     buf.truncate(n);
-    
+
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
 fn extract_ocr_text(path: &Path) -> Option<String> {
     use windows::core::HSTRING;
-    use windows::Storage::StorageFile;
-    use windows::Graphics::Imaging::{BitmapDecoder, BitmapPixelFormat, BitmapAlphaMode, SoftwareBitmap};
+    use windows::Graphics::Imaging::{
+        BitmapAlphaMode, BitmapDecoder, BitmapPixelFormat, SoftwareBitmap,
+    };
     use windows::Media::Ocr::OcrEngine;
+    use windows::Storage::StorageFile;
 
     let path_str = path.to_str()?;
     let path_wide = HSTRING::from(path_str);
-    
-    let file = match StorageFile::GetFileFromPathAsync(&path_wide).ok().and_then(|async_op| async_op.get().ok()) {
+
+    let file = match StorageFile::GetFileFromPathAsync(&path_wide)
+        .ok()
+        .and_then(|async_op| async_op.get().ok())
+    {
         Some(f) => f,
         None => {
-            log_indexer(&format!("OCR: Failed to get StorageFile for {:?}", path_str));
+            log_indexer(&format!(
+                "OCR: Failed to get StorageFile for {:?}",
+                path_str
+            ));
             return None;
         }
     };
-    
-    let stream = match file.OpenAsync(windows::Storage::FileAccessMode::Read).ok().and_then(|async_op| async_op.get().ok()) {
+
+    let stream = match file
+        .OpenAsync(windows::Storage::FileAccessMode::Read)
+        .ok()
+        .and_then(|async_op| async_op.get().ok())
+    {
         Some(s) => s,
         None => {
             log_indexer(&format!("OCR: Failed to open stream for {:?}", path_str));
             return None;
         }
     };
-    
-    let decoder = match BitmapDecoder::CreateAsync(&stream).ok().and_then(|async_op| async_op.get().ok()) {
+
+    let decoder = match BitmapDecoder::CreateAsync(&stream)
+        .ok()
+        .and_then(|async_op| async_op.get().ok())
+    {
         Some(d) => {
             // Enforce max image size for OCR to prevent OOM (#9)
             if d.PixelWidth().unwrap_or(9999) > 4000 || d.PixelHeight().unwrap_or(9999) > 4000 {
                 return None;
             }
             d
-        },
+        }
         None => return None,
     };
 
     // Get raw decoded bitmap (any pixel format)
-    let raw_bitmap = match decoder.GetSoftwareBitmapAsync().ok().and_then(|async_op| async_op.get().ok()) {
+    let raw_bitmap = match decoder
+        .GetSoftwareBitmapAsync()
+        .ok()
+        .and_then(|async_op| async_op.get().ok())
+    {
         Some(b) => b,
         None => {
-            log_indexer(&format!("OCR: Failed to get SoftwareBitmap for {:?}", path_str));
+            log_indexer(&format!(
+                "OCR: Failed to get SoftwareBitmap for {:?}",
+                path_str
+            ));
             return None;
         }
     };
@@ -514,13 +601,16 @@ fn extract_ocr_text(path: &Path) -> Option<String> {
             ) {
                 Ok(converted) => converted,
                 Err(e) => {
-                    log_indexer(&format!("OCR: Bitmap conversion failed for {:?}: {:?}", path_str, e));
+                    log_indexer(&format!(
+                        "OCR: Bitmap conversion failed for {:?}: {:?}",
+                        path_str, e
+                    ));
                     return None;
                 }
             }
         }
     };
-    
+
     let ocr_engine = match OcrEngine::TryCreateFromUserProfileLanguages() {
         Ok(engine) => engine,
         Err(e) => {
@@ -528,18 +618,19 @@ fn extract_ocr_text(path: &Path) -> Option<String> {
             return None;
         }
     };
-    
-    let ocr_result = match ocr_engine.RecognizeAsync(&software_bitmap)
-        .ok()
-        .and_then(|async_op: windows::Foundation::IAsyncOperation<windows::Media::Ocr::OcrResult>| async_op.get().ok())
-    {
+
+    let ocr_result = match ocr_engine.RecognizeAsync(&software_bitmap).ok().and_then(
+        |async_op: windows::Foundation::IAsyncOperation<windows::Media::Ocr::OcrResult>| {
+            async_op.get().ok()
+        },
+    ) {
         Some(res) => res,
         None => {
             log_indexer(&format!("OCR: RecognizeAsync failed for {:?}", path_str));
             return None;
         }
     };
-    
+
     let text = match ocr_result.Text() {
         Ok(t) => t.to_string(),
         Err(e) => {
@@ -547,13 +638,17 @@ fn extract_ocr_text(path: &Path) -> Option<String> {
             return None;
         }
     };
-    
+
     let trimmed = text.trim();
     if trimmed.is_empty() {
         log_indexer(&format!("OCR: No text found in {:?}", path_str));
         None
     } else {
-        log_indexer(&format!("OCR: Successfully extracted {} chars from {:?}", trimmed.len(), path_str));
+        log_indexer(&format!(
+            "OCR: Successfully extracted {} chars from {:?}",
+            trimmed.len(),
+            path_str
+        ));
         Some(trimmed.to_string())
     }
 }

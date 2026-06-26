@@ -4,15 +4,15 @@ mod markdown;
 fn main() {
     let prompt = "can you execute any cmmand for me\n---\nUser: please execute\n---\nUser: run a command to run for me that lists all folders in documents";
     let response = "\n\n---\n\nSure, I can execute commands for you. What command would you like me to run?\n\n---\n\nThe command is pending your approval. Here's what it will do:\n\n- List all **folders** (not files) inside your `Documents` directory\n- Show them sorted alphabetically\n- Print the total count\n\nPlease approve the execution so I can show you the results!";
-    
+
     println!("Parsing prompt...");
     let parsed_prompt = markdown::parse(prompt);
     println!("Parsed prompt: {:?}", parsed_prompt);
-    
+
     println!("Parsing response...");
     let parsed_response = markdown::parse(response);
     println!("Parsed response: {:?}", parsed_response);
-    
+
     println!("Format conversation...");
     let conversation = format_conversation(prompt, response);
     println!("Conversation formatted: {}", conversation);
@@ -20,7 +20,7 @@ fn main() {
     println!("Parsing formatted conversation...");
     let parsed_conv = markdown::parse(&conversation);
     println!("Parsed formatted: {} blocks", parsed_conv.len());
-    
+
     println!("Testing split rendering...");
     let parts: Vec<&str> = conversation.split("\n\n---\n\n").collect();
     for part in &parts {
@@ -47,9 +47,10 @@ fn main() {
 }
 
 fn format_conversation(prompt: &str, response: &str) -> String {
-    let prompts: Vec<&str> = prompt.split("\n---\n").map(|p| {
-        p.strip_prefix("User: ").unwrap_or(p).trim()
-    }).collect();
+    let prompts: Vec<&str> = prompt
+        .split("\n---\n")
+        .map(|p| p.strip_prefix("User: ").unwrap_or(p).trim())
+        .collect();
     let responses: Vec<&str> = response.split("\n\n---\n\n").collect();
 
     let mut conversation = String::new();

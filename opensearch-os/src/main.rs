@@ -1,28 +1,25 @@
+// ponytail: `let _ =` and `.ok()` are heavily used here for Win32 API calls and async ops. Skipped adding global error propagation because it adds noise for non-fatal OS events. Add real error handling when a specific system call actually fails in a way we need to recover from.
 #![windows_subsystem = "windows"]
 
-mod launcher;
-mod search;
-mod indexer;
+mod ai;
 mod browser_indexer;
 mod git_indexer;
-mod voice;
-mod ai;
+mod indexer;
+mod launcher;
 mod markdown;
+mod search;
+mod voice;
 
-use std::ptr::null_mut;
-use std::os::windows::process::CommandExt;
 use search::{SearchEngine, SearchResult};
+use std::os::windows::process::CommandExt;
+use std::ptr::null_mut;
 use windows::{
-    core::{PCWSTR, Interface},
+    core::{Interface, PCWSTR},
     Win32::{
         Foundation::*,
         Graphics::{Dwm::*, Gdi::*},
         System::LibraryLoader::GetModuleHandleW,
-        UI::{
-            HiDpi::*,
-            Input::KeyboardAndMouse::*,
-            WindowsAndMessaging::*,
-        },
+        UI::{HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     },
 };
 
@@ -68,18 +65,18 @@ struct SearchRequest {
 // ── Animation ─────────────────────────────────────────────────────────────────
 // const ANIM_TICK_MS: u32 = 1;
 const ANIM_DURATION_SEC: f32 = 0.115; // 115ms
-// const MAX_ALPHA: u8 = 255;
+                                      // const MAX_ALPHA: u8 = 255;
 
 // ── Genie Morph Dimensions ────────────────────────────────────────────────────
 // const PILL_H: i32 = 12; // Starting height at top center
 
 // ── Colors (COLORREF = 0x00BBGGRR) ───────────────────────────────────────────
-const BG: COLORREF        = COLORREF(0x00_1F_1D_1C);
-const BG_SEL: COLORREF    = COLORREF(0x00_36_31_2F);
-const CLR_DIV: COLORREF   = COLORREF(0x00_35_31_30);
+const BG: COLORREF = COLORREF(0x00_1F_1D_1C);
+const BG_SEL: COLORREF = COLORREF(0x00_36_31_2F);
+const CLR_DIV: COLORREF = COLORREF(0x00_35_31_30);
 const CLR_WHITE: COLORREF = COLORREF(0x00_FF_FF_FF);
-const CLR_GRAY: COLORREF  = COLORREF(0x00_A7_A1_9F);
-const CLR_PH: COLORREF    = COLORREF(0x00_70_6A_68);
+const CLR_GRAY: COLORREF = COLORREF(0x00_A7_A1_9F);
+const CLR_PH: COLORREF = COLORREF(0x00_70_6A_68);
 const CLR_BDGBG: COLORREF = COLORREF(0x00_38_34_33);
 const CLR_BDGTX: COLORREF = COLORREF(0x00_B4_AD_AA);
 const COLOR_KEY: COLORREF = COLORREF(0x00_12_34_56);
@@ -141,26 +138,26 @@ struct State {
     submenu_active: bool,
     submenu_selected: usize,
     // Voice activation
-    voice_listening: bool,   // true = currently recording query
-    voice_triggered: bool,   // launcher opened via voice (auto-execute on result)
+    voice_listening: bool,    // true = currently recording query
+    voice_triggered: bool,    // launcher opened via voice (auto-execute on result)
     voice_pending_exec: bool, // true = waiting for search results to auto-execute
-    voice_dot_tick: u32,     // animation frame counter for pulsing mic dot
+    voice_dot_tick: u32,      // animation frame counter for pulsing mic dot
     voice_exec_deadline: Option<std::time::Instant>, // when the auto-exec countdown fires
-    form_state: FormState,   // Phase 2 Quicklinks & Snippets creation form state
+    form_state: FormState,    // Phase 2 Quicklinks & Snippets creation form state
     color_picker_active: bool,
     color_picker_mx: i32,
     color_picker_my: i32,
-    prev_foreground: HWND,  // Window that had focus before launcher appeared (for snippet auto-paste)
+    prev_foreground: HWND, // Window that had focus before launcher appeared (for snippet auto-paste)
     // AI answer panel
-    ai_pending: bool,            // true while waiting on the AI response
-    ai_answer: Option<String>,   // the response text to render
-    ai_title: String,            // command label shown above the answer
-    ai_scroll: i32,              // vertical pixel scroll offset in the answer panel
-    ai_follow_bottom: bool,      // true = keep the latest message pinned to the bottom (auto-scroll)
+    ai_pending: bool,                        // true while waiting on the AI response
+    ai_answer: Option<String>,               // the response text to render
+    ai_title: String,                        // command label shown above the answer
+    ai_scroll: i32,                          // vertical pixel scroll offset in the answer panel
+    ai_follow_bottom: bool, // true = keep the latest message pinned to the bottom (auto-scroll)
     ai_content_height: std::cell::Cell<i32>, // cached total rendered AI height (for max_scroll in input handlers)
-    ai_view_height: std::cell::Cell<i32>,    // cached viewport height (content_bottom - content_top)
-    ai_tick: u32,                 // lightweight activity indicator while AI is running
-    active_chat_id: Option<i64>, // persistent chat thread ID in ai_chats table
+    ai_view_height: std::cell::Cell<i32>, // cached viewport height (content_bottom - content_top)
+    ai_tick: u32,                         // lightweight activity indicator while AI is running
+    active_chat_id: Option<i64>,          // persistent chat thread ID in ai_chats table
     // Hermes Runs API: a pending tool approval (None = nothing to approve).
     hermes_approval: Option<ai::HermesApproval>,
 }
@@ -168,9 +165,15 @@ struct State {
 #[derive(PartialEq)]
 enum Anim {
     Hidden,
-    Appearing { start_time: std::time::Instant, start_p: f32 },
+    Appearing {
+        start_time: std::time::Instant,
+        start_p: f32,
+    },
     Visible,
-    Hiding { start_time: std::time::Instant, start_p: f32 },
+    Hiding {
+        start_time: std::time::Instant,
+        start_p: f32,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -207,17 +210,28 @@ impl State {
         let end_h = self.win_h();
         let end_y = self.cy - end_h / 2;
         let y = end_y + SEARCH_H + 1 + i as i32 * RESULT_H;
-        RECT { left: 0, top: y, right: WIN_W, bottom: y + RESULT_H }
+        RECT {
+            left: 0,
+            top: y,
+            right: WIN_W,
+            bottom: y + RESULT_H,
+        }
     }
     fn current_p(&self) -> f32 {
         match self.anim {
             Anim::Hidden => 0.0,
             Anim::Visible => 1.0,
-            Anim::Appearing { start_time, start_p } => {
+            Anim::Appearing {
+                start_time,
+                start_p,
+            } => {
                 let elapsed = start_time.elapsed().as_secs_f32();
                 (start_p + elapsed / ANIM_DURATION_SEC).min(1.0)
             }
-            Anim::Hiding { start_time, start_p } => {
+            Anim::Hiding {
+                start_time,
+                start_p,
+            } => {
                 let elapsed = start_time.elapsed().as_secs_f32();
                 (start_p - elapsed / ANIM_DURATION_SEC).max(0.0)
             }
@@ -231,10 +245,16 @@ fn main() {
     register_startup();
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
-        let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE);
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED
+                | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
+        );
     }
 
-    unsafe { run(); }
+    unsafe {
+        run();
+    }
 }
 
 // Accept the Windows "Online speech recognition" privacy policy so the Dictation
@@ -242,12 +262,13 @@ fn main() {
 // ("speech privacy policy was not accepted"). This is the same flag the
 // Settings → Privacy → Speech toggle sets; the user can turn it back off there.
 fn accept_speech_privacy() {
-    use windows::Win32::System::Registry::*;
     use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::*;
     unsafe {
         let subkey: Vec<u16> =
             "Software\\Microsoft\\Speech_OneCore\\Settings\\OnlineSpeechPrivacy\0"
-                .encode_utf16().collect();
+                .encode_utf16()
+                .collect();
         let value_name: Vec<u16> = "HasAccepted\0".encode_utf16().collect();
         let mut hkey = HKEY::default();
         // RegCreateKeyW creates the subkey if missing, or opens it if it exists.
@@ -273,7 +294,8 @@ fn register_startup() {
         let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
             let hkcu = windows::Win32::System::Registry::HKEY_CURRENT_USER;
             let subkey: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Run\0"
-                .encode_utf16().collect();
+                .encode_utf16()
+                .collect();
             let value_name: Vec<u16> = "OpenSearchOS\0".encode_utf16().collect();
             let exe_wide: Vec<u16> = format!("{}\0", exe_str).encode_utf16().collect();
             let mut hkey = windows::Win32::System::Registry::HKEY::default();
@@ -285,7 +307,9 @@ fn register_startup() {
                     windows::Win32::System::Registry::KEY_SET_VALUE,
                     &mut hkey,
                 );
-                if err.is_err() { return Err("open key failed".into()); }
+                if err.is_err() {
+                    return Err("open key failed".into());
+                }
                 let _ = windows::Win32::System::Registry::RegSetValueExW(
                     hkey,
                     windows::core::PCWSTR(value_name.as_ptr()),
@@ -309,25 +333,60 @@ unsafe fn run() {
     let fp = PCWSTR(face.as_ptr());
 
     // CreateFontW takes u32 for the font attribute params in windows 0.58.
-    let mk_font = |h, w| CreateFontW(
-        h, 0, 0, 0, w, 0, 0, 0,
-        DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32,
-        CLEARTYPE_QUALITY.0 as u32, (DEFAULT_PITCH.0 | FF_SWISS.0) as u32, fp,
-    );
+    let mk_font = |h, w| {
+        CreateFontW(
+            h,
+            0,
+            0,
+            0,
+            w,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET.0 as u32,
+            OUT_DEFAULT_PRECIS.0 as u32,
+            CLIP_DEFAULT_PRECIS.0 as u32,
+            CLEARTYPE_QUALITY.0 as u32,
+            (DEFAULT_PITCH.0 | FF_SWISS.0) as u32,
+            fp,
+        )
+    };
 
     let mic_face: Vec<u16> = "Segoe MDL2 Assets\0".encode_utf16().collect();
     let font_mic = CreateFontW(
-        -20, 0, 0, 0, 400, 0, 0, 0,
-        DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32,
-        CLEARTYPE_QUALITY.0 as u32, (DEFAULT_PITCH.0 | FF_SWISS.0) as u32, PCWSTR(mic_face.as_ptr()),
+        -20,
+        0,
+        0,
+        0,
+        400,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET.0 as u32,
+        OUT_DEFAULT_PRECIS.0 as u32,
+        CLIP_DEFAULT_PRECIS.0 as u32,
+        CLEARTYPE_QUALITY.0 as u32,
+        (DEFAULT_PITCH.0 | FF_SWISS.0) as u32,
+        PCWSTR(mic_face.as_ptr()),
     );
 
     // Monospace + bold fonts for markdown code blocks and headings in the AI panel.
     let mono_face: Vec<u16> = "Consolas\0".encode_utf16().collect();
     let font_code = CreateFontW(
-        -15, 0, 0, 0, 400, 0, 0, 0,
-        DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32,
-        CLEARTYPE_QUALITY.0 as u32, (FIXED_PITCH.0 | FF_MODERN.0) as u32, PCWSTR(mono_face.as_ptr()),
+        -15,
+        0,
+        0,
+        0,
+        400,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET.0 as u32,
+        OUT_DEFAULT_PRECIS.0 as u32,
+        CLIP_DEFAULT_PRECIS.0 as u32,
+        CLEARTYPE_QUALITY.0 as u32,
+        (FIXED_PITCH.0 | FF_MODERN.0) as u32,
+        PCWSTR(mono_face.as_ptr()),
     );
     // Heading font: slightly larger, bold, same Segoe UI Variable face.
     let font_h = mk_font(-22, 700);
@@ -433,8 +492,9 @@ unsafe fn run() {
         // Quick initial check and start if not running
         let running = std::net::TcpStream::connect_timeout(
             &"127.0.0.1:8642".parse().unwrap(),
-            std::time::Duration::from_millis(500)
-        ).is_ok();
+            std::time::Duration::from_millis(500),
+        )
+        .is_ok();
         if !running {
             ai::start_hermes_gateway_daemon();
         }
@@ -442,8 +502,9 @@ unsafe fn run() {
         loop {
             let running = std::net::TcpStream::connect_timeout(
                 &"127.0.0.1:8642".parse().unwrap(),
-                std::time::Duration::from_millis(500)
-            ).is_ok();
+                std::time::Duration::from_millis(500),
+            )
+            .is_ok();
             ai::HERMES_GATEWAY_RUNNING.store(running, std::sync::atomic::Ordering::Relaxed);
             std::thread::sleep(std::time::Duration::from_secs(3));
         }
@@ -473,18 +534,27 @@ unsafe fn run() {
         PCWSTR(class.as_ptr()),
         PCWSTR::null(),
         WS_POPUP,
-        win_x, 0, WIN_W, 800,
-        HWND(null_mut()), HMENU(null_mut()), hinst,
+        win_x,
+        0,
+        WIN_W,
+        800,
+        HWND(null_mut()),
+        HMENU(null_mut()),
+        hinst,
         Some(Box::into_raw(state) as _),
-    ).unwrap();
+    )
+    .unwrap();
 
     let hwnd_icon = SendHwnd(hwnd);
     std::thread::spawn(move || {
         let hwnd_raw = hwnd_icon;
-        let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(
-            None,
-            windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE
-        ) };
+        let _ = unsafe {
+            windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_APARTMENTTHREADED
+                    | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
+            )
+        };
         while let Ok(req) = icon_rx.recv() {
             unsafe {
                 let file_icon_path = icon_file_path(&req.source, &req.key);
@@ -511,7 +581,9 @@ unsafe fn run() {
                         WM_ICON_LOADED,
                         WPARAM(hicon.0 as usize),
                         LPARAM(key_ptr as isize),
-                    ).is_err() {
+                    )
+                    .is_err()
+                    {
                         let _ = Box::from_raw(key_ptr);
                         let _ = DestroyIcon(hicon);
                     }
@@ -527,17 +599,20 @@ unsafe fn run() {
     // DWM rounded corners (Windows 11) - Do not round the transparent box
     let corner = DWMWCP_DONOTROUND;
     let _ = DwmSetWindowAttribute(
-        hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
-        &corner as *const _ as _, 4,
+        hwnd,
+        DWMWA_WINDOW_CORNER_PREFERENCE,
+        &corner as *const _ as _,
+        4,
     );
 
     // Disable DWM Acrylic backdrop (make it solid)
     let backdrop = 1i32; // DWMSBT_NONE (None)
     let _ = DwmSetWindowAttribute(
-        hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
-        &backdrop as *const _ as _, 4,
+        hwnd,
+        DWMWA_SYSTEMBACKDROP_TYPE,
+        &backdrop as *const _ as _,
+        4,
     );
-
 
     // Load the search engine in a background thread so the window appears instantly.
     let hwnd_usize = hwnd.0 as usize;
@@ -551,12 +626,22 @@ unsafe fn run() {
         let db_path_for_timeline = db_path.clone();
         let hwnd_for_timeline = SendHwnd(HWND(hwnd_usize as *mut std::ffi::c_void));
         std::thread::spawn(move || {
-            let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED) };
-            unsafe { start_timeline_tracker(db_path_for_timeline, hwnd_for_timeline); }
-            unsafe { windows::Win32::System::Com::CoUninitialize(); }
+            let _ = unsafe {
+                windows::Win32::System::Com::CoInitializeEx(
+                    None,
+                    windows::Win32::System::Com::COINIT_MULTITHREADED,
+                )
+            };
+            unsafe {
+                start_timeline_tracker(db_path_for_timeline, hwnd_for_timeline);
+            }
+            unsafe {
+                windows::Win32::System::Com::CoUninitialize();
+            }
         });
 
-        let model_path = std::env::current_exe().ok()
+        let model_path = std::env::current_exe()
+            .ok()
             .and_then(|p| p.parent().map(|d| d.join("model_int8.onnx")));
         let db_path_for_engine = db_path.clone();
         let result = match model_path {
@@ -570,7 +655,10 @@ unsafe fn run() {
                     // Import Windows Clipboard History in background
                     let db_path_clone = db_path.clone();
                     std::thread::spawn(move || {
-                        let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
+                        let _ = windows::Win32::System::Com::CoInitializeEx(
+                            None,
+                            windows::Win32::System::Com::COINIT_MULTITHREADED,
+                        );
                         import_windows_clipboard_history(&db_path_clone);
                         windows::Win32::System::Com::CoUninitialize();
                     });
@@ -611,21 +699,32 @@ unsafe fn run() {
         }
     });
 
-
-
     // Win+Space is reserved by Windows IME; Alt+Space is the conventional launcher hotkey.
     if RegisterHotKey(hwnd, HOTKEY_ID, MOD_ALT | MOD_NOREPEAT, VK_SPACE.0 as u32).is_err() {
         use windows::Win32::UI::WindowsAndMessaging::MessageBoxW;
         let msg: Vec<u16> = "Failed to register Alt+Space hotkey.\nAnother app may be using it.\0"
-            .encode_utf16().collect();
+            .encode_utf16()
+            .collect();
         let title: Vec<u16> = "OpenSearch OS\0".encode_utf16().collect();
-        MessageBoxW(HWND(null_mut()), PCWSTR(msg.as_ptr()), PCWSTR(title.as_ptr()), MB_OK | MB_ICONERROR);
+        MessageBoxW(
+            HWND(null_mut()),
+            PCWSTR(msg.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            MB_OK | MB_ICONERROR,
+        );
         return;
     }
 
     // Ctrl+Shift+Space starts voice dictation. (Ctrl+Alt is AltGr on many layouts and
     // gets eaten, so it's deliberately avoided.) Non-fatal: the launcher works without it.
-    if RegisterHotKey(hwnd, HOTKEY_VOICE_ID, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_SPACE.0 as u32).is_err() {
+    if RegisterHotKey(
+        hwnd,
+        HOTKEY_VOICE_ID,
+        MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+        VK_SPACE.0 as u32,
+    )
+    .is_err()
+    {
         voice::log("voice hotkey Ctrl+Shift+Space registration FAILED (already in use?)");
     } else {
         voice::log("voice hotkey Ctrl+Shift+Space registered");
@@ -642,9 +741,7 @@ unsafe fn run() {
 }
 
 // ── WndProc ───────────────────────────────────────────────────────────────────
-unsafe extern "system" fn wnd_proc(
-    hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM,
-) -> LRESULT {
+unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     let sp = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
 
     match msg {
@@ -656,8 +753,10 @@ unsafe extern "system" fn wnd_proc(
 
         WM_SETCURSOR => {
             unsafe {
-                use windows::Win32::UI::WindowsAndMessaging::{LoadCursorW, SetCursor, IDC_ARROW, IDC_CROSS};
                 use windows::Win32::Foundation::HINSTANCE;
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    LoadCursorW, SetCursor, IDC_ARROW, IDC_CROSS,
+                };
                 let idc = if !sp.is_null() && (*sp).color_picker_active {
                     IDC_CROSS
                 } else {
@@ -705,7 +804,9 @@ unsafe extern "system" fn wnd_proc(
         WM_REFRESH_SEARCH => {
             if !sp.is_null() {
                 let s = unsafe { &mut *sp };
-                unsafe { trigger_search(hwnd, s); }
+                unsafe {
+                    trigger_search(hwnd, s);
+                }
             }
             LRESULT(0)
         }
@@ -752,20 +853,26 @@ unsafe extern "system" fn wnd_proc(
             let hicon = HICON(wp.0 as *mut std::ffi::c_void);
             let key_box = unsafe { Box::from_raw(lp.0 as *mut String) };
             let key = *key_box;
-            
+
             // Insert the loaded HICON into the map
             if let Some(old_hicon) = s.app_icons.insert(key, hicon) {
                 if !old_hicon.0.is_null() && old_hicon != hicon {
-                    unsafe { let _ = DestroyIcon(old_hicon); }
+                    unsafe {
+                        let _ = DestroyIcon(old_hicon);
+                    }
                 }
             }
-            
-            unsafe { let _ = InvalidateRect(hwnd, None, FALSE); }
+
+            unsafe {
+                let _ = InvalidateRect(hwnd, None, FALSE);
+            }
             LRESULT(0)
         }
 
         WM_CLIPBOARDUPDATE => {
-            if sp.is_null() { return LRESULT(0); }
+            if sp.is_null() {
+                return LRESULT(0);
+            }
             let s = &*sp;
 
             // Check if foreground window is the launcher itself to prevent duplicates
@@ -815,7 +922,8 @@ unsafe extern "system" fn wnd_proc(
 
         WM_ENGINE_READY => {
             if wp.0 == 1 {
-                let tx = unsafe { *Box::from_raw(lp.0 as *mut std::sync::mpsc::Sender<SearchRequest>) };
+                let tx =
+                    unsafe { *Box::from_raw(lp.0 as *mut std::sync::mpsc::Sender<SearchRequest>) };
                 if !sp.is_null() {
                     let s = &mut *sp;
                     s.search_tx = Some(tx);
@@ -825,7 +933,12 @@ unsafe extern "system" fn wnd_proc(
                 let err = *Box::from_raw(lp.0 as *mut String);
                 let mut msg: Vec<u16> = format!("Engine error:\n{err}\0").encode_utf16().collect();
                 let mut title: Vec<u16> = "OpenSearch OS\0".encode_utf16().collect();
-                MessageBoxW(HWND(null_mut()), PCWSTR(msg.as_ptr()), PCWSTR(title.as_ptr()), MB_ICONERROR | MB_OK);
+                MessageBoxW(
+                    HWND(null_mut()),
+                    PCWSTR(msg.as_ptr()),
+                    PCWSTR(title.as_ptr()),
+                    MB_ICONERROR | MB_OK,
+                );
                 let _ = (&mut msg, &mut title);
             }
             LRESULT(0)
@@ -844,16 +957,22 @@ unsafe extern "system" fn wnd_proc(
                         s.scroll_offset = 0;
                     } else {
                         s.selected = s.selected.min(s.results.len() - 1);
-                        s.scroll_offset = s.scroll_offset.min(s.results.len().saturating_sub(VISIBLE_RESULTS));
+                        s.scroll_offset = s
+                            .scroll_offset
+                            .min(s.results.len().saturating_sub(VISIBLE_RESULTS));
                     }
-                    if s.voice_pending_exec && !s.results.is_empty() && s.voice_exec_deadline.is_none() {
+                    if s.voice_pending_exec
+                        && !s.results.is_empty()
+                        && s.voice_exec_deadline.is_none()
+                    {
                         // Results are in. Show them and count down ~3.5s before executing,
                         // so the user can press Esc to cancel or arrow/type to take over.
                         let _ = KillTimer(hwnd, TIMER_VOICE_AUTOEXEC);
                         let _ = SetTimer(hwnd, TIMER_VOICE_AUTOEXEC, 3500, None);
                         let _ = SetTimer(hwnd, TIMER_VOICE_ANIM, 100, None); // repaint countdown
-                        s.voice_exec_deadline =
-                            Some(std::time::Instant::now() + std::time::Duration::from_millis(3500));
+                        s.voice_exec_deadline = Some(
+                            std::time::Instant::now() + std::time::Duration::from_millis(3500),
+                        );
                     }
                     // Clear stale WINDOW icon cache when new window results arrive
                     if s.results.iter().any(|r| r.entry.source == "WINDOW") {
@@ -959,7 +1078,9 @@ unsafe extern "system" fn wnd_proc(
         }
 
         WM_TIMER => {
-            if sp.is_null() { return LRESULT(0); }
+            if sp.is_null() {
+                return LRESULT(0);
+            }
             let s = &mut *sp;
             match wp.0 {
                 TIMER_DEBOUNCE => {
@@ -996,7 +1117,9 @@ unsafe extern "system" fn wnd_proc(
         }
 
         WM_CHAR => {
-            if sp.is_null() { return LRESULT(0); }
+            if sp.is_null() {
+                return LRESULT(0);
+            }
             let s = &mut *sp;
             if s.form_state != FormState::None {
                 if let Some(c) = char::from_u32(wp.0 as u32) {
@@ -1055,7 +1178,9 @@ unsafe extern "system" fn wnd_proc(
         }
 
         WM_KEYDOWN => {
-            if sp.is_null() { return LRESULT(0); }
+            if sp.is_null() {
+                return LRESULT(0);
+            }
             let s = &mut *sp;
             let vk = VIRTUAL_KEY(wp.0 as u16);
             let ctrl_down = (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
@@ -1064,18 +1189,27 @@ unsafe extern "system" fn wnd_proc(
             // keys that resolve it before any other handling.
             if s.hermes_approval.is_some() && !ctrl_down {
                 match vk {
-                    VK_RETURN => { resolve_current_approval(hwnd, s, true); return LRESULT(0); }
-                    VK_ESCAPE => { 
+                    VK_RETURN => {
+                        resolve_current_approval(hwnd, s, true);
+                        return LRESULT(0);
+                    }
+                    VK_ESCAPE => {
                         close_ai_panel(hwnd, s);
                         start_hide(hwnd, s);
-                        return LRESULT(0); 
+                        return LRESULT(0);
                     }
                     _ => {}
                 }
                 if let Some(c) = char::from_u32(wp.0 as u32) {
                     match c.to_ascii_lowercase() {
-                        'a' => { resolve_current_approval(hwnd, s, true); return LRESULT(0); }
-                        'd' => { resolve_current_approval(hwnd, s, false); return LRESULT(0); }
+                        'a' => {
+                            resolve_current_approval(hwnd, s, true);
+                            return LRESULT(0);
+                        }
+                        'd' => {
+                            resolve_current_approval(hwnd, s, false);
+                            return LRESULT(0);
+                        }
                         'v' => {
                             ai::ALWAYS_APPROVE.store(true, std::sync::atomic::Ordering::Relaxed);
                             if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
@@ -1099,9 +1233,19 @@ unsafe extern "system" fn wnd_proc(
             // AI answer panel captures keys: Esc/Backspace closes, Enter submits follow-up.
             if s.ai_pending {
                 match vk {
-                    VK_ESCAPE => { close_ai_panel(hwnd, s); start_hide(hwnd, s); return LRESULT(0); },
-                    VK_DOWN => { ai_scroll_down(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); }
-                    VK_UP => { ai_scroll_up(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); }
+                    VK_ESCAPE => {
+                        close_ai_panel(hwnd, s);
+                        start_hide(hwnd, s);
+                        return LRESULT(0);
+                    }
+                    VK_DOWN => {
+                        ai_scroll_down(s, 40);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                    }
+                    VK_UP => {
+                        ai_scroll_up(s, 40);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                    }
                     _ => {}
                 }
             }
@@ -1179,12 +1323,21 @@ unsafe extern "system" fn wnd_proc(
                             }
                             return LRESULT(0);
                         }
-                        VK_DOWN => { ai_scroll_down(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); return LRESULT(0); }
-                        VK_UP => { ai_scroll_up(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); return LRESULT(0); }
+                        VK_DOWN => {
+                            ai_scroll_down(s, 40);
+                            let _ = InvalidateRect(hwnd, None, FALSE);
+                            return LRESULT(0);
+                        }
+                        VK_UP => {
+                            ai_scroll_up(s, 40);
+                            let _ = InvalidateRect(hwnd, None, FALSE);
+                            return LRESULT(0);
+                        }
                         _ => {}
                     }
                 }
-                if ctrl_down && vk.0 as u32 == 0x43 { // Ctrl+C
+                if ctrl_down && vk.0 as u32 == 0x43 {
+                    // Ctrl+C
                     if let Some(ans) = &s.ai_answer {
                         copy_to_clipboard(hwnd, ans);
                     }
@@ -1215,8 +1368,16 @@ unsafe extern "system" fn wnd_proc(
                         }
                         return LRESULT(0);
                     }
-                    VK_DOWN => { ai_scroll_down(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); return LRESULT(0); }
-                    VK_UP => { ai_scroll_up(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); return LRESULT(0); }
+                    VK_DOWN => {
+                        ai_scroll_down(s, 40);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                        return LRESULT(0);
+                    }
+                    VK_UP => {
+                        ai_scroll_up(s, 40);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                        return LRESULT(0);
+                    }
                     _ => {} // Let other keys fall through to let user type!
                 }
             }
@@ -1295,20 +1456,23 @@ unsafe extern "system" fn wnd_proc(
                     _ => {
                         if ctrl_down {
                             match vk.0 as u32 {
-                                0x41 => { // Ctrl + A
+                                0x41 => {
+                                    // Ctrl + A
                                     if !s.query.is_empty() {
                                         s.text_selected = true;
                                         let _ = InvalidateRect(hwnd, None, FALSE);
                                     }
                                     return LRESULT(0);
                                 }
-                                0x43 => { // Ctrl + C
+                                0x43 => {
+                                    // Ctrl + C
                                     if !s.query.is_empty() {
                                         copy_to_clipboard(hwnd, &s.query);
                                     }
                                     return LRESULT(0);
                                 }
-                                0x56 => { // Ctrl + V
+                                0x56 => {
+                                    // Ctrl + V
                                     paste_clipboard_into_query(hwnd, s, false);
                                     return LRESULT(0);
                                 }
@@ -1333,30 +1497,34 @@ unsafe extern "system" fn wnd_proc(
                 let _ = InvalidateRect(hwnd, None, FALSE);
             }
             let vk = VIRTUAL_KEY(wp.0 as u16);
-            
+
             // Check if Ctrl is pressed
             let ctrl_down = (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
-            
+
             if ctrl_down {
                 match vk.0 as u32 {
-                    0x41 => { // Ctrl + A (Select All)
+                    0x41 => {
+                        // Ctrl + A (Select All)
                         if !s.query.is_empty() {
                             s.text_selected = true;
                             let _ = InvalidateRect(hwnd, None, FALSE);
                         }
                         return LRESULT(0);
                     }
-                    0x43 => { // Ctrl + C (Copy)
+                    0x43 => {
+                        // Ctrl + C (Copy)
                         if !s.query.is_empty() {
                             copy_to_clipboard(hwnd, &s.query);
                         }
                         return LRESULT(0);
                     }
-                    0x56 => { // Ctrl + V (Paste)
+                    0x56 => {
+                        // Ctrl + V (Paste)
                         paste_clipboard_into_query(hwnd, s, true);
                         return LRESULT(0);
                     }
-                    0x50 => { // Ctrl + P (Pin/Unpin toggle)
+                    0x50 => {
+                        // Ctrl + P (Pin/Unpin toggle)
                         if let Some(r) = s.results.get(s.selected) {
                             if r.entry.source == "CLIPBOARD" {
                                 let id = r.entry.id.clone();
@@ -1383,8 +1551,11 @@ unsafe extern "system" fn wnd_proc(
                                         std::thread::spawn(move || {
                                             let hwnd_notify = hwnd_notify;
                                             if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-                                                let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
-                                                let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+                                                let _ = conn.busy_timeout(
+                                                    std::time::Duration::from_secs(5),
+                                                );
+                                                let _ =
+                                                    conn.execute_batch("PRAGMA journal_mode=WAL;");
                                                 if conn.execute(
                                                     "UPDATE clipboard_history SET pinned = (CASE WHEN pinned = 1 THEN 0 ELSE 1 END) WHERE timestamp = ?;",
                                                     [ts],
@@ -1400,28 +1571,31 @@ unsafe extern "system" fn wnd_proc(
                                         });
                                     }
                                 }
-                             }
-                         }
-                         return LRESULT(0);
+                            }
+                        }
+                        return LRESULT(0);
                     }
-                    0x45 => { // Ctrl + E (Edit selected clipboard item)
-                         if s.editing_item.is_some() {
-                             s.editing_item = None;
-                             s.query = "clip:".to_string();
-                             s.cursor_pos = s.query.len();
-                             trigger_search(hwnd, s);
-                         } else if let Some(r) = s.results.get(s.selected) {
-                             if r.entry.source == "CLIPBOARD" && !r.entry.launch_command.starts_with("copy_image:") {
-                                 let id = r.entry.id.clone();
-                                 let parts: Vec<&str> = id.split('.').collect();
-                                 if let Some(ts_str) = parts.last() {
-                                     if let Ok(ts) = ts_str.parse::<i64>() {
-                                         let db_path = s.db_path.clone();
-                                         let hwnd_notify = SendHwnd(hwnd);
-                                         std::thread::spawn(move || {
-                                             let hwnd_notify = hwnd_notify;
-                                             if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-                                                 if let Ok(content) = conn.query_row(
+                    0x45 => {
+                        // Ctrl + E (Edit selected clipboard item)
+                        if s.editing_item.is_some() {
+                            s.editing_item = None;
+                            s.query = "clip:".to_string();
+                            s.cursor_pos = s.query.len();
+                            trigger_search(hwnd, s);
+                        } else if let Some(r) = s.results.get(s.selected) {
+                            if r.entry.source == "CLIPBOARD"
+                                && !r.entry.launch_command.starts_with("copy_image:")
+                            {
+                                let id = r.entry.id.clone();
+                                let parts: Vec<&str> = id.split('.').collect();
+                                if let Some(ts_str) = parts.last() {
+                                    if let Ok(ts) = ts_str.parse::<i64>() {
+                                        let db_path = s.db_path.clone();
+                                        let hwnd_notify = SendHwnd(hwnd);
+                                        std::thread::spawn(move || {
+                                            let hwnd_notify = hwnd_notify;
+                                            if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                                                if let Ok(content) = conn.query_row(
                                                      "SELECT content FROM clipboard_history WHERE timestamp = ?;",
                                                      [ts],
                                                      |row| row.get::<_, String>(0),
@@ -1434,13 +1608,13 @@ unsafe extern "system" fn wnd_proc(
                                                          LPARAM(content_ptr as isize),
                                                      );
                                                  }
-                                             }
-                                         });
-                                     }
-                                 }
-                             }
-                         }
-                         return LRESULT(0);
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        return LRESULT(0);
                     }
                     _ => {}
                 }
@@ -1548,7 +1722,8 @@ unsafe extern "system" fn wnd_proc(
                     let _ = InvalidateRect(hwnd, None, FALSE);
                 }
                 VK_TAB => {
-                    let is_clip_view = s.query.starts_with("clip:") || s.query.starts_with("clipboard:");
+                    let is_clip_view =
+                        s.query.starts_with("clip:") || s.query.starts_with("clipboard:");
                     if is_clip_view {
                         if let Some(r) = s.results.get(s.selected) {
                             if r.entry.source == "CLIPBOARD" {
@@ -1573,14 +1748,17 @@ unsafe extern "system" fn wnd_proc(
                     }
                 }
                 VK_DELETE => {
-                    let is_clip_view = s.query.starts_with("clip:") || s.query.starts_with("clipboard:");
+                    let is_clip_view =
+                        s.query.starts_with("clip:") || s.query.starts_with("clipboard:");
                     if is_clip_view {
                         if s.delete_confirm {
                             // Second Delete confirms the deletion!
                             s.delete_confirm = false;
                             let db_path = s.db_path.clone();
-                            let selected_ids: Vec<String> = s.selected_clip_ids.iter().cloned().collect();
-                            let selected_set: std::collections::HashSet<String> = selected_ids.iter().cloned().collect();
+                            let selected_ids: Vec<String> =
+                                s.selected_clip_ids.iter().cloned().collect();
+                            let selected_set: std::collections::HashSet<String> =
+                                selected_ids.iter().cloned().collect();
                             s.selected_clip_ids.clear();
                             let hwnd_notify = SendHwnd(hwnd);
                             std::thread::spawn(move || {
@@ -1642,8 +1820,10 @@ unsafe extern "system" fn wnd_proc(
                     if s.delete_confirm {
                         s.delete_confirm = false;
                         let db_path = s.db_path.clone();
-                        let selected_ids: Vec<String> = s.selected_clip_ids.iter().cloned().collect();
-                        let selected_set: std::collections::HashSet<String> = selected_ids.iter().cloned().collect();
+                        let selected_ids: Vec<String> =
+                            s.selected_clip_ids.iter().cloned().collect();
+                        let selected_set: std::collections::HashSet<String> =
+                            selected_ids.iter().cloned().collect();
                         s.selected_clip_ids.clear();
                         let hwnd_notify = SendHwnd(hwnd);
                         std::thread::spawn(move || {
@@ -1687,7 +1867,8 @@ unsafe extern "system" fn wnd_proc(
                                 std::thread::spawn(move || {
                                     let hwnd_notify = hwnd_notify;
                                     if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-                                        let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                                        let _ =
+                                            conn.busy_timeout(std::time::Duration::from_secs(5));
                                         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
                                         if conn.execute(
                                             "UPDATE clipboard_history SET content = ? WHERE timestamp = ?;",
@@ -1713,7 +1894,8 @@ unsafe extern "system" fn wnd_proc(
                     }
                     if !s.selected_clip_ids.is_empty() {
                         let db_path = s.db_path.clone();
-                        let selected_ids: Vec<String> = s.selected_clip_ids.iter().cloned().collect();
+                        let selected_ids: Vec<String> =
+                            s.selected_clip_ids.iter().cloned().collect();
                         s.selected_clip_ids.clear();
                         let hwnd_copy = SendHwnd(hwnd);
                         std::thread::spawn(move || {
@@ -1792,9 +1974,12 @@ unsafe extern "system" fn wnd_proc(
         }
 
         WM_MOUSEWHEEL => {
-            if sp.is_null() { return LRESULT(0); }
+            if sp.is_null() {
+                return LRESULT(0);
+            }
             let s = &mut *sp;
-            let in_chat_history_list = s.query.starts_with("chats:") || s.query.starts_with("agentchats:");
+            let in_chat_history_list =
+                s.query.starts_with("chats:") || s.query.starts_with("agentchats:");
             if s.ai_answer.is_some() && !in_chat_history_list {
                 let delta = (wp.0 >> 16) as i16;
                 let step = (delta as i32).abs().max(40);
@@ -1845,7 +2030,9 @@ unsafe extern "system" fn wnd_proc(
         }
 
         WM_LBUTTONDOWN => {
-            if sp.is_null() { return LRESULT(0); }
+            if sp.is_null() {
+                return LRESULT(0);
+            }
             let s = &mut *sp;
 
             // Hermes approval buttons take priority over everything else while shown.
@@ -1856,7 +2043,13 @@ unsafe extern "system" fn wnd_proc(
                 // painter does, so the button rects line up exactly.
                 let win_h = s.win_h();
                 let y_start = s.cy - win_h / 2;
-                let footer_h = if s.hermes_approval.is_some() { 76 } else if s.ai_pending { 30 } else { 62 };
+                let footer_h = if s.hermes_approval.is_some() {
+                    76
+                } else if s.ai_pending {
+                    30
+                } else {
+                    62
+                };
                 let content_bottom = y_start + SEARCH_H + 1 + AI_PANEL_H - footer_h;
                 let _ = win_h;
 
@@ -1957,7 +2150,11 @@ unsafe extern "system" fn wnd_proc(
                 let _ = GetClientRect(hwnd, &mut rcc);
                 let bx = (rcc.right - rcc.left - WIN_W) / 2;
                 let by = s.cy - s.win_h() / 2;
-                if cmx >= bx + WIN_W - 52 && cmx < bx + WIN_W - 4 && cmy >= by && cmy < by + SEARCH_H {
+                if cmx >= bx + WIN_W - 52
+                    && cmx < bx + WIN_W - 4
+                    && cmy >= by
+                    && cmy < by + SEARCH_H
+                {
                     if s.voice_listening {
                         s.voice_listening = false;
                         s.voice_triggered = false;
@@ -1993,7 +2190,7 @@ unsafe extern "system" fn wnd_proc(
             let win_w = rc_client.right - rc_client.left;
             let _bx = (win_w - WIN_W) / 2;
             let by = s.cy - s.win_h() / 2;
-            
+
             if my >= by && my < by + SEARCH_H {
                 if s.ai_answer.is_some() || s.ai_pending {
                     s.chat_input_active = false;
@@ -2003,7 +2200,7 @@ unsafe extern "system" fn wnd_proc(
             }
             let win_w = rc_client.right - rc_client.left;
             let x_start = (win_w - WIN_W) / 2;
-            
+
             if s.submenu_active && mx >= x_start + (WIN_W - 240) {
                 let end_h = s.win_h();
                 let end_y = s.cy - end_h / 2;
@@ -2035,7 +2232,9 @@ unsafe extern "system" fn wnd_proc(
         }
 
         WM_MOUSEMOVE => {
-            if sp.is_null() { return LRESULT(0); }
+            if sp.is_null() {
+                return LRESULT(0);
+            }
             let s = &mut *sp;
 
             if s.color_picker_active {
@@ -2050,14 +2249,14 @@ unsafe extern "system" fn wnd_proc(
             }
             let _mx = (lp.0 & 0xFFFF) as i16 as i32;
             let my = ((lp.0 >> 16) & 0xFFFF) as i16 as i32;
-            
+
             let mut pt = POINT::default();
             let _ = GetCursorPos(&mut pt);
-            
+
             if pt.x != s.last_mouse_x || pt.y != s.last_mouse_y {
                 s.last_mouse_x = pt.x;
                 s.last_mouse_y = pt.y;
-                
+
                 let n = (s.results.len().saturating_sub(s.scroll_offset)).min(VISIBLE_RESULTS);
                 for i in 0..n {
                     let r = s.result_rect(i);
@@ -2075,7 +2274,9 @@ unsafe extern "system" fn wnd_proc(
         }
 
         WM_RBUTTONDOWN => {
-            if sp.is_null() { return LRESULT(0); }
+            if sp.is_null() {
+                return LRESULT(0);
+            }
             let s = &mut *sp;
             if s.color_picker_active {
                 stop_color_picker(hwnd, s);
@@ -2087,17 +2288,25 @@ unsafe extern "system" fn wnd_proc(
         WM_ERASEBKGND => LRESULT(1),
 
         WM_PAINT => {
-            if sp.is_null() { return DefWindowProcW(hwnd, msg, wp, lp); }
+            if sp.is_null() {
+                return DefWindowProcW(hwnd, msg, wp, lp);
+            }
             paint(hwnd, &*sp);
             LRESULT(0)
         }
 
         WM_DESTROY => {
-            let _ = unsafe { windows::Win32::System::DataExchange::RemoveClipboardFormatListener(hwnd) };
+            let _ = unsafe {
+                windows::Win32::System::DataExchange::RemoveClipboardFormatListener(hwnd)
+            };
             if !sp.is_null() {
                 let s = Box::from_raw(sp);
-                if !s.icon_clipboard.0.is_null() { let _ = DestroyIcon(s.icon_clipboard); }
-                if !s.icon_memory.0.is_null() { let _ = DestroyIcon(s.icon_memory); }
+                if !s.icon_clipboard.0.is_null() {
+                    let _ = DestroyIcon(s.icon_clipboard);
+                }
+                if !s.icon_memory.0.is_null() {
+                    let _ = DestroyIcon(s.icon_memory);
+                }
                 let _ = DeleteObject(s.font_q);
                 let _ = DeleteObject(s.font_n);
                 let _ = DeleteObject(s.font_c);
@@ -2105,14 +2314,30 @@ unsafe extern "system" fn wnd_proc(
                 let _ = DeleteObject(s.font_mic);
                 let _ = DeleteObject(s.font_code);
                 let _ = DeleteObject(s.font_h);
-                if !s.icon_settings.0.is_null() { let _ = DestroyIcon(s.icon_settings); }
-                if !s.icon_control_panel.0.is_null() { let _ = DestroyIcon(s.icon_control_panel); }
-                if !s.icon_search.0.is_null() { let _ = DestroyIcon(s.icon_search); }
-                if !s.icon_web.0.is_null() { let _ = DestroyIcon(s.icon_web); }
-                if !s.icon_bookmark.0.is_null() { let _ = DestroyIcon(s.icon_bookmark); }
-                if !s.icon_folder.0.is_null() { let _ = DestroyIcon(s.icon_folder); }
-                if !s.icon_commit.0.is_null() { let _ = DestroyIcon(s.icon_commit); }
-                if !s.icon_todo.0.is_null() { let _ = DestroyIcon(s.icon_todo); }
+                if !s.icon_settings.0.is_null() {
+                    let _ = DestroyIcon(s.icon_settings);
+                }
+                if !s.icon_control_panel.0.is_null() {
+                    let _ = DestroyIcon(s.icon_control_panel);
+                }
+                if !s.icon_search.0.is_null() {
+                    let _ = DestroyIcon(s.icon_search);
+                }
+                if !s.icon_web.0.is_null() {
+                    let _ = DestroyIcon(s.icon_web);
+                }
+                if !s.icon_bookmark.0.is_null() {
+                    let _ = DestroyIcon(s.icon_bookmark);
+                }
+                if !s.icon_folder.0.is_null() {
+                    let _ = DestroyIcon(s.icon_folder);
+                }
+                if !s.icon_commit.0.is_null() {
+                    let _ = DestroyIcon(s.icon_commit);
+                }
+                if !s.icon_todo.0.is_null() {
+                    let _ = DestroyIcon(s.icon_todo);
+                }
                 for &hicon in s.app_icons.values() {
                     if !hicon.0.is_null() {
                         let _ = DestroyIcon(hicon);
@@ -2135,7 +2360,9 @@ unsafe extern "system" fn wnd_proc(
 // ── Window lifecycle ──────────────────────────────────────────────────────────
 unsafe fn animate_window(hwnd: HWND, appearing: bool) {
     let sp = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
-    if sp.is_null() { return; }
+    if sp.is_null() {
+        return;
+    }
     let s = &mut *sp;
 
     static mut IN_ANIMATION: bool = false;
@@ -2180,7 +2407,8 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
-        let (work_w, work_h, work_left, work_top) = if GetMonitorInfoW(hmonitor, &mut mi).as_bool() {
+        let (work_w, work_h, work_left, work_top) = if GetMonitorInfoW(hmonitor, &mut mi).as_bool()
+        {
             (
                 mi.rcWork.right - mi.rcWork.left,
                 mi.rcWork.bottom - mi.rcWork.top,
@@ -2215,14 +2443,20 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
         s.last_mouse_x = pt.x;
         s.last_mouse_y = pt.y;
 
-        s.anim = Anim::Appearing { start_time, start_p };
+        s.anim = Anim::Appearing {
+            start_time,
+            start_p,
+        };
 
         let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, 0, LWA_COLORKEY | LWA_ALPHA);
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         force_foreground(hwnd);
     } else {
         let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
-        s.anim = Anim::Hiding { start_time, start_p };
+        s.anim = Anim::Hiding {
+            start_time,
+            start_p,
+        };
     }
 
     loop {
@@ -2242,7 +2476,7 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
         let t = ease_out(p);
         let alpha = (t * 255.0) as u8;
         let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, alpha, LWA_COLORKEY | LWA_ALPHA);
-        
+
         let _ = InvalidateRect(hwnd, None, FALSE);
         let _ = UpdateWindow(hwnd);
 
@@ -2414,21 +2648,22 @@ unsafe fn start_color_picker(hwnd: HWND, s: &mut State) {
         cbSize: std::mem::size_of::<MONITORINFO>() as u32,
         ..Default::default()
     };
-    let (monitor_w, monitor_h, monitor_left, monitor_top) = if GetMonitorInfoW(hmonitor, &mut mi).as_bool() {
-        (
-            mi.rcMonitor.right - mi.rcMonitor.left,
-            mi.rcMonitor.bottom - mi.rcMonitor.top,
-            mi.rcMonitor.left,
-            mi.rcMonitor.top,
-        )
-    } else {
-        (
-            GetSystemMetrics(SM_CXSCREEN),
-            GetSystemMetrics(SM_CYSCREEN),
-            0,
-            0,
-        )
-    };
+    let (monitor_w, monitor_h, monitor_left, monitor_top) =
+        if GetMonitorInfoW(hmonitor, &mut mi).as_bool() {
+            (
+                mi.rcMonitor.right - mi.rcMonitor.left,
+                mi.rcMonitor.bottom - mi.rcMonitor.top,
+                mi.rcMonitor.left,
+                mi.rcMonitor.top,
+            )
+        } else {
+            (
+                GetSystemMetrics(SM_CXSCREEN),
+                GetSystemMetrics(SM_CYSCREEN),
+                0,
+                0,
+            )
+        };
 
     // Resize and position the window to cover the entire active monitor
     let _ = SetWindowPos(
@@ -2511,9 +2746,10 @@ unsafe fn do_hide(hwnd: HWND, s: &mut State) {
 }
 
 fn format_conversation(prompt: &str, response: &str) -> String {
-    let prompts: Vec<&str> = prompt.split("\n---\n").map(|p| {
-        p.strip_prefix("User: ").unwrap_or(p).trim()
-    }).collect();
+    let prompts: Vec<&str> = prompt
+        .split("\n---\n")
+        .map(|p| p.strip_prefix("User: ").unwrap_or(p).trim())
+        .collect();
     let responses: Vec<&str> = response.split("\n\n---\n\n").collect();
 
     let mut conversation = String::new();
@@ -2545,7 +2781,13 @@ fn format_conversation(prompt: &str, response: &str) -> String {
     conversation
 }
 
-fn store_ai_chat(db_path: &std::path::Path, command: &str, title: &str, prompt: &str, response: &str) -> Option<i64> {
+fn store_ai_chat(
+    db_path: &std::path::Path,
+    command: &str,
+    title: &str,
+    prompt: &str,
+    response: &str,
+) -> Option<i64> {
     if let Ok(conn) = rusqlite::Connection::open(db_path) {
         let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
@@ -2587,7 +2829,9 @@ fn create_agent(db_path: &std::path::Path, name: &str, goal: &str) {
             format!("You are {name}, an AI assistant. Your goal: {goal}. Be concise, helpful, and proactive in pursuing this goal.")
         };
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
         let _ = conn.execute(
             "INSERT INTO agents (name, goal, system_prompt, ts) VALUES (?,?,?,?);",
             rusqlite::params![name, goal, system_prompt, now],
@@ -2642,7 +2886,10 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
     let prev_ans = s.ai_answer.clone().unwrap_or_default();
     let new_prompt_str = follow_up.clone();
     if !prev_ans.is_empty() {
-        s.ai_answer = Some(format!("{}\n\n---\n\nUser: {}\n\nExecuting...", prev_ans, new_prompt_str));
+        s.ai_answer = Some(format!(
+            "{}\n\n---\n\nUser: {}\n\nExecuting...",
+            prev_ans, new_prompt_str
+        ));
     } else {
         s.ai_answer = Some(format!("User: {}\n\nExecuting...", new_prompt_str));
     }
@@ -2681,7 +2928,7 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
                         original_prompt = p_str;
                         original_response = r_str;
                         Ok(())
-                    }
+                    },
                 );
                 // Immediately write the "Executing..." state to DB now that we have the original values.
                 let updated_prompt = if original_prompt.is_empty() {
@@ -2703,7 +2950,11 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
 
         let mut system_prompt = "You are a concise, helpful assistant. Answer directly in at most a few short paragraphs.".to_string();
         if command == "agent" {
-            if let Some(name) = title.strip_prefix('@').and_then(|t| t.split_once(':')).map(|(n, _)| n.trim()) {
+            if let Some(name) = title
+                .strip_prefix('@')
+                .and_then(|t| t.split_once(':'))
+                .map(|(n, _)| n.trim())
+            {
                 if let Ok(conn) = rusqlite::Connection::open(&db_path) {
                     let _ = conn.query_row(
                         "SELECT system_prompt FROM agents WHERE lower(name) = lower(?)",
@@ -2712,7 +2963,7 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
                             let sp: String = row.get(0)?;
                             system_prompt = sp;
                             Ok(())
-                        }
+                        },
                     );
                 }
             }
@@ -2743,7 +2994,8 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
             let result = ai::run_agent_streaming(&system_prompt, &new_prompt, &cb);
             if let Err(e) = result {
                 let prev_history = format_conversation(&original_prompt, &original_response);
-                let formatted_err = format!("{}\n\n---\n\nUser: {}\n\n⚠ {}", prev_history, new_prompt, e);
+                let formatted_err =
+                    format!("{}\n\n---\n\nUser: {}\n\n⚠ {}", prev_history, new_prompt, e);
                 let payload = (false, formatted_err);
                 let ptr = Box::into_raw(Box::new(payload)) as isize;
                 unsafe {
@@ -2756,16 +3008,27 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
         }
 
         let result = if command == "agent" {
-            ai::complete_chat_agent(&system_prompt, &original_prompt, &original_response, &new_prompt)
+            ai::complete_chat_agent(
+                &system_prompt,
+                &original_prompt,
+                &original_response,
+                &new_prompt,
+            )
         } else {
-            ai::complete_chat(&system_prompt, &original_prompt, &original_response, &new_prompt)
+            ai::complete_chat(
+                &system_prompt,
+                &original_prompt,
+                &original_response,
+                &new_prompt,
+            )
         };
 
         if let Ok(ref new_response) = result {
             if let Some(id) = chat_id {
                 if let Ok(conn) = rusqlite::Connection::open(&db_path) {
                     let updated_prompt = format!("{}\n---\nUser: {}", original_prompt, new_prompt);
-                    let updated_response = format!("{}\n\n---\n\n{}", original_response, new_response);
+                    let updated_response =
+                        format!("{}\n\n---\n\n{}", original_response, new_response);
                     let _ = conn.execute(
                         "UPDATE ai_chats SET prompt = ?, response = ? WHERE id = ?",
                         rusqlite::params![updated_prompt, updated_response, id],
@@ -2786,7 +3049,12 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
         let ptr = Box::into_raw(Box::new(payload)) as isize;
         unsafe {
             let wp_chat_id = chat_id.unwrap_or(0) as usize;
-            let _ = PostMessageW(HWND(hwnd_raw as *mut _), WM_AI_RESULT, WPARAM(wp_chat_id), LPARAM(ptr));
+            let _ = PostMessageW(
+                HWND(hwnd_raw as *mut _),
+                WM_AI_RESULT,
+                WPARAM(wp_chat_id),
+                LPARAM(ptr),
+            );
         }
     });
 }
@@ -2835,7 +3103,8 @@ impl ai::RunCallbacks for UiRunCallbacks {
                     "approval_id": approval.approval_id,
                     "tool": approval.tool,
                     "summary": approval.summary,
-                }).to_string();
+                })
+                .to_string();
                 let _ = conn.execute(
                     "UPDATE ai_chats SET pending_approval = ? WHERE id = ?",
                     rusqlite::params![approval_json, id],
@@ -2852,14 +3121,22 @@ impl ai::RunCallbacks for UiRunCallbacks {
         let ptr = Box::into_raw(Box::new(approval)) as isize;
         unsafe {
             let wp_chat_id = self.chat_id.unwrap_or(0) as usize;
-            let _ = PostMessageW(self.hwnd.0, WM_HERMES_APPROVAL, WPARAM(wp_chat_id), LPARAM(ptr));
+            let _ = PostMessageW(
+                self.hwnd.0,
+                WM_HERMES_APPROVAL,
+                WPARAM(wp_chat_id),
+                LPARAM(ptr),
+            );
         }
     }
     fn on_progress(&self, text: &str) {
         let formatted = if self.prev_history.is_empty() {
             format!("User: {}\n\n{}", self.user, text)
         } else {
-            format!("{}\n\n---\n\nUser: {}\n\n{}", self.prev_history, self.user, text)
+            format!(
+                "{}\n\n---\n\nUser: {}\n\n{}",
+                self.prev_history, self.user, text
+            )
         };
         let ptr = Box::into_raw(Box::new(formatted)) as isize;
         unsafe {
@@ -2872,7 +3149,11 @@ impl ai::RunCallbacks for UiRunCallbacks {
             if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
                 let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
                 let updated_response = if self.original_response.is_empty() {
-                    if ok { text.to_string() } else { format!("⚠ {}", text) }
+                    if ok {
+                        text.to_string()
+                    } else {
+                        format!("⚠ {}", text)
+                    }
                 } else {
                     if ok {
                         format!("{}\n\n---\n\n{}", self.original_response, text)
@@ -2894,9 +3175,15 @@ impl ai::RunCallbacks for UiRunCallbacks {
             }
         } else {
             if ok {
-                format!("{}\n\n---\n\nUser: {}\n\n{}", self.prev_history, self.user, text)
+                format!(
+                    "{}\n\n---\n\nUser: {}\n\n{}",
+                    self.prev_history, self.user, text
+                )
             } else {
-                format!("{}\n\n---\n\nUser: {}\n\n⚠ {}", self.prev_history, self.user, text)
+                format!(
+                    "{}\n\n---\n\nUser: {}\n\n⚠ {}",
+                    self.prev_history, self.user, text
+                )
             }
         };
         let payload = (ok, formatted);
@@ -3010,12 +3297,22 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
     if let Some(r) = s.results.get(s.selected) {
         let cmd = r.entry.launch_command.clone();
         let ctrl_name = r.entry.control_name.clone();
-        let is_action_folder = r.entry.source == "FOLDER" && (
-            cmd == "bookmarks:" || cmd == "history:" || cmd == "commits:" ||
-            cmd == "todos:" || cmd == "clip:" || cmd == "file:" || cmd == "code:" ||
-            cmd == "switch:" || cmd == "window:" || cmd == "ql:" || cmd == "snip:" || cmd == "img:" ||
-            cmd == "chats:" || cmd == "agents:" || cmd == "agentchats:"
-        );
+        let is_action_folder = r.entry.source == "FOLDER"
+            && (cmd == "bookmarks:"
+                || cmd == "history:"
+                || cmd == "commits:"
+                || cmd == "todos:"
+                || cmd == "clip:"
+                || cmd == "file:"
+                || cmd == "code:"
+                || cmd == "switch:"
+                || cmd == "window:"
+                || cmd == "ql:"
+                || cmd == "snip:"
+                || cmd == "img:"
+                || cmd == "chats:"
+                || cmd == "agents:"
+                || cmd == "agentchats:");
         if is_action_folder {
             s.query = cmd;
             s.cursor_pos = s.query.len();
@@ -3034,7 +3331,8 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 inline.to_string()
             };
             if input.len() > 30000 {
-                input = input.chars().take(30000).collect::<String>() + "\n\n[Truncated for length...]";
+                input =
+                    input.chars().take(30000).collect::<String>() + "\n\n[Truncated for length...]";
             }
             start_ai_activity(hwnd, s);
             s.ai_answer = Some(format!("User: {}\n\nExecuting...", input));
@@ -3052,7 +3350,8 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             let input_clone = input.clone();
 
             // Store chat in DB immediately to get a chat ID
-            let chat_id = store_ai_chat(&db_path, &aicmd_clone, &title, &input_clone, "Executing...");
+            let chat_id =
+                store_ai_chat(&db_path, &aicmd_clone, &title, &input_clone, "Executing...");
             s.active_chat_id = chat_id;
             s.chat_input.clear();
             s.chat_cursor_pos = 0;
@@ -3088,7 +3387,8 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
                     let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
                     let _ = conn.execute("ALTER TABLE ai_chats ADD COLUMN run_id TEXT;", []);
-                    let _ = conn.execute("ALTER TABLE ai_chats ADD COLUMN pending_approval TEXT;", []);
+                    let _ =
+                        conn.execute("ALTER TABLE ai_chats ADD COLUMN pending_approval TEXT;", []);
                     if let Ok((title, prompt, response, run_id, pending_approval_str)) = conn.query_row(
                         "SELECT title, prompt, response, run_id, pending_approval FROM ai_chats WHERE id = ?",
                         [id],
@@ -3254,7 +3554,8 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             let new_title = format!("@{}: [New Conversation]", name);
             let chat_id = store_ai_chat(&db_path, "agent", &new_title, "", "");
             s.ai_pending = false;
-            s.ai_answer = Some("Ask me anything! I will execute tasks on your PC using Hermes.".to_string());
+            s.ai_answer =
+                Some("Ask me anything! I will execute tasks on your PC using Hermes.".to_string());
             s.ai_title = new_title;
             s.ai_scroll = 0;
             s.ai_follow_bottom = true;
@@ -3312,7 +3613,13 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             // Prefer the streaming Runs API so a real Approve/Deny button can be
             // shown when Hermes needs tool approval. Fall back to the blocking
             // chat-completions call if the gateway doesn't support runs/approval.
-            if run_agent_via_runs_api(hwnd, sys.clone(), msg_clone.clone(), db_path.clone(), chat_id) {
+            if run_agent_via_runs_api(
+                hwnd,
+                sys.clone(),
+                msg_clone.clone(),
+                db_path.clone(),
+                chat_id,
+            ) {
                 return;
             }
 
@@ -3374,7 +3681,11 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                                 let _ = conn.execute("INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('model', 'deepseek-chat');", []);
                                 s.query = "AI Configured for DeepSeek!".to_string();
                             } else if v == "hermes" {
-                                create_agent(&db_path, "Hermes", "Execute commands and run autonomous tasks on this Windows PC");
+                                create_agent(
+                                    &db_path,
+                                    "Hermes",
+                                    "Execute commands and run autonomous tasks on this Windows PC",
+                                );
                                 s.query = "@Hermes: ".to_string();
                             }
                         } else {
@@ -3384,12 +3695,15 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                                 rusqlite::params![db_key, v],
                             );
                             if db_key == "api_key" {
-                                let current_model = conn.query_row(
-                                    "SELECT value FROM ai_settings WHERE key = 'model'",
-                                    [],
-                                    |row| row.get::<_, String>(0),
-                                ).unwrap_or_default();
-                                if v.trim().starts_with("sk-oc-") || current_model == "hermes-agent" {
+                                let current_model = conn
+                                    .query_row(
+                                        "SELECT value FROM ai_settings WHERE key = 'model'",
+                                        [],
+                                        |row| row.get::<_, String>(0),
+                                    )
+                                    .unwrap_or_default();
+                                if v.trim().starts_with("sk-oc-") || current_model == "hermes-agent"
+                                {
                                     let _ = conn.execute("INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('endpoint', 'https://opencode.ai/zen/v1/chat/completions');", []);
                                     let _ = conn.execute("INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('model', 'deepseek-v4-flash-free');", []);
                                 }
@@ -3424,7 +3738,11 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                     s.query = "Stopped Hermes Gateway!".to_string();
                 } else if hermes_action == "install" {
                     let _ = std::process::Command::new("powershell")
-                        .args(["-NoExit", "-Command", "iex (irm https://hermes-agent.nousresearch.com/install.ps1)"])
+                        .args([
+                            "-NoExit",
+                            "-Command",
+                            "iex (irm https://hermes-agent.nousresearch.com/install.ps1)",
+                        ])
                         .spawn();
                     s.query = "Installing Hermes Agent...".to_string();
                 }
@@ -3548,7 +3866,6 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
     }
 }
 
-
 unsafe fn kick_debounce(hwnd: HWND) {
     let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
     let _ = SetTimer(hwnd, TIMER_DEBOUNCE, 150, None);
@@ -3569,7 +3886,9 @@ unsafe fn trigger_search(_hwnd: HWND, s: &mut State) {
     }
 }
 
-fn ease_out(t: f32) -> f32 { 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(4) }
+fn ease_out(t: f32) -> f32 {
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(4)
+}
 // fn ease_in(t: f32) -> f32 { t.clamp(0.0, 1.0).powi(4) }
 
 unsafe fn fill_rounded(hdc: HDC, x: i32, y: i32, w: i32, h: i32, r: i32, c: COLORREF) {
@@ -3615,14 +3934,7 @@ unsafe fn measure_response(hdc: HDC, text: &str, s: &State, width: i32) -> i32 {
 
 /// Paint a Markdown response at vertical offset `top`. Returns the total height
 /// consumed (so the caller can advance its cursor).
-unsafe fn paint_response(
-    hdc: HDC,
-    text: &str,
-    s: &State,
-    x: i32,
-    width: i32,
-    top: i32,
-) -> i32 {
+unsafe fn paint_response(hdc: HDC, text: &str, s: &State, x: i32, width: i32, top: i32) -> i32 {
     let blocks = markdown::parse(text);
     paint_blocks(hdc, &blocks, s, x, width, top)
 }
@@ -3695,14 +4007,26 @@ unsafe fn measure_one(hdc: HDC, b: &markdown::MdBlock, s: &State, width: i32) ->
                     18
                 } else {
                     let mut wide: Vec<u16> = line.encode_utf16().collect();
-                    let mut rc = RECT { left: 0, top: 0, right: inner_w, bottom: 0 };
-                    let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+                    let mut rc = RECT {
+                        left: 0,
+                        top: 0,
+                        right: inner_w,
+                        bottom: 0,
+                    };
+                    let _ = DrawTextW(
+                        hdc,
+                        &mut wide,
+                        &mut rc,
+                        DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX,
+                    );
                     (rc.bottom - rc.top).max(18)
                 };
                 h += lh;
             }
             // Empty code block still shows one line.
-            if h == 0 { h = 18; }
+            if h == 0 {
+                h = 18;
+            }
             h + MD_CODE_PAD * 2
         }
     }
@@ -3712,22 +4036,40 @@ unsafe fn measure_one(hdc: HDC, b: &markdown::MdBlock, s: &State, width: i32) ->
 fn strip_inline_text(b: &markdown::MdBlock) -> String {
     use markdown::MdBlock;
     match b {
-        MdBlock::Heading { runs, .. } | MdBlock::Paragraph { runs } | MdBlock::ListItem { runs, .. } => {
-            runs.iter().map(|r| match r {
-                markdown::MdInline::Plain(t) | markdown::MdInline::Bold(t) | markdown::MdInline::Italic(t)
+        MdBlock::Heading { runs, .. }
+        | MdBlock::Paragraph { runs }
+        | MdBlock::ListItem { runs, .. } => runs
+            .iter()
+            .map(|r| match r {
+                markdown::MdInline::Plain(t)
+                | markdown::MdInline::Bold(t)
+                | markdown::MdInline::Italic(t)
                 | markdown::MdInline::Code(t) => t.as_str(),
                 markdown::MdInline::Link { label, .. } => label.as_str(),
-            }).collect::<Vec<_>>().join("")
-        }
+            })
+            .collect::<Vec<_>>()
+            .join(""),
         _ => String::new(),
     }
 }
 
 unsafe fn wrap_text_height(hdc: HDC, text: &str, width: i32) -> i32 {
-    if text.is_empty() { return 16; }
+    if text.is_empty() {
+        return 16;
+    }
     let mut wide: Vec<u16> = text.encode_utf16().collect();
-    let mut rc = RECT { left: 0, top: 0, right: width, bottom: 0 };
-    let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+    let mut rc = RECT {
+        left: 0,
+        top: 0,
+        right: width,
+        bottom: 0,
+    };
+    let _ = DrawTextW(
+        hdc,
+        &mut wide,
+        &mut rc,
+        DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX,
+    );
     (rc.bottom - rc.top).max(16)
 }
 
@@ -3744,12 +4086,7 @@ unsafe fn measure_runs(hdc: HDC, runs: &[markdown::MdInline], s: &State, width: 
 
 /// Greedy line layout of inline runs. Returns positioned run fragments plus the
 /// per-line heights. Both measure and paint use this so wrapping matches.
-unsafe fn layout_runs(
-    hdc: HDC,
-    runs: &[markdown::MdInline],
-    s: &State,
-    width: i32,
-) -> MdLayout {
+unsafe fn layout_runs(hdc: HDC, runs: &[markdown::MdInline], s: &State, width: i32) -> MdLayout {
     use markdown::MdInline;
     let mut lines: Vec<Vec<MdFrag>> = vec![vec![]];
     let mut cur_w = 0i32;
@@ -3809,7 +4146,10 @@ unsafe fn layout_runs(
     }
     line_heights.push((max_ascent + max_descent).max(16));
 
-    MdLayout { lines, line_heights }
+    MdLayout {
+        lines,
+        line_heights,
+    }
 }
 
 #[derive(Default)]
@@ -3825,7 +4165,9 @@ struct MdFrag {
 }
 
 unsafe fn text_width(hdc: HDC, text: &str, font: HFONT) -> i32 {
-    if text.is_empty() { return 0; }
+    if text.is_empty() {
+        return 0;
+    }
     let _old = SelectObject(hdc, font);
     let wide: Vec<u16> = text.encode_utf16().collect();
     let mut size = SIZE::default();
@@ -3874,13 +4216,26 @@ unsafe fn paint_blocks(
                 let _ = SelectObject(hdc, s.font_c);
                 y += paint_run_lines(hdc, runs, s, x, y, width, None);
             }
-            MdBlock::ListItem { runs, ordered, index } => {
+            MdBlock::ListItem {
+                runs,
+                ordered,
+                index,
+            } => {
                 let _ = SelectObject(hdc, s.font_c);
-                let marker = if *ordered { format!("{}.", index) } else { "•".to_string() };
+                let marker = if *ordered {
+                    format!("{}.", index)
+                } else {
+                    "•".to_string()
+                };
                 // Draw the marker.
                 SetTextColor(hdc, MD_MUTED);
                 let mut mwide: Vec<u16> = marker.encode_utf16().collect();
-                let mut mrc = RECT { left: x, top: y, right: x + 22, bottom: y + 40 };
+                let mut mrc = RECT {
+                    left: x,
+                    top: y,
+                    right: x + 22,
+                    bottom: y + 40,
+                };
                 let _ = DrawTextW(hdc, &mut mwide, &mut mrc, DT_LEFT | DT_TOP | DT_NOPREFIX);
                 y += paint_run_lines(hdc, runs, s, x + 22, y, (width - 22).max(40), None);
             }
@@ -3894,13 +4249,25 @@ unsafe fn paint_blocks(
                         18
                     } else {
                         let mut wide: Vec<u16> = line.encode_utf16().collect();
-                        let mut rc = RECT { left: 0, top: 0, right: inner_w, bottom: 0 };
-                        let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+                        let mut rc = RECT {
+                            left: 0,
+                            top: 0,
+                            right: inner_w,
+                            bottom: 0,
+                        };
+                        let _ = DrawTextW(
+                            hdc,
+                            &mut wide,
+                            &mut rc,
+                            DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX,
+                        );
                         (rc.bottom - rc.top).max(18)
                     };
                     h += lh;
                 }
-                if h == 0 { h = 18; }
+                if h == 0 {
+                    h = 18;
+                }
                 let box_h = h + MD_CODE_PAD * 2;
                 fill_rounded(hdc, x, y, width, box_h, 8, MD_CODE_BG);
                 // Subtle left accent border.
@@ -3913,11 +4280,31 @@ unsafe fn paint_blocks(
                         18
                     } else {
                         let mut wide: Vec<u16> = line.encode_utf16().collect();
-                        let mut measure = RECT { left: 0, top: 0, right: inner_w, bottom: 0 };
-                        let _ = DrawTextW(hdc, &mut wide, &mut measure, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+                        let mut measure = RECT {
+                            left: 0,
+                            top: 0,
+                            right: inner_w,
+                            bottom: 0,
+                        };
+                        let _ = DrawTextW(
+                            hdc,
+                            &mut wide,
+                            &mut measure,
+                            DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX,
+                        );
                         let lh = (measure.bottom - measure.top).max(18);
-                        let mut rc = RECT { left: x + MD_CODE_PAD, top: ly, right: x + MD_CODE_PAD + inner_w, bottom: ly + lh };
-                        let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+                        let mut rc = RECT {
+                            left: x + MD_CODE_PAD,
+                            top: ly,
+                            right: x + MD_CODE_PAD + inner_w,
+                            bottom: ly + lh,
+                        };
+                        let _ = DrawTextW(
+                            hdc,
+                            &mut wide,
+                            &mut rc,
+                            DT_LEFT | DT_WORDBREAK | DT_NOPREFIX,
+                        );
                         lh
                     };
                     ly += lh;
@@ -3976,8 +4363,18 @@ unsafe fn paint_run_lines(
             if !frag.text.is_empty() {
                 SetTextColor(hdc, color);
                 let mut wide: Vec<u16> = frag.text.encode_utf16().collect();
-                let mut rc = RECT { left: cx, top: baseline - (font_metrics(hdc, frag.font).0), right: cx + width, bottom: baseline + 40 };
-                let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_NOPREFIX | DT_SINGLELINE);
+                let mut rc = RECT {
+                    left: cx,
+                    top: baseline - (font_metrics(hdc, frag.font).0),
+                    right: cx + width,
+                    bottom: baseline + 40,
+                };
+                let _ = DrawTextW(
+                    hdc,
+                    &mut wide,
+                    &mut rc,
+                    DT_LEFT | DT_NOPREFIX | DT_SINGLELINE,
+                );
                 cx += text_width(hdc, &frag.text, frag.font);
             }
         }
@@ -3993,7 +4390,7 @@ fn word_left(s: &str, pos: usize) -> usize {
     }
 
     let mut chars = s[..i].char_indices().rev();
-    
+
     let mut next_char = chars.next();
     while let Some((_, c)) = next_char {
         if c.is_whitespace() {
@@ -4002,18 +4399,18 @@ fn word_left(s: &str, pos: usize) -> usize {
             break;
         }
     }
-    
+
     let (idx, c) = match next_char {
         Some(pair) => pair,
         None => return 0,
     };
-    
+
     let start_class = if c.is_alphanumeric() || c == '_' {
         1 // Word
     } else {
         2 // Punctuation
     };
-    
+
     let mut last_idx = idx;
     for (idx, c) in chars {
         let class = if c.is_alphanumeric() || c == '_' {
@@ -4023,14 +4420,14 @@ fn word_left(s: &str, pos: usize) -> usize {
         } else {
             2
         };
-        
+
         if class == start_class {
             last_idx = idx;
         } else {
             break; // Stop when class changes
         }
     }
-    
+
     last_idx
 }
 
@@ -4043,7 +4440,7 @@ fn word_right(s: &str, pos: usize) -> usize {
 
     let mut chars = s[i..].char_indices();
     let (_, first_char) = chars.next().unwrap();
-    
+
     if first_char.is_whitespace() {
         for (idx, c) in chars {
             if !c.is_whitespace() {
@@ -4052,17 +4449,17 @@ fn word_right(s: &str, pos: usize) -> usize {
         }
         return len;
     }
-    
+
     let start_class = if first_char.is_alphanumeric() || first_char == '_' {
         1
     } else {
         2
     };
-    
+
     let mut next_pos = len;
     let mut chars_loop = s[i..].char_indices();
     let _ = chars_loop.next();
-    
+
     for (idx, c) in chars_loop {
         let class = if c.is_alphanumeric() || c == '_' {
             1
@@ -4072,13 +4469,13 @@ fn word_right(s: &str, pos: usize) -> usize {
         } else {
             2
         };
-        
+
         if class != start_class {
             next_pos = i + idx;
             break;
         }
     }
-    
+
     if next_pos < len {
         let follow_chars = s[next_pos..].char_indices();
         for (idx, c) in follow_chars {
@@ -4087,7 +4484,7 @@ fn word_right(s: &str, pos: usize) -> usize {
             }
         }
     }
-    
+
     len
 }
 
@@ -4113,15 +4510,18 @@ fn delete_word_before(s: &mut State) {
 
 // ── Painting ──────────────────────────────────────────────────────────────────
 unsafe fn resolve_lnk(path: &str) -> Option<String> {
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, IPersistFile, STGM_READ};
-    use windows::Win32::UI::Shell::{ShellLink, IShellLinkW, SLGP_UNCPRIORITY};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_UNCPRIORITY};
 
     let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
     let persist: IPersistFile = link.cast().ok()?;
     let path_wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
     persist.Load(PCWSTR(path_wide.as_ptr()), STGM_READ).ok()?;
     let mut buffer = [0u16; 260];
-    link.GetPath(&mut buffer, std::ptr::null_mut(), SLGP_UNCPRIORITY.0 as u32).ok()?;
+    link.GetPath(&mut buffer, std::ptr::null_mut(), SLGP_UNCPRIORITY.0 as u32)
+        .ok()?;
     let target = String::from_utf16_lossy(&buffer);
     let trimmed = target.trim_matches('\0').trim().to_string();
     if trimmed.is_empty() {
@@ -4154,17 +4554,19 @@ unsafe fn get_app_icon(path: &str) -> HICON {
     };
     log_msg.push_str(&format!("  Parsing path: {}\n", parsing_path));
 
-    let path_wide: Vec<u16> = parsing_path.encode_utf16().chain(std::iter::once(0)).collect();
+    let path_wide: Vec<u16> = parsing_path
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
 
     // Try parsing as a shell item to get icon from virtual Applications folder or normal file
-    let shell_item: Option<windows::Win32::UI::Shell::IShellItem> = windows::Win32::UI::Shell::SHCreateItemFromParsingName(
-        PCWSTR(path_wide.as_ptr()),
-        None,
-    ).ok();
+    let shell_item: Option<windows::Win32::UI::Shell::IShellItem> =
+        windows::Win32::UI::Shell::SHCreateItemFromParsingName(PCWSTR(path_wide.as_ptr()), None)
+            .ok();
 
     if let Some(item) = &shell_item {
         log_msg.push_str("  SHCreateItemFromParsingName: SUCCESS\n");
-        
+
         // 1. Try modern IShellItemImageFactory first
         let factory: Option<windows::Win32::UI::Shell::IShellItemImageFactory> = item.cast().ok();
         if let Some(f) = factory {
@@ -4183,16 +4585,24 @@ unsafe fn get_app_icon(path: &str) -> HICON {
                             hbmMask: hbm_mask,
                             hbmColor: hbitmap,
                         };
-                        if let Ok(hi) = windows::Win32::UI::WindowsAndMessaging::CreateIconIndirect(&mut ii) {
+                        if let Ok(hi) =
+                            windows::Win32::UI::WindowsAndMessaging::CreateIconIndirect(&mut ii)
+                        {
                             hicon = hi;
-                            log_msg.push_str(&format!("  IShellItemImageFactory SUCCESS: {:?}\n", hicon.0));
+                            log_msg.push_str(&format!(
+                                "  IShellItemImageFactory SUCCESS: {:?}\n",
+                                hicon.0
+                            ));
                         }
                         let _ = windows::Win32::Graphics::Gdi::DeleteObject(hbm_mask);
                     }
                     let _ = windows::Win32::Graphics::Gdi::DeleteObject(hbitmap);
                 }
                 Err(e) => {
-                    log_msg.push_str(&format!("  IShellItemImageFactory GetImage FAILED: {:?}\n", e));
+                    log_msg.push_str(&format!(
+                        "  IShellItemImageFactory GetImage FAILED: {:?}\n",
+                        e
+                    ));
                 }
             }
         } else {
@@ -4204,8 +4614,8 @@ unsafe fn get_app_icon(path: &str) -> HICON {
             if let Ok(pidl) = windows::Win32::UI::Shell::SHGetIDListFromObject(item) {
                 log_msg.push_str("  SHGetIDListFromObject: SUCCESS\n");
                 let mut shfi = windows::Win32::UI::Shell::SHFILEINFOW::default();
-                let flags = windows::Win32::UI::Shell::SHGFI_ICON 
-                    | windows::Win32::UI::Shell::SHGFI_LARGEICON 
+                let flags = windows::Win32::UI::Shell::SHGFI_ICON
+                    | windows::Win32::UI::Shell::SHGFI_LARGEICON
                     | windows::Win32::UI::Shell::SHGFI_PIDL;
                 let res = windows::Win32::UI::Shell::SHGetFileInfoW(
                     PCWSTR(pidl as *const u16),
@@ -4215,7 +4625,10 @@ unsafe fn get_app_icon(path: &str) -> HICON {
                     flags,
                 );
                 hicon = shfi.hIcon;
-                log_msg.push_str(&format!("  SHGetFileInfoW res: {}, hicon: {:?}\n", res, hicon.0));
+                log_msg.push_str(&format!(
+                    "  SHGetFileInfoW res: {}, hicon: {:?}\n",
+                    res, hicon.0
+                ));
                 windows::Win32::UI::Shell::ILFree(Some(pidl));
             } else {
                 log_msg.push_str("  SHGetIDListFromObject: FAILED\n");
@@ -4229,8 +4642,12 @@ unsafe fn get_app_icon(path: &str) -> HICON {
     if hicon.0.is_null() {
         log_msg.push_str("  Entering fallback\n");
         let mut shfi = windows::Win32::UI::Shell::SHFILEINFOW::default();
-        let flags = windows::Win32::UI::Shell::SHGFI_ICON | windows::Win32::UI::Shell::SHGFI_LARGEICON;
-        let fallback_wide: Vec<u16> = target_path.encode_utf16().chain(std::iter::once(0)).collect();
+        let flags =
+            windows::Win32::UI::Shell::SHGFI_ICON | windows::Win32::UI::Shell::SHGFI_LARGEICON;
+        let fallback_wide: Vec<u16> = target_path
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let res = windows::Win32::UI::Shell::SHGetFileInfoW(
             PCWSTR(fallback_wide.as_ptr()),
             windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(0),
@@ -4239,31 +4656,30 @@ unsafe fn get_app_icon(path: &str) -> HICON {
             flags,
         );
         hicon = shfi.hIcon;
-        log_msg.push_str(&format!("  Fallback SHGetFileInfoW res: {}, hicon: {:?}\n", res, hicon.0));
-    }
-
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("C:\\Users\\Pranshul Soni\\.gemini\\antigravity\\brain\\63a8f76b-b4b2-431b-9719-18e67f5a0652\\scratch\\icon_log.txt")
-    {
-        use std::io::Write;
-        let _ = write!(file, "{}\n", log_msg);
+        log_msg.push_str(&format!(
+            "  Fallback SHGetFileInfoW res: {}, hicon: {:?}\n",
+            res, hicon.0
+        ));
     }
 
     hicon
 }
 
 unsafe fn get_process_path(pid: u32) -> Option<String> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows::Win32::System::Threading::{QueryFullProcessImageNameW, PROCESS_NAME_WIN32};
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::core::PWSTR;
 
     let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
     let mut buffer = [0u16; 1024];
     let mut size = buffer.len() as u32;
-    let res = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buffer.as_mut_ptr()), &mut size);
+    let res = QueryFullProcessImageNameW(
+        handle,
+        PROCESS_NAME_WIN32,
+        PWSTR(buffer.as_mut_ptr()),
+        &mut size,
+    );
     let _ = CloseHandle(handle);
 
     if res.is_ok() && size > 0 {
@@ -4284,18 +4700,25 @@ unsafe fn get_file_icon(path: &str) -> HICON {
         std::mem::size_of::<windows::Win32::UI::Shell::SHFILEINFOW>() as u32,
         flags,
     );
-    if res != 0 { shfi.hIcon } else { HICON(null_mut()) }
+    if res != 0 {
+        shfi.hIcon
+    } else {
+        HICON(null_mut())
+    }
 }
 
 unsafe fn trigger_icon_loading(_hwnd: HWND, s: &mut State) {
-    if s.icon_tx.is_none() { return; }
+    if s.icon_tx.is_none() {
+        return;
+    }
     let tx = s.icon_tx.as_ref().unwrap();
     for res in &s.results {
         let (source, key) = (res.entry.source.as_str(), res.entry.launch_command.clone());
         // For WINDOW source: fetch icon synchronously on the UI thread (fast, only called once
         // when results arrive — not on every paint frame) and cache it in app_icons.
         if source == "WINDOW" && !s.app_icons.contains_key(&key) {
-            let hwnd_val = key.strip_prefix("window:")
+            let hwnd_val = key
+                .strip_prefix("window:")
                 .and_then(|h| h.parse::<isize>().ok())
                 .unwrap_or(0);
             let win_hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
@@ -4304,8 +4727,9 @@ unsafe fn trigger_icon_loading(_hwnd: HWND, s: &mut State) {
             continue;
         }
         let is_kill_action = source == "ACTION" && key.starts_with("kill:");
-        let needs_icon = (source == "app" || icon_file_path(source, &key).is_some() || is_kill_action)
-            && !s.app_icons.contains_key(&key);
+        let needs_icon =
+            (source == "app" || icon_file_path(source, &key).is_some() || is_kill_action)
+                && !s.app_icons.contains_key(&key);
         if needs_icon {
             // Placeholder so we don't spawn multiple threads for same path
             s.app_icons.insert(key.clone(), HICON(std::ptr::null_mut()));
@@ -4347,7 +4771,11 @@ fn icon_file_path(source: &str, key: &str) -> Option<String> {
         if std::path::Path::new(key).exists() {
             return Some(key.to_string());
         }
-    } else if source == "PROJECT" && !key.is_empty() && !key.starts_with("http") && std::path::Path::new(key).exists() {
+    } else if source == "PROJECT"
+        && !key.is_empty()
+        && !key.starts_with("http")
+        && std::path::Path::new(key).exists()
+    {
         return Some(key.to_string());
     }
     None
@@ -4356,7 +4784,7 @@ fn icon_file_path(source: &str, key: &str) -> Option<String> {
 unsafe fn paint(hwnd: HWND, s: &State) {
     let mut ps = PAINTSTRUCT::default();
     let hdc = BeginPaint(hwnd, &mut ps);
-    
+
     let mut rc = RECT::default();
     let _ = GetClientRect(hwnd, &mut rc);
     let win_w = rc.right - rc.left;
@@ -4373,7 +4801,10 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     if s.color_picker_active {
         // Draw the magnifier and picked color overlay under the cursor
         let screen_dc = GetDC(HWND(null_mut()));
-        let mut pt_screen = POINT { x: s.color_picker_mx, y: s.color_picker_my };
+        let mut pt_screen = POINT {
+            x: s.color_picker_mx,
+            y: s.color_picker_my,
+        };
         let _ = ClientToScreen(hwnd, &mut pt_screen);
         let pixel = GetPixel(screen_dc, pt_screen.x, pt_screen.y);
 
@@ -4381,7 +4812,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let zoom_h = 117;
         let mut draw_x = s.color_picker_mx + 25;
         let mut draw_y = s.color_picker_my + 25;
-        
+
         if draw_x + zoom_w + 20 > win_w {
             draw_x = s.color_picker_mx - zoom_w - 25;
         }
@@ -4393,11 +4824,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let src_y = pt_screen.y - 6;
 
         let _ = StretchBlt(
-            mdc,
-            draw_x, draw_y, zoom_w, zoom_h,
-            screen_dc,
-            src_x, src_y, 13, 13,
-            SRCCOPY,
+            mdc, draw_x, draw_y, zoom_w, zoom_h, screen_dc, src_x, src_y, 13, 13, SRCCOPY,
         );
 
         // Draw magnifier border using fill lines
@@ -4435,7 +4862,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             right: draw_x + zoom_w - 4,
             bottom: info_y + 22,
         };
-        let _ = DrawTextW(mdc, &mut hex_wide, &mut text_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        let _ = DrawTextW(
+            mdc,
+            &mut hex_wide,
+            &mut text_rect,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+        );
 
         SelectObject(mdc, s.font_c);
         SetTextColor(mdc, CLR_GRAY);
@@ -4447,7 +4879,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             right: draw_x + zoom_w - 4,
             bottom: info_y + 38,
         };
-        let _ = DrawTextW(mdc, &mut rgb_wide, &mut rgb_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        let _ = DrawTextW(
+            mdc,
+            &mut rgb_wide,
+            &mut rgb_rect,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+        );
 
         let _ = ReleaseDC(HWND(null_mut()), screen_dc);
 
@@ -4490,13 +4927,28 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     // Draw Search Icon
     if !s.icon_search.0.is_null() {
         let icon_y = y + (SEARCH_H - 24) / 2;
-        let _ = DrawIconEx(mdc, x + PAD_L, icon_y, s.icon_search, 24, 24, 0, HBRUSH(null_mut()), DI_NORMAL);
+        let _ = DrawIconEx(
+            mdc,
+            x + PAD_L,
+            icon_y,
+            s.icon_search,
+            24,
+            24,
+            0,
+            HBRUSH(null_mut()),
+            DI_NORMAL,
+        );
     }
 
     // Text / placeholder
     let tx = x + PAD_L + ICON_W + 8;
     let tw = w - (PAD_L + ICON_W + 8) - PAD_L - 36;
-    let mut tr = RECT { left: tx, top: y, right: tx + tw, bottom: y + SEARCH_H };
+    let mut tr = RECT {
+        left: tx,
+        top: y,
+        right: tx + tw,
+        bottom: y + SEARCH_H,
+    };
 
     SelectObject(mdc, s.font_q);
     SetTextColor(mdc, CLR_WHITE);
@@ -4504,7 +4956,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     if s.voice_listening {
         let mut ph: Vec<u16> = "Listening...".encode_utf16().collect();
         SetTextColor(mdc, CLR_PH);
-        let _ = DrawTextW(mdc, &mut ph, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        let _ = DrawTextW(
+            mdc,
+            &mut ph,
+            &mut tr,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+        );
         SetTextColor(mdc, CLR_WHITE);
     } else if s.query.is_empty() {
         let ph_str = match &s.form_state {
@@ -4512,13 +4969,20 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             FormState::CreateSnippetContent { .. } => "Create Snippet: Enter Content...",
             FormState::CreateSnippetKeyword { .. } => "Create Snippet: Enter Keyword (optional)...",
             FormState::CreateQuicklinkName => "Create Quicklink: Enter Name...",
-            FormState::CreateQuicklinkUrl { .. } => "Create Quicklink: Enter URL (use {query} placeholder)...",
+            FormState::CreateQuicklinkUrl { .. } => {
+                "Create Quicklink: Enter URL (use {query} placeholder)..."
+            }
             FormState::CreateQuicklinkKeyword { .. } => "Create Quicklink: Enter Keyword...",
             FormState::None => "Search Windows settings...",
         };
         let mut ph: Vec<u16> = ph_str.encode_utf16().collect();
         SetTextColor(mdc, CLR_PH);
-        let _ = DrawTextW(mdc, &mut ph, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        let _ = DrawTextW(
+            mdc,
+            &mut ph,
+            &mut tr,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+        );
         SetTextColor(mdc, CLR_WHITE);
     } else {
         let cur = floor_char_boundary(&s.query, s.cursor_pos);
@@ -4537,7 +5001,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let mut text_rect = tr;
         text_rect.left -= scroll_x;
         text_rect.right += 2000; // prevent clipping the remaining text
-        let _ = DrawTextW(mdc, &mut dw_query, &mut text_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        let _ = DrawTextW(
+            mdc,
+            &mut dw_query,
+            &mut text_rect,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+        );
     }
 
     // Mic button at the search bar's right corner. Pulses red while listening, sits
@@ -4556,8 +5025,18 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         SelectObject(mdc, s.font_mic);
         SetTextColor(mdc, mic_color);
         let mut glyph: Vec<u16> = "\u{E720}".encode_utf16().collect();
-        let mut mr = RECT { left: x + w - 48, top: y, right: x + w - 12, bottom: y + SEARCH_H };
-        let _ = DrawTextW(mdc, &mut glyph, &mut mr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        let mut mr = RECT {
+            left: x + w - 48,
+            top: y,
+            right: x + w - 12,
+            bottom: y + SEARCH_H,
+        };
+        let _ = DrawTextW(
+            mdc,
+            &mut glyph,
+            &mut mr,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+        );
         SelectObject(mdc, s.font_q);
         SetTextColor(mdc, CLR_WHITE);
     }
@@ -4580,7 +5059,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             right: x + w - 52,
             bottom: y + SEARCH_H,
         };
-        let _ = DrawTextW(mdc, &mut hint, &mut hint_tr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        let _ = DrawTextW(
+            mdc,
+            &mut hint,
+            &mut hint_tr,
+            DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+        );
         SetTextColor(mdc, CLR_WHITE);
         SelectObject(mdc, s.font_q);
     }
@@ -4600,7 +5084,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             scroll_x = size.cx - max_w;
         }
         let cursor_x = tr.left - scroll_x + size.cx;
-        
+
         let mut dummy_size = SIZE::default();
         let _ = GetTextExtentPoint32W(mdc, &['A' as u16], &mut dummy_size);
         let text_h = dummy_size.cy;
@@ -4617,8 +5101,18 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         SelectObject(mdc, s.font_n);
         SetTextColor(mdc, CLR_WHITE);
         let mut title: Vec<u16> = s.ai_title.encode_utf16().collect();
-        let mut title_rc = RECT { left: x + pad, top: body_top + 12, right: x + w - pad - 116, bottom: body_top + 42 };
-        let _ = DrawTextW(mdc, &mut title, &mut title_rc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        let mut title_rc = RECT {
+            left: x + pad,
+            top: body_top + 12,
+            right: x + w - pad - 116,
+            bottom: body_top + 42,
+        };
+        let _ = DrawTextW(
+            mdc,
+            &mut title,
+            &mut title_rc,
+            DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+        );
 
         if s.ai_pending {
             let dots = match s.ai_tick % 4 {
@@ -4627,7 +5121,15 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 2 => "..",
                 _ => "...",
             };
-            fill_rounded(mdc, x + w - pad - 104, body_top + 11, 104, 24, 10, COLORREF(0x00_34_3C_32));
+            fill_rounded(
+                mdc,
+                x + w - pad - 104,
+                body_top + 11,
+                104,
+                24,
+                10,
+                COLORREF(0x00_34_3C_32),
+            );
             SelectObject(mdc, s.font_b);
             SetTextColor(mdc, COLORREF(0x00_B8_D6_B4));
             let mut status: Vec<u16> = format!("Executing{}", dots).encode_utf16().collect();
@@ -4637,7 +5139,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 right: x + w - pad - 8,
                 bottom: body_top + 35,
             };
-            let _ = DrawTextW(mdc, &mut status, &mut status_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            let _ = DrawTextW(
+                mdc,
+                &mut status,
+                &mut status_rc,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
             SelectObject(mdc, s.font_n);
         }
 
@@ -4656,8 +5163,18 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             SelectObject(mdc, s.font_q);
             SetTextColor(mdc, CLR_GRAY);
             let mut th: Vec<u16> = "Thinking…".encode_utf16().collect();
-            let mut th_rc = RECT { left: x + pad, top: content_top, right: x + w - pad, bottom: content_bottom };
-            let _ = DrawTextW(mdc, &mut th, &mut th_rc, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+            let mut th_rc = RECT {
+                left: x + pad,
+                top: content_top,
+                right: x + w - pad,
+                bottom: content_bottom,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut th,
+                &mut th_rc,
+                DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX,
+            );
         } else if let Some(ans) = &s.ai_answer {
             let parts: Vec<&str> = ans.split("\n\n---\n\n").collect();
 
@@ -4683,9 +5200,19 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
                 if !prompt.is_empty() {
                     let mut p_wide: Vec<u16> = prompt.encode_utf16().collect();
-                    let mut calc = RECT { left: 0, top: 0, right: card_inner_w, bottom: 0 };
+                    let mut calc = RECT {
+                        left: 0,
+                        top: 0,
+                        right: card_inner_w,
+                        bottom: 0,
+                    };
                     SelectObject(mdc, s.font_c);
-                    let _ = DrawTextW(mdc, &mut p_wide, &mut calc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+                    let _ = DrawTextW(
+                        mdc,
+                        &mut p_wide,
+                        &mut calc,
+                        DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX,
+                    );
                     let prompt_h = calc.bottom - calc.top;
                     total_h += prompt_h + 16 + 16;
                 }
@@ -4695,9 +5222,19 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     let resp_h = if is_thinking {
                         // Plain single-line height for the animated status text.
                         let mut r_wide: Vec<u16> = response.encode_utf16().collect();
-                        let mut calc = RECT { left: 0, top: 0, right: resp_w, bottom: 0 };
+                        let mut calc = RECT {
+                            left: 0,
+                            top: 0,
+                            right: resp_w,
+                            bottom: 0,
+                        };
                         SelectObject(mdc, s.font_c);
-                        let _ = DrawTextW(mdc, &mut r_wide, &mut calc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+                        let _ = DrawTextW(
+                            mdc,
+                            &mut r_wide,
+                            &mut calc,
+                            DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX,
+                        );
                         calc.bottom - calc.top
                     } else {
                         // Markdown-rendered height (headings/code/lists/etc.).
@@ -4744,9 +5281,19 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
                 if !prompt.is_empty() {
                     let mut p_wide: Vec<u16> = prompt.encode_utf16().collect();
-                    let mut calc = RECT { left: 0, top: 0, right: card_inner_w, bottom: 0 };
+                    let mut calc = RECT {
+                        left: 0,
+                        top: 0,
+                        right: card_inner_w,
+                        bottom: 0,
+                    };
                     SelectObject(mdc, s.font_c);
-                    let _ = DrawTextW(mdc, &mut p_wide.clone(), &mut calc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+                    let _ = DrawTextW(
+                        mdc,
+                        &mut p_wide.clone(),
+                        &mut calc,
+                        DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX,
+                    );
                     let prompt_h = calc.bottom - calc.top;
                     let bubble_h = prompt_h + 16;
 
@@ -4759,7 +5306,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         bottom: current_y + 8 + prompt_h,
                     };
                     SetTextColor(mdc, COLORREF(0x00_D0_D0_D0));
-                    let _ = DrawTextW(mdc, &mut p_wide, &mut body_rc, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+                    let _ = DrawTextW(
+                        mdc,
+                        &mut p_wide,
+                        &mut body_rc,
+                        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX,
+                    );
 
                     current_y += bubble_h + 16;
                 }
@@ -4778,9 +5330,19 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         response.to_string()
                     };
                     let mut r_wide: Vec<u16> = response_text.encode_utf16().collect();
-                    let mut calc = RECT { left: 0, top: 0, right: resp_w, bottom: 0 };
+                    let mut calc = RECT {
+                        left: 0,
+                        top: 0,
+                        right: resp_w,
+                        bottom: 0,
+                    };
                     SelectObject(mdc, s.font_c);
-                    let _ = DrawTextW(mdc, &mut r_wide.clone(), &mut calc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+                    let _ = DrawTextW(
+                        mdc,
+                        &mut r_wide.clone(),
+                        &mut calc,
+                        DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX,
+                    );
                     let resp_h = calc.bottom - calc.top;
 
                     let mut body_rc = RECT {
@@ -4791,12 +5353,18 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     };
                     if is_thinking {
                         SetTextColor(mdc, CLR_GRAY);
-                        let _ = DrawTextW(mdc, &mut r_wide, &mut body_rc, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+                        let _ = DrawTextW(
+                            mdc,
+                            &mut r_wide,
+                            &mut body_rc,
+                            DT_LEFT | DT_WORDBREAK | DT_NOPREFIX,
+                        );
                         current_y += resp_h + 24;
                     } else {
                         // Markdown: paint using the shared renderer so heights match
                         // the measure pass exactly.
-                        let used = paint_response(mdc, &response_text, s, x + pad, resp_w, current_y);
+                        let used =
+                            paint_response(mdc, &response_text, s, x + pad, resp_w, current_y);
                         current_y += used + 24;
                     }
                 }
@@ -4822,18 +5390,44 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             };
             if !label.is_empty() {
                 let mut bw: Vec<u16> = label.encode_utf16().collect();
-                let mut brc = RECT { left: x + pad, top: banner_y, right: x + w - pad, bottom: banner_y + 16 };
-                let _ = DrawTextW(mdc, &mut bw, &mut brc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                let mut brc = RECT {
+                    left: x + pad,
+                    top: banner_y,
+                    right: x + w - pad,
+                    bottom: banner_y + 16,
+                };
+                let _ = DrawTextW(
+                    mdc,
+                    &mut bw,
+                    &mut brc,
+                    DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+                );
             }
 
             // Summary line (if any) in muted text.
             if !ap.summary.is_empty() {
                 SelectObject(mdc, s.font_c);
                 SetTextColor(mdc, CLR_GRAY);
-                let mut sw: Vec<u16> = ap.summary.chars().take(140).collect::<String>().encode_utf16().collect();
+                let mut sw: Vec<u16> = ap
+                    .summary
+                    .chars()
+                    .take(140)
+                    .collect::<String>()
+                    .encode_utf16()
+                    .collect();
                 if !sw.is_empty() {
-                    let mut src = RECT { left: x + pad, top: banner_y + 16, right: x + w - pad, bottom: banner_y + 32 };
-                    let _ = DrawTextW(mdc, &mut sw, &mut src, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                    let mut src = RECT {
+                        left: x + pad,
+                        top: banner_y + 16,
+                        right: x + w - pad,
+                        bottom: banner_y + 32,
+                    };
+                    let _ = DrawTextW(
+                        mdc,
+                        &mut sw,
+                        &mut src,
+                        DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+                    );
                 }
             }
 
@@ -4849,42 +5443,124 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let always_x = deny_x + deny_w + gap;
 
             // Approve button
-            fill_rounded(mdc, approve_x, btn_y, approve_w, btn_h, 6, COLORREF(0x00_3A_6B_3A));
+            fill_rounded(
+                mdc,
+                approve_x,
+                btn_y,
+                approve_w,
+                btn_h,
+                6,
+                COLORREF(0x00_3A_6B_3A),
+            );
             SelectObject(mdc, s.font_b);
             SetTextColor(mdc, COLORREF(0x00_E6_F5_E6));
             let mut aw: Vec<u16> = "Approve".encode_utf16().collect();
-            let mut arc = RECT { left: approve_x, top: btn_y, right: approve_x + approve_w, bottom: btn_y + btn_h };
-            let _ = DrawTextW(mdc, &mut aw, &mut arc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            let mut arc = RECT {
+                left: approve_x,
+                top: btn_y,
+                right: approve_x + approve_w,
+                bottom: btn_y + btn_h,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut aw,
+                &mut arc,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
 
             // Deny button
-            fill_rounded(mdc, deny_x, btn_y, deny_w, btn_h, 6, COLORREF(0x00_6B_3A_3A));
+            fill_rounded(
+                mdc,
+                deny_x,
+                btn_y,
+                deny_w,
+                btn_h,
+                6,
+                COLORREF(0x00_6B_3A_3A),
+            );
             SetTextColor(mdc, COLORREF(0x00_F5_E6_E6));
             let mut dw: Vec<u16> = "Deny".encode_utf16().collect();
-            let mut drc = RECT { left: deny_x, top: btn_y, right: deny_x + deny_w, bottom: btn_y + btn_h };
-            let _ = DrawTextW(mdc, &mut dw, &mut drc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            let mut drc = RECT {
+                left: deny_x,
+                top: btn_y,
+                right: deny_x + deny_w,
+                bottom: btn_y + btn_h,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut dw,
+                &mut drc,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
 
             // Always Approve button
-            fill_rounded(mdc, always_x, btn_y, always_w, btn_h, 6, COLORREF(0x00_2B_5B_8B));
+            fill_rounded(
+                mdc,
+                always_x,
+                btn_y,
+                always_w,
+                btn_h,
+                6,
+                COLORREF(0x00_2B_5B_8B),
+            );
             SetTextColor(mdc, COLORREF(0x00_E6_EE_F5));
             let mut alw: Vec<u16> = "Always Approve".encode_utf16().collect();
-            let mut alrc = RECT { left: always_x, top: btn_y, right: always_x + always_w, bottom: btn_y + btn_h };
-            let _ = DrawTextW(mdc, &mut alw, &mut alrc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            let mut alrc = RECT {
+                left: always_x,
+                top: btn_y,
+                right: always_x + always_w,
+                bottom: btn_y + btn_h,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut alw,
+                &mut alrc,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
 
             // Hint
             SelectObject(mdc, s.font_b);
             SetTextColor(mdc, CLR_GRAY);
             let mut hw: Vec<u16> = "A approve · D deny · V always".encode_utf16().collect();
-            let mut hrc = RECT { left: always_x + always_w + 12, top: btn_y, right: x + w - pad, bottom: btn_y + btn_h };
-            let _ = DrawTextW(mdc, &mut hw, &mut hrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            let mut hrc = RECT {
+                left: always_x + always_w + 12,
+                top: btn_y,
+                right: x + w - pad,
+                bottom: btn_y + btn_h,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut hw,
+                &mut hrc,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
         } else if s.ai_pending {
             SelectObject(mdc, s.font_b);
             SetTextColor(mdc, CLR_GRAY);
             let mut hint_w: Vec<u16> = "Esc: cancel".encode_utf16().collect();
-            let mut hint_rc = RECT { left: x + pad, top: content_bottom + 2, right: x + w - pad, bottom: content_bottom + footer_h };
-            let _ = DrawTextW(mdc, &mut hint_w, &mut hint_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            let mut hint_rc = RECT {
+                left: x + pad,
+                top: content_bottom + 2,
+                right: x + w - pad,
+                bottom: content_bottom + footer_h,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut hint_w,
+                &mut hint_rc,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
         } else {
             let input_y = content_bottom + 8;
-            fill_rounded(mdc, x + pad, input_y, w - pad * 2, 34, 10, COLORREF(0x00_2B_29_28));
+            fill_rounded(
+                mdc,
+                x + pad,
+                input_y,
+                w - pad * 2,
+                34,
+                10,
+                COLORREF(0x00_2B_29_28),
+            );
             SelectObject(mdc, s.font_c);
             let input_text = if s.chat_input.trim().is_empty() {
                 SetTextColor(mdc, CLR_PH);
@@ -4900,7 +5576,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 right: x + w - pad - 118,
                 bottom: input_y + 34,
             };
-            let _ = DrawTextW(mdc, &mut input_w, &mut input_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            let _ = DrawTextW(
+                mdc,
+                &mut input_w,
+                &mut input_rc,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+            );
 
             if s.cursor_visible && s.chat_input_active {
                 let cur = floor_char_boundary(&s.chat_input, s.chat_cursor_pos);
@@ -4927,7 +5608,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 right: x + w - pad - 12,
                 bottom: input_y + 34,
             };
-            let _ = DrawTextW(mdc, &mut hint_w, &mut hint_rc, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            let _ = DrawTextW(
+                mdc,
+                &mut hint_w,
+                &mut hint_rc,
+                DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
         }
 
         SelectObject(mdc, s.font_q);
@@ -4958,7 +5644,9 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             } else if is_checked {
                 fill(mdc, x, ry, list_w, RESULT_H, COLORREF(0x00_25_2A_2E));
             }
-            if i > 0 { fill(mdc, x + PAD_L, ry, list_w - PAD_L * 2, 1, CLR_DIV); }
+            if i > 0 {
+                fill(mdc, x + PAD_L, ry, list_w - PAD_L * 2, 1, CLR_DIV);
+            }
 
             let cy = ry + (RESULT_H - 40) / 2;
 
@@ -4969,7 +5657,9 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     let icon_y = ry + (RESULT_H - 32) / 2;
                     let mut cache = s.clipboard_thumbnails.borrow_mut();
                     if let Some(&hbitmap) = cache.get(path) {
-                        unsafe { draw_cached_bmp(mdc, x + PAD_L, icon_y, 32, 32, hbitmap); }
+                        unsafe {
+                            draw_cached_bmp(mdc, x + PAD_L, icon_y, 32, 32, hbitmap);
+                        }
                         drawn_custom_thumbnail = true;
                     } else {
                         unsafe {
@@ -4986,19 +5676,28 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             if !drawn_custom_thumbnail {
                 // For WINDOW source: icon was pre-fetched into app_icons on result arrival.
                 // For all other async-loaded sources, also use app_icons.
-                let cached_icon = s.app_icons.get(&res.entry.launch_command)
+                let cached_icon = s
+                    .app_icons
+                    .get(&res.entry.launch_command)
                     .copied()
                     .filter(|h| !h.0.is_null());
                 let icon_to_draw = if let Some(hicon) = cached_icon {
                     hicon
                 } else if res.entry.source == "WINDOW" {
-                    s.app_icons.get(&res.entry.launch_command)
+                    s.app_icons
+                        .get(&res.entry.launch_command)
                         .copied()
                         .filter(|h| !h.0.is_null())
                         .unwrap_or(s.icon_control_panel)
-                } else if res.entry.source == "app" || res.entry.source == "RECENT" || res.entry.source == "FILE" || res.entry.source == "CODE"
-                    || (res.entry.source == "ACTION" && res.entry.launch_command.starts_with("kill:")) {
-                    s.app_icons.get(&res.entry.launch_command)
+                } else if res.entry.source == "app"
+                    || res.entry.source == "RECENT"
+                    || res.entry.source == "FILE"
+                    || res.entry.source == "CODE"
+                    || (res.entry.source == "ACTION"
+                        && res.entry.launch_command.starts_with("kill:"))
+                {
+                    s.app_icons
+                        .get(&res.entry.launch_command)
                         .copied()
                         .filter(|h| !h.0.is_null())
                         .unwrap_or(s.icon_control_panel)
@@ -5026,7 +5725,19 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
                 if !icon_to_draw.0.is_null() {
                     let icon_y = ry + (RESULT_H - 32) / 2;
-                    let _ = unsafe { DrawIconEx(mdc, x + PAD_L, icon_y, icon_to_draw, 32, 32, 0, HBRUSH(null_mut()), DI_NORMAL) };
+                    let _ = unsafe {
+                        DrawIconEx(
+                            mdc,
+                            x + PAD_L,
+                            icon_y,
+                            icon_to_draw,
+                            32,
+                            32,
+                            0,
+                            HBRUSH(null_mut()),
+                            DI_NORMAL,
+                        )
+                    };
                 }
             }
 
@@ -5043,17 +5754,35 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             };
             let mut name: Vec<u16> = display_name.encode_utf16().collect();
             let badge_left = x + list_w - PAD_L - BADGE_W;
-            let mut r = RECT { left: tx, top: cy, right: badge_left - 14, bottom: cy + 22 };
-            let _ = DrawTextW(mdc, &mut name, &mut r,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            let mut r = RECT {
+                left: tx,
+                top: cy,
+                right: badge_left - 14,
+                bottom: cy + 22,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut name,
+                &mut r,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
+            );
 
             // Breadcrumb
             SelectObject(mdc, s.font_c);
             SetTextColor(mdc, CLR_GRAY);
             let mut crumb: Vec<u16> = res.entry.breadcrumb_path.encode_utf16().collect();
-            let mut r2 = RECT { left: tx, top: cy + 24, right: badge_left - 14, bottom: cy + 40 };
-            let _ = DrawTextW(mdc, &mut crumb, &mut r2,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            let mut r2 = RECT {
+                left: tx,
+                top: cy + 24,
+                right: badge_left - 14,
+                bottom: cy + 40,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut crumb,
+                &mut r2,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
+            );
 
             // Badge
             let badge_source = if res.entry.id.starts_with("clip.pinned.") {
@@ -5061,7 +5790,13 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             } else {
                 &res.entry.source
             };
-            badge(mdc, s, badge_source, badge_left, ry + (RESULT_H - BADGE_H) / 2);
+            badge(
+                mdc,
+                s,
+                badge_source,
+                badge_left,
+                ry + (RESULT_H - BADGE_H) / 2,
+            );
         }
 
         // Draw scrollbar if there are more results than visible
@@ -5070,15 +5805,16 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let track_top = y + SEARCH_H + 8;
             let track_bottom = y + h - 8;
             let track_h = track_bottom - track_top;
-            
+
             // Thumb height proportional to ratio of visible results, capped at min 24px
             let thumb_h = ((VISIBLE_RESULTS as f32 / total_results as f32) * track_h as f32) as i32;
             let thumb_h = thumb_h.max(24);
-            
+
             // Thumb position proportional to scroll_offset
             let max_offset = total_results - VISIBLE_RESULTS;
-            let thumb_y = track_top + (s.scroll_offset as f32 / max_offset as f32 * (track_h - thumb_h) as f32) as i32;
-            
+            let thumb_y = track_top
+                + (s.scroll_offset as f32 / max_offset as f32 * (track_h - thumb_h) as f32) as i32;
+
             // Draw subtle track
             let sb_x = x + list_w - 10;
             let sb_w = 4;
@@ -5092,13 +5828,16 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             fill(mdc, x + list_w, y + SEARCH_H, 1, h - SEARCH_H, CLR_DIV);
 
             // Draw submenu background
-            fill(mdc, x + list_w + 1, y + SEARCH_H + 1, 238, h - SEARCH_H - 1, COLORREF(0x00_15_15_15));
+            fill(
+                mdc,
+                x + list_w + 1,
+                y + SEARCH_H + 1,
+                238,
+                h - SEARCH_H - 1,
+                COLORREF(0x00_15_15_15),
+            );
 
-            let actions = [
-                "Run as Administrator",
-                "Open File Location",
-                "Copy Path",
-            ];
+            let actions = ["Run as Administrator", "Open File Location", "Copy Path"];
 
             let action_h = 44;
             let start_y = y + SEARCH_H + 16;
@@ -5122,7 +5861,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     right: x + w - 16,
                     bottom: ay + action_h,
                 };
-                let _ = DrawTextW(mdc, &mut text_wide, &mut r_action, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                let _ = DrawTextW(
+                    mdc,
+                    &mut text_wide,
+                    &mut r_action,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+                );
 
                 if s.submenu_selected == idx {
                     SelectObject(mdc, s.font_c);
@@ -5134,7 +5878,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         right: x + w - 16,
                         bottom: ay + action_h,
                     };
-                    let _ = DrawTextW(mdc, &mut hint_wide, &mut r_hint, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                    let _ = DrawTextW(
+                        mdc,
+                        &mut hint_wide,
+                        &mut r_hint,
+                        DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+                    );
                 }
             }
         }
@@ -5145,20 +5894,34 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let footer_y = y + h - 24;
         fill(mdc, x, footer_y, w, 24, COLORREF(0x00_15_15_15));
         fill(mdc, x, footer_y, w, 1, CLR_DIV);
-        
+
         if s.delete_confirm {
             badge(mdc, s, "confirm", x + PAD_L, footer_y + 2);
             SelectObject(mdc, s.font_c);
             SetTextColor(mdc, CLR_GRAY);
-            let inst_text = format!(" Press Delete again to delete {} selected items, Escape to cancel", s.selected_clip_ids.len());
+            let inst_text = format!(
+                " Press Delete again to delete {} selected items, Escape to cancel",
+                s.selected_clip_ids.len()
+            );
             let mut inst_wide: Vec<u16> = inst_text.encode_utf16().collect();
-            let mut r_inst = RECT { left: x + PAD_L + 68, top: footer_y, right: x + w - PAD_L, bottom: y + h };
-            let _ = DrawTextW(mdc, &mut inst_wide, &mut r_inst, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            let mut r_inst = RECT {
+                left: x + PAD_L + 68,
+                top: footer_y,
+                right: x + w - PAD_L,
+                bottom: y + h,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut inst_wide,
+                &mut r_inst,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
         } else {
             SelectObject(mdc, s.font_c);
             SetTextColor(mdc, CLR_GRAY);
             let inst_text = if s.editing_item.is_some() {
-                " 📝 Editing snippet: Press Enter to save to database & clipboard, Escape to cancel".to_string()
+                " 📝 Editing snippet: Press Enter to save to database & clipboard, Escape to cancel"
+                    .to_string()
             } else {
                 let sel_count = s.selected_clip_ids.len();
                 if sel_count > 0 {
@@ -5168,8 +5931,18 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 }
             };
             let mut inst_wide: Vec<u16> = inst_text.encode_utf16().collect();
-            let mut r_inst = RECT { left: x + PAD_L, top: footer_y, right: x + w - PAD_L, bottom: y + h };
-            let _ = DrawTextW(mdc, &mut inst_wide, &mut r_inst, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            let mut r_inst = RECT {
+                left: x + PAD_L,
+                top: footer_y,
+                right: x + w - PAD_L,
+                bottom: y + h,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut inst_wide,
+                &mut r_inst,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
         }
     }
 
@@ -5178,13 +5951,23 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let footer_y = y + h - 24;
         fill(mdc, x, footer_y, w, 24, COLORREF(0x00_15_15_15));
         fill(mdc, x, footer_y, w, 1, CLR_DIV);
-        
+
         SelectObject(mdc, s.font_c);
         SetTextColor(mdc, CLR_GRAY);
         let inst_text = " Enter: Next / Save  |  Escape: Cancel creation".to_string();
         let mut inst_wide: Vec<u16> = inst_text.encode_utf16().collect();
-        let mut r_inst = RECT { left: x + PAD_L, top: footer_y, right: x + w - PAD_L, bottom: y + h };
-        let _ = DrawTextW(mdc, &mut inst_wide, &mut r_inst, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        let mut r_inst = RECT {
+            left: x + PAD_L,
+            top: footer_y,
+            right: x + w - PAD_L,
+            bottom: y + h,
+        };
+        let _ = DrawTextW(
+            mdc,
+            &mut inst_wide,
+            &mut r_inst,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+        );
     }
 
     // Restore clipping
@@ -5200,16 +5983,33 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
 unsafe fn fill(hdc: HDC, x: i32, y: i32, w: i32, h: i32, c: COLORREF) {
     let br = CreateSolidBrush(c);
-    let _ = FillRect(hdc, &RECT { left: x, top: y, right: x + w, bottom: y + h }, br);
+    let _ = FillRect(
+        hdc,
+        &RECT {
+            left: x,
+            top: y,
+            right: x + w,
+            bottom: y + h,
+        },
+        br,
+    );
     let _ = DeleteObject(br);
 }
 
-unsafe fn draw_rounded_border_and_bg(hdc: HDC, x: i32, y: i32, w: i32, h: i32, r: i32, gradient: bool) {
+unsafe fn draw_rounded_border_and_bg(
+    hdc: HDC,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: i32,
+    gradient: bool,
+) {
     if gradient {
         // Create a rounded region for the border
         let rgn = CreateRoundRectRgn(x, y, x + w + 1, y + h + 1, r, r);
         let _ = SelectClipRgn(hdc, rgn);
-        
+
         // Draw horizontal gradient over the outer bounds
         let vertices = [
             TRIVERTEX {
@@ -5233,12 +6033,18 @@ unsafe fn draw_rounded_border_and_bg(hdc: HDC, x: i32, y: i32, w: i32, h: i32, r
             UpperLeft: 0,
             LowerRight: 1,
         }];
-        let _ = GradientFill(hdc, &vertices, g_rect.as_ptr() as *const _, 1, GRADIENT_FILL(0));
-        
+        let _ = GradientFill(
+            hdc,
+            &vertices,
+            g_rect.as_ptr() as *const _,
+            1,
+            GRADIENT_FILL(0),
+        );
+
         // Restore clipping
         let _ = SelectClipRgn(hdc, HRGN(null_mut()));
         let _ = DeleteObject(rgn);
-        
+
         // Draw the inner background
         fill_rounded(hdc, x + 1, y + 1, w - 2, h - 2, r - 1, BG);
     } else {
@@ -5310,8 +6116,18 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
     SetTextColor(hdc, tx_color);
     SetBkMode(hdc, TRANSPARENT);
     let mut t: Vec<u16> = label.encode_utf16().collect();
-    let mut r = RECT { left: x, top: y, right: x + BADGE_W, bottom: y + BADGE_H };
-    DrawTextW(hdc, &mut t, &mut r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    let mut r = RECT {
+        left: x,
+        top: y,
+        right: x + BADGE_W,
+        bottom: y + BADGE_H,
+    };
+    DrawTextW(
+        hdc,
+        &mut t,
+        &mut r,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+    );
 }
 
 unsafe fn load_icon_from_dll(dll_name: &str, index: i32, size: i32) -> HICON {
@@ -5320,10 +6136,10 @@ unsafe fn load_icon_from_dll(dll_name: &str, index: i32, size: i32) -> HICON {
     for (dest, src) in filename_buf.iter_mut().zip(dll_wide.iter()) {
         *dest = *src;
     }
-    
+
     let mut phicon = [HICON(std::ptr::null_mut())];
     let mut piconid_val = 0u32;
-    
+
     let num = PrivateExtractIconsW(
         &filename_buf,
         index,
@@ -5341,25 +6157,33 @@ unsafe fn load_icon_from_dll(dll_name: &str, index: i32, size: i32) -> HICON {
 }
 
 unsafe fn load_icon_from_memory(bytes: &[u8], size: i32) -> HICON {
-    if bytes.len() < 6 { return HICON(null_mut()); }
+    if bytes.len() < 6 {
+        return HICON(null_mut());
+    }
     let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
     let mut best_idx = 0;
     let mut best_diff = i32::MAX;
-    
+
     for i in 0..count {
         let offset = 6 + i * 16;
-        if offset + 16 > bytes.len() { break; }
+        if offset + 16 > bytes.len() {
+            break;
+        }
         let mut w = bytes[offset] as i32;
         let mut h = bytes[offset + 1] as i32;
-        if w == 0 { w = 256; }
-        if h == 0 { h = 256; }
+        if w == 0 {
+            w = 256;
+        }
+        if h == 0 {
+            h = 256;
+        }
         let diff = (w - size).abs() + (h - size).abs();
         if diff < best_diff {
             best_diff = diff;
             best_idx = i;
         }
     }
-    
+
     let entry_offset = 6 + best_idx * 16;
     if entry_offset + 16 <= bytes.len() {
         let img_size = u32::from_le_bytes([
@@ -5374,17 +6198,11 @@ unsafe fn load_icon_from_memory(bytes: &[u8], size: i32) -> HICON {
             bytes[entry_offset + 14],
             bytes[entry_offset + 15],
         ]) as usize;
-        
+
         if img_offset + img_size <= bytes.len() {
-            let img_bytes = &bytes[img_offset .. img_offset + img_size];
-            let hicon = CreateIconFromResourceEx(
-                img_bytes,
-                TRUE,
-                0x00030000,
-                size,
-                size,
-                IMAGE_FLAGS(0),
-            );
+            let img_bytes = &bytes[img_offset..img_offset + img_size];
+            let hicon =
+                CreateIconFromResourceEx(img_bytes, TRUE, 0x00030000, size, size, IMAGE_FLAGS(0));
             if let Ok(h) = hicon {
                 return h;
             }
@@ -5394,10 +6212,13 @@ unsafe fn load_icon_from_memory(bytes: &[u8], size: i32) -> HICON {
 }
 
 unsafe fn get_active_app_name() -> String {
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
-    use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_NAME_WIN32};
-    use windows::Win32::Foundation::{CloseHandle, BOOL};
     use windows::core::PWSTR;
+    use windows::Win32::Foundation::{CloseHandle, BOOL};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
     let hwnd_fg = GetForegroundWindow();
     if hwnd_fg.0.is_null() {
@@ -5436,8 +6257,8 @@ unsafe fn paste_into_window(target: HWND) {
     std::thread::sleep(std::time::Duration::from_millis(80));
     let _ = SetForegroundWindow(target);
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-        VK_CONTROL, KEYEVENTF_KEYUP,
+        SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VK_CONTROL,
     };
     let inputs = [
         INPUT {
@@ -5493,10 +6314,14 @@ unsafe fn paste_into_window(target: HWND) {
 }
 
 unsafe fn copy_image_to_clipboard(hwnd: HWND, file_path: &str) -> bool {
-    use windows::Win32::System::DataExchange::{OpenClipboard, CloseClipboard, EmptyClipboard, SetClipboardData};
-    use windows::Win32::UI::WindowsAndMessaging::{LoadImageW, IMAGE_BITMAP, LR_LOADFROMFILE, LR_CREATEDIBSECTION};
-    use windows::Win32::Foundation::HANDLE;
     use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        LoadImageW, IMAGE_BITMAP, LR_CREATEDIBSECTION, LR_LOADFROMFILE,
+    };
 
     let wide_path: Vec<u16> = file_path.encode_utf16().chain(std::iter::once(0)).collect();
     let h_img = LoadImageW(
@@ -5561,14 +6386,21 @@ unsafe fn paste_clipboard_into_query(hwnd: HWND, s: &mut State, search_now: bool
     let _ = InvalidateRect(hwnd, None, FALSE);
 }
 
-fn clipboard_image_path(db_path: &std::path::Path, now_ms: u128) -> Option<(std::path::PathBuf, String)> {
+fn clipboard_image_path(
+    db_path: &std::path::Path,
+    now_ms: u128,
+) -> Option<(std::path::PathBuf, String)> {
     let img_dir = db_path.parent()?.join("clipboard_images");
     let filename = format!("image_{}.bmp", now_ms);
     let img_path = img_dir.join(&filename);
     Some((img_path.clone(), img_path.to_string_lossy().to_string()))
 }
 
-unsafe fn save_clipboard_image(hwnd: HWND, db_path: &std::path::Path, source_app: &str) -> Option<String> {
+unsafe fn save_clipboard_image(
+    hwnd: HWND,
+    db_path: &std::path::Path,
+    source_app: &str,
+) -> Option<String> {
     let bmp_bytes = capture_clipboard_bmp_bytes(hwnd)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -5589,7 +6421,8 @@ unsafe fn save_clipboard_image(hwnd: HWND, db_path: &std::path::Path, source_app
              source_app = excluded.source_app, \
              is_image = excluded.is_image;",
         rusqlite::params![img_path_str, timestamp, source_app],
-    ).ok()?;
+    )
+    .ok()?;
     let _ = conn.execute(
         "DELETE FROM clipboard_history WHERE pinned = 0 AND id NOT IN (SELECT id FROM clipboard_history ORDER BY pinned DESC, timestamp DESC LIMIT 500);",
         [],
@@ -5614,9 +6447,11 @@ unsafe fn capture_clipboard_bmp_bytes(hwnd: HWND) -> Option<Vec<u8>> {
 }
 
 unsafe fn capture_clipboard_dib_bmp_bytes(hwnd: HWND) -> Option<Vec<u8>> {
-    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard};
-    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
     use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+    };
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 
     const CF_DIB: u32 = 8;
     const CF_DIBV5: u32 = 17;
@@ -5656,12 +6491,17 @@ unsafe fn capture_clipboard_dib_bmp_bytes(hwnd: HWND) -> Option<Vec<u8>> {
     result
 }
 
-unsafe fn capture_clipboard_image_data(hwnd: HWND) -> Option<(Vec<u8>, windows::Win32::Graphics::Gdi::BITMAPINFOHEADER)> {
-    use windows::Win32::System::DataExchange::{OpenClipboard, CloseClipboard, GetClipboardData, IsClipboardFormatAvailable};
-    use windows::Win32::Graphics::Gdi::{
-        GetDC, ReleaseDC, GetObjectW, GetDIBits, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, HBITMAP
-    };
+unsafe fn capture_clipboard_image_data(
+    hwnd: HWND,
+) -> Option<(Vec<u8>, windows::Win32::Graphics::Gdi::BITMAPINFOHEADER)> {
     use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO, BITMAPINFOHEADER,
+        DIB_RGB_COLORS, HBITMAP,
+    };
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+    };
 
     // CF_BITMAP is 2
     if IsClipboardFormatAvailable(2).is_err() {
@@ -5686,7 +6526,7 @@ unsafe fn capture_clipboard_image_data(hwnd: HWND) -> Option<(Vec<u8>, windows::
                         biWidth: bmp.bmWidth,
                         biHeight: bmp.bmHeight,
                         biPlanes: 1,
-                        biBitCount: 32, // Convert to 32-bit BGRA
+                        biBitCount: 32,   // Convert to 32-bit BGRA
                         biCompression: 0, // BI_RGB
                         biSizeImage: (bmp.bmWidth * bmp.bmHeight * 4) as u32,
                         biXPelsPerMeter: 0,
@@ -5701,7 +6541,7 @@ unsafe fn capture_clipboard_image_data(hwnd: HWND) -> Option<(Vec<u8>, windows::
                     };
 
                     let mut buf = vec![0u8; (bmp.bmWidth * bmp.bmHeight * 4) as usize];
-                    
+
                     let res = GetDIBits(
                         hdc_screen,
                         hbitmap,
@@ -5724,7 +6564,10 @@ unsafe fn capture_clipboard_image_data(hwnd: HWND) -> Option<(Vec<u8>, windows::
     result
 }
 
-fn bmp_file_bytes(buf: &[u8], bih: windows::Win32::Graphics::Gdi::BITMAPINFOHEADER) -> Option<Vec<u8>> {
+fn bmp_file_bytes(
+    buf: &[u8],
+    bih: windows::Win32::Graphics::Gdi::BITMAPINFOHEADER,
+) -> Option<Vec<u8>> {
     let mut file_header = [0u8; 14];
     let file_size = 54usize.checked_add(buf.len())?;
     file_header[0] = b'B';
@@ -5766,7 +6609,11 @@ fn dib_to_bmp_file_bytes(dib: &[u8]) -> Option<Vec<u8>> {
     } else {
         0
     };
-    let masks_size = if header_size == 40 && (compression == 3 || compression == 6) { 12 } else { 0 };
+    let masks_size = if header_size == 40 && (compression == 3 || compression == 6) {
+        12
+    } else {
+        0
+    };
     let pixel_offset = 14usize
         .checked_add(header_size)?
         .checked_add(masks_size)?
@@ -5787,7 +6634,7 @@ fn dib_to_bmp_file_bytes(dib: &[u8]) -> Option<Vec<u8>> {
 
 unsafe fn import_windows_clipboard_history(db_path: &std::path::Path) {
     use windows::ApplicationModel::DataTransfer::{Clipboard, StandardDataFormats};
-    
+
     if Clipboard::IsHistoryEnabled().unwrap_or(false) {
         if let Ok(op) = Clipboard::GetHistoryItemsAsync() {
             if let Ok(result) = op.get() {
@@ -5799,7 +6646,7 @@ unsafe fn import_windows_clipboard_history(db_path: &std::path::Path) {
                             .unwrap_or_default()
                             .as_secs() as i64;
                         let mut time_offset = 0;
-                        
+
                         for item in items {
                             if let Ok(content) = item.Content() {
                                 let is_text = if let Ok(fmt) = StandardDataFormats::Text() {
@@ -5807,7 +6654,7 @@ unsafe fn import_windows_clipboard_history(db_path: &std::path::Path) {
                                 } else {
                                     false
                                 };
-                                
+
                                 if is_text {
                                     if let Ok(text_op) = content.GetTextAsync() {
                                         if let Ok(text) = text_op.get() {
@@ -5829,7 +6676,7 @@ unsafe fn import_windows_clipboard_history(db_path: &std::path::Path) {
                                     } else {
                                         false
                                     };
-                                    
+
                                     if is_bitmap {
                                         if let Ok(bitmap_op) = content.GetBitmapAsync() {
                                             if let Ok(stream_ref) = bitmap_op.get() {
@@ -5838,19 +6685,50 @@ unsafe fn import_windows_clipboard_history(db_path: &std::path::Path) {
                                                         let size = stream.Size().unwrap_or(0);
                                                         if size > 0 && size < 50 * 1024 * 1024 {
                                                             use windows::Storage::Streams::DataReader;
-                                                            if let Ok(reader) = DataReader::CreateDataReader(&stream) {
-                                                                if reader.LoadAsync(size as u32).and_then(|l| l.get()).is_ok() {
-                                                                    let mut buf = vec![0u8; size as usize];
-                                                                    if reader.ReadBytes(&mut buf).is_ok() {
-                                                                        let timestamp = now - time_offset;
+                                                            if let Ok(reader) =
+                                                                DataReader::CreateDataReader(
+                                                                    &stream,
+                                                                )
+                                                            {
+                                                                if reader
+                                                                    .LoadAsync(size as u32)
+                                                                    .and_then(|l| l.get())
+                                                                    .is_ok()
+                                                                {
+                                                                    let mut buf =
+                                                                        vec![0u8; size as usize];
+                                                                    if reader
+                                                                        .ReadBytes(&mut buf)
+                                                                        .is_ok()
+                                                                    {
+                                                                        let timestamp =
+                                                                            now - time_offset;
                                                                         time_offset += 1;
-                                                                        let filename = format!("image_{}.bmp", timestamp);
-                                                                        let img_dir = db_path.parent().unwrap().join("clipboard_images");
-                                                                        let _ = std::fs::create_dir_all(&img_dir);
-                                                                        let img_path = img_dir.join(&filename);
-                                                                        let img_path_str = img_path.to_string_lossy().to_string();
-                                                                        
-                                                                        if std::fs::write(&img_path, &buf).is_ok() {
+                                                                        let filename = format!(
+                                                                            "image_{}.bmp",
+                                                                            timestamp
+                                                                        );
+                                                                        let img_dir = db_path
+                                                                            .parent()
+                                                                            .unwrap()
+                                                                            .join(
+                                                                                "clipboard_images",
+                                                                            );
+                                                                        let _ =
+                                                                            std::fs::create_dir_all(
+                                                                                &img_dir,
+                                                                            );
+                                                                        let img_path =
+                                                                            img_dir.join(&filename);
+                                                                        let img_path_str = img_path
+                                                                            .to_string_lossy()
+                                                                            .to_string();
+
+                                                                        if std::fs::write(
+                                                                            &img_path, &buf,
+                                                                        )
+                                                                        .is_ok()
+                                                                        {
                                                                             let _ = conn.execute(
                                                                                 "INSERT OR IGNORE INTO clipboard_history (content, timestamp, source_app, is_image) VALUES (?, ?, 'Windows History', 1);",
                                                                                 rusqlite::params![img_path_str, timestamp],
@@ -5876,9 +6754,11 @@ unsafe fn import_windows_clipboard_history(db_path: &std::path::Path) {
 }
 
 unsafe fn copy_to_clipboard(hwnd: HWND, text: &str) {
-    use windows::Win32::System::DataExchange::{OpenClipboard, CloseClipboard, EmptyClipboard, SetClipboardData};
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
     use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-    
+
     if OpenClipboard(hwnd).is_ok() {
         let _ = EmptyClipboard();
         let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
@@ -5896,9 +6776,9 @@ unsafe fn copy_to_clipboard(hwnd: HWND, text: &str) {
 }
 
 unsafe fn paste_from_clipboard(hwnd: HWND) -> Option<String> {
-    use windows::Win32::System::DataExchange::{OpenClipboard, CloseClipboard, GetClipboardData};
-    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock, GlobalSize};
-    
+    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+
     let mut result = None;
     if OpenClipboard(hwnd).is_ok() {
         if let Ok(h_mem) = GetClipboardData(13) {
@@ -5927,10 +6807,15 @@ unsafe fn paste_from_clipboard(hwnd: HWND) -> Option<String> {
 }
 
 unsafe fn start_timeline_tracker(db_path: std::path::PathBuf, launcher_hwnd: SendHwnd) {
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW, PROCESS_NAME_WIN32};
-    use windows::Win32::Foundation::{CloseHandle, BOOL, HWND};
     use windows::core::PWSTR;
+    use windows::Win32::Foundation::{CloseHandle, BOOL, HWND};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+    };
 
     let launcher_hwnd = launcher_hwnd.0;
 
@@ -5968,7 +6853,7 @@ unsafe fn start_timeline_tracker(db_path: std::path::PathBuf, launcher_hwnd: Sen
         // Get app name (process filename)
         let mut pid = 0u32;
         GetWindowThreadProcessId(fg, Some(&mut pid));
-        
+
         let app = if pid != 0 {
             if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, BOOL(0), pid) {
                 let mut buffer = [0u16; 512];
@@ -6010,7 +6895,13 @@ unsafe fn start_timeline_tracker(db_path: std::path::PathBuf, launcher_hwnd: Sen
     }
 }
 
-fn log_timeline_event(db_path: &std::path::Path, timestamp: i64, duration: i64, app_name: &str, window_title: &str) {
+fn log_timeline_event(
+    db_path: &std::path::Path,
+    timestamp: i64,
+    duration: i64,
+    app_name: &str,
+    window_title: &str,
+) {
     if let Ok(conn) = rusqlite::Connection::open(db_path) {
         let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
         let _ = conn.execute(
@@ -6025,8 +6916,10 @@ fn log_timeline_event(db_path: &std::path::Path, timestamp: i64, duration: i64, 
 }
 
 unsafe fn load_bmp_file(path: &str) -> Option<HBITMAP> {
-    use windows::Win32::UI::WindowsAndMessaging::{LoadImageW, IMAGE_BITMAP, LR_LOADFROMFILE, LR_CREATEDIBSECTION};
     use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        LoadImageW, IMAGE_BITMAP, LR_CREATEDIBSECTION, LR_LOADFROMFILE,
+    };
 
     let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
     let h_img = LoadImageW(
@@ -6042,7 +6935,10 @@ unsafe fn load_bmp_file(path: &str) -> Option<HBITMAP> {
 }
 
 unsafe fn draw_cached_bmp(hdc: HDC, x: i32, y: i32, w: i32, h: i32, hbitmap: HBITMAP) {
-    use windows::Win32::Graphics::Gdi::{CreateCompatibleDC, DeleteDC, SelectObject, StretchBlt, GetObjectW, BITMAP, COLORONCOLOR, SetStretchBltMode};
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleDC, DeleteDC, GetObjectW, SelectObject, SetStretchBltMode, StretchBlt,
+        BITMAP, COLORONCOLOR,
+    };
 
     let mem_dc = CreateCompatibleDC(hdc);
     if !mem_dc.is_invalid() {
@@ -6080,7 +6976,7 @@ mod tests {
         unsafe {
             let res = windows::Win32::System::Com::CoInitializeEx(
                 None,
-                windows::Win32::System::Com::COINIT_MULTITHREADED
+                windows::Win32::System::Com::COINIT_MULTITHREADED,
             );
             if res.is_ok() {
                 use windows::ApplicationModel::DataTransfer::Clipboard;
@@ -6097,7 +6993,8 @@ mod tests {
         unsafe {
             let _ = windows::Win32::System::Com::CoInitializeEx(
                 None,
-                windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE
+                windows::Win32::System::Com::COINIT_APARTMENTTHREADED
+                    | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
             );
             let h1 = get_app_icon("electron.app.Antigravity");
             let h2 = get_app_icon("Google.Antigravity");
@@ -6116,36 +7013,37 @@ mod tests {
         unsafe {
             let _ = windows::Win32::System::Com::CoInitializeEx(
                 None,
-                windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE
+                windows::Win32::System::Com::COINIT_APARTMENTTHREADED
+                    | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
             );
 
             unsafe fn get_icon_via_image_factory(parsing_path: &str) -> Option<HICON> {
-                use windows::Win32::UI::Shell::IShellItemImageFactory;
-                use windows::Win32::UI::Shell::SIIGBF_ICONONLY;
+                use windows::core::{Interface, PCWSTR};
                 use windows::Win32::Foundation::SIZE;
                 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
-                use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, ICONINFO};
+                use windows::Win32::UI::Shell::IShellItemImageFactory;
                 use windows::Win32::UI::Shell::SHCreateItemFromParsingName;
-                use windows::core::{Interface, PCWSTR};
-                
-                let path_wide: Vec<u16> = parsing_path.encode_utf16().chain(std::iter::once(0)).collect();
-                let item: windows::Win32::UI::Shell::IShellItem = SHCreateItemFromParsingName(
-                    PCWSTR(path_wide.as_ptr()),
-                    None,
-                ).ok()?;
-                
+                use windows::Win32::UI::Shell::SIIGBF_ICONONLY;
+                use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, ICONINFO};
+
+                let path_wide: Vec<u16> = parsing_path
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+                let item: windows::Win32::UI::Shell::IShellItem =
+                    SHCreateItemFromParsingName(PCWSTR(path_wide.as_ptr()), None).ok()?;
+
                 let factory: IShellItemImageFactory = item.cast().ok()?;
-                let hbitmap = factory.GetImage(
-                    SIZE { cx: 32, cy: 32 },
-                    SIIGBF_ICONONLY,
-                ).ok()?;
-                
+                let hbitmap = factory
+                    .GetImage(SIZE { cx: 32, cy: 32 }, SIIGBF_ICONONLY)
+                    .ok()?;
+
                 let hbm_mask = CreateBitmap(32, 32, 1, 1, None);
                 if hbm_mask.is_invalid() {
                     let _ = DeleteObject(hbitmap);
                     return None;
                 }
-                
+
                 let mut ii = ICONINFO {
                     fIcon: windows::Win32::Foundation::TRUE,
                     xHotspot: 0,
@@ -6153,19 +7051,27 @@ mod tests {
                     hbmMask: hbm_mask,
                     hbmColor: hbitmap,
                 };
-                
+
                 let hicon = CreateIconIndirect(&mut ii).ok();
-                
+
                 let _ = DeleteObject(hbitmap);
                 let _ = DeleteObject(hbm_mask);
-                
+
                 hicon
             }
-            
-            for app_id in &["electron.app.Antigravity", "Google.Antigravity", "Google.AntigravityIDE"] {
+
+            for app_id in &[
+                "electron.app.Antigravity",
+                "Google.Antigravity",
+                "Google.AntigravityIDE",
+            ] {
                 let parsing_path = format!("shell:AppsFolder\\{}", app_id);
                 let hicon = get_icon_via_image_factory(&parsing_path);
-                println!("App: {}, ImageFactory HICON: {:?}", app_id, hicon.map(|h| h.0));
+                println!(
+                    "App: {}, ImageFactory HICON: {:?}",
+                    app_id,
+                    hicon.map(|h| h.0)
+                );
                 if let Some(h) = hicon {
                     let _ = windows::Win32::UI::WindowsAndMessaging::DestroyIcon(h);
                 }
@@ -6175,7 +7081,8 @@ mod tests {
 
     #[test]
     fn clipboard_image_path_uses_clipboard_images_dir() {
-        let db_path = std::path::PathBuf::from(r"C:\Users\Test\AppData\Roaming\opensearch-os\app.db");
+        let db_path =
+            std::path::PathBuf::from(r"C:\Users\Test\AppData\Roaming\opensearch-os\app.db");
         let (_, path_str) = clipboard_image_path(&db_path, 123).unwrap();
         assert!(path_str.ends_with(r"opensearch-os\clipboard_images\image_123.bmp"));
     }
@@ -6196,24 +7103,29 @@ mod tests {
     }
 }
 
-
 fn resolve_known_folder_path(path: &str) -> String {
     if path.starts_with('{') && path.contains('}') {
         if let Some(close_brace_idx) = path.find('}') {
             let guid_str = &path[0..=close_brace_idx];
-            let guid_str_wide: Vec<u16> = guid_str.encode_utf16().chain(std::iter::once(0)).collect();
+            let guid_str_wide: Vec<u16> =
+                guid_str.encode_utf16().chain(std::iter::once(0)).collect();
             unsafe {
+                use windows::core::PCWSTR;
+                use windows::Win32::Foundation::HANDLE;
                 use windows::Win32::System::Com::CLSIDFromString;
                 use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
-                use windows::Win32::Foundation::HANDLE;
-                use windows::core::PCWSTR;
                 if let Ok(guid) = CLSIDFromString(PCWSTR(guid_str_wide.as_ptr())) {
-                    if let Ok(result) = SHGetKnownFolderPath(&guid, KF_FLAG_DEFAULT, HANDLE::default()) {
+                    if let Ok(result) =
+                        SHGetKnownFolderPath(&guid, KF_FLAG_DEFAULT, HANDLE::default())
+                    {
                         let mut len = 0;
-                        while *result.0.add(len) != 0 { len += 1; }
-                        let base_path = String::from_utf16_lossy(std::slice::from_raw_parts(result.0, len));
+                        while *result.0.add(len) != 0 {
+                            len += 1;
+                        }
+                        let base_path =
+                            String::from_utf16_lossy(std::slice::from_raw_parts(result.0, len));
                         windows::Win32::System::Com::CoTaskMemFree(Some(result.0 as *const _));
-                        
+
                         let remaining = &path[close_brace_idx + 1..];
                         let remaining = remaining.trim_start_matches('\\');
                         return format!("{}\\{}", base_path, remaining);
@@ -6235,14 +7147,19 @@ fn get_app_path(launch_command: &str) -> String {
 }
 
 unsafe fn get_window_icon(hwnd: HWND) -> HICON {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SendMessageW, WM_GETICON, ICON_BIG, ICON_SMALL, GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW
-    };
     use windows::Win32::Foundation::WPARAM;
-    
-    let mut hicon = HICON(SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_BIG as usize), None).0 as *mut std::ffi::c_void);
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClassLongPtrW, SendMessageW, GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL, WM_GETICON,
+    };
+
+    let mut hicon = HICON(
+        SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_BIG as usize), None).0 as *mut std::ffi::c_void,
+    );
     if hicon.0.is_null() {
-        hicon = HICON(SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_SMALL as usize), None).0 as *mut std::ffi::c_void);
+        hicon = HICON(
+            SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_SMALL as usize), None).0
+                as *mut std::ffi::c_void,
+        );
     }
     if hicon.0.is_null() {
         hicon = HICON(GetClassLongPtrW(hwnd, GCLP_HICON) as *mut std::ffi::c_void);
@@ -6258,14 +7175,14 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
         if r.entry.source == "app" {
             let launch_cmd = &r.entry.launch_command;
             let parsing_name = get_app_path(launch_cmd);
-            
+
             let lnk_path = std::path::Path::new(&parsing_name);
             let resolved_path = if parsing_name.to_lowercase().ends_with(".lnk") {
                 crate::search::resolve_lnk_path(lnk_path)
             } else {
                 None
             };
-            
+
             match s.submenu_selected {
                 0 => {
                     // Run as Administrator
@@ -6278,11 +7195,12 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
                             format!("shell:AppsFolder\\{}", parsing_name)
                         }
                     };
-                    
-                    let run_cmd_wide: Vec<u16> = run_cmd.encode_utf16().chain(std::iter::once(0)).collect();
+
+                    let run_cmd_wide: Vec<u16> =
+                        run_cmd.encode_utf16().chain(std::iter::once(0)).collect();
+                    use windows::core::{w, PCWSTR};
                     use windows::Win32::UI::Shell::ShellExecuteW;
                     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-                    use windows::core::{w, PCWSTR};
                     let _ = ShellExecuteW(
                         HWND::default(),
                         w!("runas"),
@@ -6291,7 +7209,7 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
                         PCWSTR::null(),
                         SW_SHOWNORMAL,
                     );
-                    
+
                     s.submenu_active = false;
                     do_hide(hwnd, s);
                 }
@@ -6306,7 +7224,7 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
                     } else {
                         parsing_name.clone()
                     };
-                    
+
                     if std::path::Path::new(&select_path).exists() {
                         use std::os::windows::process::CommandExt;
                         let _ = std::process::Command::new("explorer.exe")
@@ -6314,7 +7232,7 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
                             .creation_flags(0x08000000) // CREATE_NO_WINDOW
                             .spawn();
                     }
-                    
+
                     s.submenu_active = false;
                     do_hide(hwnd, s);
                 }
@@ -6325,7 +7243,7 @@ unsafe fn execute_submenu_action(hwnd: HWND, s: &mut State) {
                     } else {
                         parsing_name.clone()
                     };
-                    
+
                     copy_to_clipboard(hwnd, &copy_val);
                     s.submenu_active = false;
                     do_hide(hwnd, s);
@@ -6348,7 +7266,10 @@ unsafe fn handle_form_enter(hwnd: HWND, s: &mut State) {
         }
         FormState::CreateSnippetContent { name } => {
             if !input.is_empty() {
-                s.form_state = FormState::CreateSnippetKeyword { name: name.clone(), content: input };
+                s.form_state = FormState::CreateSnippetKeyword {
+                    name: name.clone(),
+                    content: input,
+                };
                 s.query.clear();
                 s.cursor_pos = 0;
             }
@@ -6382,7 +7303,10 @@ unsafe fn handle_form_enter(hwnd: HWND, s: &mut State) {
         }
         FormState::CreateQuicklinkUrl { name } => {
             if !input.is_empty() {
-                s.form_state = FormState::CreateQuicklinkKeyword { name: name.clone(), url: input };
+                s.form_state = FormState::CreateQuicklinkKeyword {
+                    name: name.clone(),
+                    url: input,
+                };
                 s.query.clear();
                 s.cursor_pos = 0;
             }
@@ -6421,7 +7345,11 @@ unsafe fn export_snippets(hwnd: HWND, s: &State) {
             Err(_) => return,
         };
         let iter = match stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         }) {
             Ok(it) => it,
             Err(_) => return,
@@ -6437,18 +7365,24 @@ unsafe fn export_snippets(hwnd: HWND, s: &State) {
             }
         }
         let json_data = serde_json::to_string_pretty(&list).unwrap_or_default();
-        if let Some(desktop) = launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop) {
+        if let Some(desktop) =
+            launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop)
+        {
             let path = std::path::PathBuf::from(desktop).join("snippets_export.json");
             if std::fs::write(&path, json_data).is_ok() {
                 copy_to_clipboard(hwnd, &path.to_string_lossy().to_string());
-                let msg = format!("Snippets exported successfully to:\n{:?}\n\nPath copied to clipboard.", path);
+                let msg = format!(
+                    "Snippets exported successfully to:\n{:?}\n\nPath copied to clipboard.",
+                    path
+                );
                 let title = "Export Snippets\0".encode_utf16().collect::<Vec<u16>>();
                 let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
                 windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
                     hwnd,
                     windows::core::PCWSTR(msg_w.as_ptr()),
                     windows::core::PCWSTR(title.as_ptr()),
-                    windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
+                    windows::Win32::UI::WindowsAndMessaging::MB_OK
+                        | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
                 );
             }
         }
@@ -6456,17 +7390,22 @@ unsafe fn export_snippets(hwnd: HWND, s: &State) {
 }
 
 unsafe fn import_snippets(hwnd: HWND, s: &State) {
-    if let Some(desktop) = launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop) {
+    if let Some(desktop) =
+        launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop)
+    {
         let path = std::path::PathBuf::from(desktop).join("snippets_import.json");
         if !path.exists() {
             let msg = format!("Import file not found!\n\nPlease place a file named 'snippets_import.json' on your Desktop and try again.\n\nTemplate format:\n[\n  {{\n    \"name\": \"example\",\n    \"content\": \"text\",\n    \"keyword\": \"optional\"\n  }}\n]");
-            let title = "Import Snippets Error\0".encode_utf16().collect::<Vec<u16>>();
+            let title = "Import Snippets Error\0"
+                .encode_utf16()
+                .collect::<Vec<u16>>();
             let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
             windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
                 hwnd,
                 windows::core::PCWSTR(msg_w.as_ptr()),
                 windows::core::PCWSTR(title.as_ptr()),
-                windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONWARNING,
+                windows::Win32::UI::WindowsAndMessaging::MB_OK
+                    | windows::Win32::UI::WindowsAndMessaging::MB_ICONWARNING,
             );
             return;
         }
@@ -6490,14 +7429,18 @@ unsafe fn import_snippets(hwnd: HWND, s: &State) {
                             }
                         }
                     }
-                    let msg = format!("Successfully imported {} snippets from snippets_import.json!", count);
+                    let msg = format!(
+                        "Successfully imported {} snippets from snippets_import.json!",
+                        count
+                    );
                     let title = "Import Snippets\0".encode_utf16().collect::<Vec<u16>>();
                     let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
                     windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
                         hwnd,
                         windows::core::PCWSTR(msg_w.as_ptr()),
                         windows::core::PCWSTR(title.as_ptr()),
-                        windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
+                        windows::Win32::UI::WindowsAndMessaging::MB_OK
+                            | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
                     );
                 }
             }
@@ -6512,7 +7455,11 @@ unsafe fn export_quicklinks(hwnd: HWND, s: &State) {
             Err(_) => return,
         };
         let iter = match stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         }) {
             Ok(it) => it,
             Err(_) => return,
@@ -6528,18 +7475,24 @@ unsafe fn export_quicklinks(hwnd: HWND, s: &State) {
             }
         }
         let json_data = serde_json::to_string_pretty(&list).unwrap_or_default();
-        if let Some(desktop) = launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop) {
+        if let Some(desktop) =
+            launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop)
+        {
             let path = std::path::PathBuf::from(desktop).join("quicklinks_export.json");
             if std::fs::write(&path, json_data).is_ok() {
                 copy_to_clipboard(hwnd, &path.to_string_lossy().to_string());
-                let msg = format!("Quicklinks exported successfully to:\n{:?}\n\nPath copied to clipboard.", path);
+                let msg = format!(
+                    "Quicklinks exported successfully to:\n{:?}\n\nPath copied to clipboard.",
+                    path
+                );
                 let title = "Export Quicklinks\0".encode_utf16().collect::<Vec<u16>>();
                 let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
                 windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
                     hwnd,
                     windows::core::PCWSTR(msg_w.as_ptr()),
                     windows::core::PCWSTR(title.as_ptr()),
-                    windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
+                    windows::Win32::UI::WindowsAndMessaging::MB_OK
+                        | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
                 );
             }
         }
@@ -6547,17 +7500,22 @@ unsafe fn export_quicklinks(hwnd: HWND, s: &State) {
 }
 
 unsafe fn import_quicklinks(hwnd: HWND, s: &State) {
-    if let Some(desktop) = launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop) {
+    if let Some(desktop) =
+        launcher::get_known_folder_path(&windows::Win32::UI::Shell::FOLDERID_Desktop)
+    {
         let path = std::path::PathBuf::from(desktop).join("quicklinks_import.json");
         if !path.exists() {
             let msg = format!("Import file not found!\n\nPlease place a file named 'quicklinks_import.json' on your Desktop and try again.\n\nTemplate format:\n[\n  {{\n    \"name\": \"example\",\n    \"url\": \"https://example.com/?q={{query}}\",\n    \"keyword\": \"ex\"\n  }}\n]");
-            let title = "Import Quicklinks Error\0".encode_utf16().collect::<Vec<u16>>();
+            let title = "Import Quicklinks Error\0"
+                .encode_utf16()
+                .collect::<Vec<u16>>();
             let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
             windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
                 hwnd,
                 windows::core::PCWSTR(msg_w.as_ptr()),
                 windows::core::PCWSTR(title.as_ptr()),
-                windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONWARNING,
+                windows::Win32::UI::WindowsAndMessaging::MB_OK
+                    | windows::Win32::UI::WindowsAndMessaging::MB_ICONWARNING,
             );
             return;
         }
@@ -6581,14 +7539,18 @@ unsafe fn import_quicklinks(hwnd: HWND, s: &State) {
                             }
                         }
                     }
-                    let msg = format!("Successfully imported {} quicklinks from quicklinks_import.json!", count);
+                    let msg = format!(
+                        "Successfully imported {} quicklinks from quicklinks_import.json!",
+                        count
+                    );
                     let title = "Import Quicklinks\0".encode_utf16().collect::<Vec<u16>>();
                     let msg_w = format!("{}\0", msg).encode_utf16().collect::<Vec<u16>>();
                     windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
                         hwnd,
                         windows::core::PCWSTR(msg_w.as_ptr()),
                         windows::core::PCWSTR(title.as_ptr()),
-                        windows::Win32::UI::WindowsAndMessaging::MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
+                        windows::Win32::UI::WindowsAndMessaging::MB_OK
+                            | windows::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
                     );
                 }
             }

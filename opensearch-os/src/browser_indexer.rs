@@ -1,6 +1,6 @@
+use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::thread;
-use rusqlite::{Connection, params};
 
 struct TempFile {
     path: PathBuf,
@@ -48,7 +48,10 @@ fn run_browser_indexer(db_path: &Path) -> anyhow::Result<()> {
             let places_path = profile_path.join("places.sqlite");
             if places_path.exists() {
                 if let Err(e) = parse_firefox(&places_path, &conn) {
-                    eprintln!("Error parsing Firefox places for {:?}: {:?}", places_path, e);
+                    eprintln!(
+                        "Error parsing Firefox places for {:?}: {:?}",
+                        places_path, e
+                    );
                 }
             }
         } else {
@@ -58,7 +61,10 @@ fn run_browser_indexer(db_path: &Path) -> anyhow::Result<()> {
             if bookmarks_path.exists() {
                 let source_type = format!("{}_bookmark", browser);
                 if let Err(e) = parse_bookmarks(&bookmarks_path, &source_type, &conn) {
-                    eprintln!("Error parsing bookmarks for {}/{:?}: {:?}", browser, bookmarks_path, e);
+                    eprintln!(
+                        "Error parsing bookmarks for {}/{:?}: {:?}",
+                        browser, bookmarks_path, e
+                    );
                 }
             }
 
@@ -67,7 +73,10 @@ fn run_browser_indexer(db_path: &Path) -> anyhow::Result<()> {
             if history_path.exists() {
                 let source_type = format!("{}_history", browser);
                 if let Err(e) = parse_history(&history_path, &source_type, &conn) {
-                    eprintln!("Error parsing history for {}/{:?}: {:?}", browser, history_path, e);
+                    eprintln!(
+                        "Error parsing history for {}/{:?}: {:?}",
+                        browser, history_path, e
+                    );
                 }
             }
         }
@@ -92,7 +101,10 @@ fn get_browser_profiles() -> Vec<(String, PathBuf)> {
     };
 
     // Chrome
-    let chrome_dir = PathBuf::from(&local_app_data).join("Google").join("Chrome").join("User Data");
+    let chrome_dir = PathBuf::from(&local_app_data)
+        .join("Google")
+        .join("Chrome")
+        .join("User Data");
     if chrome_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&chrome_dir) {
             for entry in entries.flatten() {
@@ -108,7 +120,10 @@ fn get_browser_profiles() -> Vec<(String, PathBuf)> {
     }
 
     // Edge
-    let edge_dir = PathBuf::from(&local_app_data).join("Microsoft").join("Edge").join("User Data");
+    let edge_dir = PathBuf::from(&local_app_data)
+        .join("Microsoft")
+        .join("Edge")
+        .join("User Data");
     if edge_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&edge_dir) {
             for entry in entries.flatten() {
@@ -124,7 +139,10 @@ fn get_browser_profiles() -> Vec<(String, PathBuf)> {
     }
 
     // Brave
-    let brave_dir = PathBuf::from(&local_app_data).join("BraveSoftware").join("Brave-Browser").join("User Data");
+    let brave_dir = PathBuf::from(&local_app_data)
+        .join("BraveSoftware")
+        .join("Brave-Browser")
+        .join("User Data");
     if brave_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&brave_dir) {
             for entry in entries.flatten() {
@@ -141,7 +159,10 @@ fn get_browser_profiles() -> Vec<(String, PathBuf)> {
 
     // Firefox
     if let Ok(app_data) = std::env::var("APPDATA") {
-        let firefox_dir = PathBuf::from(&app_data).join("Mozilla").join("Firefox").join("Profiles");
+        let firefox_dir = PathBuf::from(&app_data)
+            .join("Mozilla")
+            .join("Firefox")
+            .join("Profiles");
         if firefox_dir.exists() {
             if let Ok(entries) = std::fs::read_dir(&firefox_dir) {
                 for entry in entries.flatten() {
@@ -184,7 +205,7 @@ fn parse_bookmarks(path: &Path, source_type: &str, conn: &Connection) -> anyhow:
                          ELSE excluded.source 
                      END
                  ELSE excluded.source
-             END"
+             END",
     )?;
 
     for (name, url) in bookmarks {
@@ -198,7 +219,11 @@ fn parse_bookmarks(path: &Path, source_type: &str, conn: &Connection) -> anyhow:
 
 fn traverse_bookmarks(val: &serde_json::Value, list: &mut Vec<(String, String)>) {
     if let Some(obj) = val.as_object() {
-        let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let name = obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let item_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
         if item_type == "url" {
             if let Some(url) = obj.get("url").and_then(|v| v.as_str()) {
@@ -221,7 +246,9 @@ fn parse_history(path: &Path, source_type: &str, conn: &Connection) -> anyhow::R
     let temp_path = temp_dir.join(format!("browser_history_temp_{}.db", timestamp));
 
     std::fs::copy(path, &temp_path)?;
-    let _temp_file = TempFile { path: temp_path.clone() };
+    let _temp_file = TempFile {
+        path: temp_path.clone(),
+    };
 
     // Scope for temp connection so it is closed before we remove the file
     {
@@ -230,7 +257,7 @@ fn parse_history(path: &Path, source_type: &str, conn: &Connection) -> anyhow::R
             "SELECT url, title, visit_count, last_visit_time 
              FROM urls 
              WHERE hidden = 0 AND title IS NOT NULL AND title != '' 
-             ORDER BY last_visit_time DESC LIMIT 2000"
+             ORDER BY last_visit_time DESC LIMIT 2000",
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -258,14 +285,15 @@ fn parse_history(path: &Path, source_type: &str, conn: &Connection) -> anyhow::R
                              ELSE excluded.source 
                          END
                      ELSE excluded.source
-                 END"
+                 END",
         )?;
 
         for row in rows.flatten() {
             let (url, title, visit_count, last_visit_time) = row;
             if url.starts_with("http://") || url.starts_with("https://") {
                 let unix_micros = chromium_time_to_unix_micros(last_visit_time);
-                let _ = insert_stmt.execute(params![url, title, source_type, visit_count, unix_micros]);
+                let _ =
+                    insert_stmt.execute(params![url, title, source_type, visit_count, unix_micros]);
             }
         }
     }
@@ -282,20 +310,22 @@ fn parse_firefox(path: &Path, conn: &Connection) -> anyhow::Result<()> {
     let temp_path = temp_dir.join(format!("firefox_places_temp_{}.db", timestamp));
 
     std::fs::copy(path, &temp_path)?;
-    let _temp_file = TempFile { path: temp_path.clone() };
+    let _temp_file = TempFile {
+        path: temp_path.clone(),
+    };
 
     // Scope for connection closure
     {
         let temp_conn = Connection::open(&temp_path)?;
-        
+
         // 1. Parse Bookmarks
         let mut stmt_bookmarks = temp_conn.prepare(
             "SELECT p.url, b.title, p.visit_count, p.last_visit_date 
              FROM moz_bookmarks b 
              JOIN moz_places p ON b.fk = p.id 
-             WHERE b.type = 1 AND b.title IS NOT NULL AND b.title != ''"
+             WHERE b.type = 1 AND b.title IS NOT NULL AND b.title != ''",
         )?;
-        
+
         let bookmark_rows = stmt_bookmarks.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -304,7 +334,7 @@ fn parse_firefox(path: &Path, conn: &Connection) -> anyhow::Result<()> {
                 row.get::<_, i64>(3)?,
             ))
         })?;
-        
+
         let mut insert_stmt = conn.prepare(
             "INSERT INTO browser_items (url, title, source, visit_count, last_visit_time)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -321,13 +351,19 @@ fn parse_firefox(path: &Path, conn: &Connection) -> anyhow::Result<()> {
                              ELSE excluded.source 
                          END
                      ELSE excluded.source
-                 END"
+                 END",
         )?;
 
         for row in bookmark_rows.flatten() {
             let (url, title, visit_count, last_visit_date) = row;
             if url.starts_with("http://") || url.starts_with("https://") {
-                let _ = insert_stmt.execute(params![url, title, "firefox_bookmark", visit_count.max(100), last_visit_date]);
+                let _ = insert_stmt.execute(params![
+                    url,
+                    title,
+                    "firefox_bookmark",
+                    visit_count.max(100),
+                    last_visit_date
+                ]);
             }
         }
 
@@ -336,9 +372,9 @@ fn parse_firefox(path: &Path, conn: &Connection) -> anyhow::Result<()> {
             "SELECT url, title, visit_count, last_visit_date 
              FROM moz_places 
              WHERE visit_count > 0 AND title IS NOT NULL AND title != '' 
-             ORDER BY last_visit_date DESC LIMIT 2000"
+             ORDER BY last_visit_date DESC LIMIT 2000",
         )?;
-        
+
         let history_rows = stmt_history.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -351,7 +387,13 @@ fn parse_firefox(path: &Path, conn: &Connection) -> anyhow::Result<()> {
         for row in history_rows.flatten() {
             let (url, title, visit_count, last_visit_date) = row;
             if url.starts_with("http://") || url.starts_with("https://") {
-                let _ = insert_stmt.execute(params![url, title, "firefox_history", visit_count, last_visit_date]);
+                let _ = insert_stmt.execute(params![
+                    url,
+                    title,
+                    "firefox_history",
+                    visit_count,
+                    last_visit_date
+                ]);
             }
         }
     }
@@ -370,6 +412,9 @@ mod tests {
     #[test]
     fn chromium_history_time_is_normalized_to_unix_micros() {
         assert_eq!(chromium_time_to_unix_micros(11_644_473_600_000_000), 0);
-        assert_eq!(chromium_time_to_unix_micros(11_644_473_601_000_000), 1_000_000);
+        assert_eq!(
+            chromium_time_to_unix_micros(11_644_473_601_000_000),
+            1_000_000
+        );
     }
 }
