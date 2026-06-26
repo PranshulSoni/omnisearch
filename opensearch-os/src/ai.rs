@@ -959,6 +959,49 @@ fn extract_approval(v: &serde_json::Value, run_id: &str) -> Option<HermesApprova
 }
 
 /// Map a command + input to a (system prompt, user content) and run it.
+/// Fetch a URL and return a plain-text approximation of its readable content.
+fn fetch_url_text(url: &str) -> Result<String> {
+    let resp = ureq::get(url)
+        .set("User-Agent", "Mozilla/5.0 (OpenSearch-OS)")
+        .timeout(std::time::Duration::from_secs(20))
+        .call()
+        .map_err(|e| anyhow!("Couldn't fetch the page: {e}"))?;
+    let html = resp.into_string().map_err(|e| anyhow!("Couldn't read the page: {e}"))?;
+    Ok(html_to_text(&html))
+}
+
+/// Crude HTML→text: drop script/style, strip tags, decode a few entities, collapse
+/// whitespace. ponytail: good enough to summarize; not a real parser. ASCII-only tag
+/// matching keeps byte indexing UTF-8-safe.
+fn html_to_text(html: &str) -> String {
+    let b = html.as_bytes();
+    let n = b.len();
+    let mut out = String::with_capacity(n / 2);
+    let starts_ci = |i: usize, pat: &[u8]| i + pat.len() <= n && b[i..i + pat.len()].eq_ignore_ascii_case(pat);
+    let find_ci = |from: usize, pat: &[u8]| -> Option<usize> {
+        if pat.is_empty() || from >= n { return None; }
+        (from..=n.saturating_sub(pat.len())).find(|&j| b[j..j + pat.len()].eq_ignore_ascii_case(pat))
+    };
+    let mut i = 0;
+    while i < n {
+        if starts_ci(i, b"<script") || starts_ci(i, b"<style") {
+            let close: &[u8] = if starts_ci(i, b"<script") { b"</script>" } else { b"</style>" };
+            match find_ci(i, close) { Some(end) => { i = end + close.len(); continue; } None => break }
+        }
+        if b[i] == b'<' {
+            match find_ci(i, b">") { Some(end) => { i = end + 1; out.push(' '); continue; } None => break }
+        }
+        let ch_len = match b[i] { x if x < 0x80 => 1, x if x < 0xE0 => 2, x if x < 0xF0 => 3, _ => 4 };
+        let end = (i + ch_len).min(n);
+        if let Ok(seg) = std::str::from_utf8(&b[i..end]) { out.push_str(seg); }
+        i = end;
+    }
+    let out = out
+        .replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<")
+        .replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'");
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Commands: ask, explain, grammar, translate, summarize.
 pub fn run(cmd: &str, input: &str) -> Result<String> {
     let input = input.trim();
@@ -967,6 +1010,21 @@ pub fn run(cmd: &str, input: &str) -> Result<String> {
             "Nothing to send — type text or copy something first."
         ));
     }
+    // Summarize Webpage: if the input is a URL, fetch it and strip to text first.
+    let owned_input: String;
+    let input: &str = if cmd == "summarize"
+        && (input.starts_with("http://") || input.starts_with("https://"))
+    {
+        let mut text = fetch_url_text(input)?;
+        text.truncate(12000); // keep the prompt small
+        if text.trim().is_empty() {
+            return Err(anyhow!("Couldn't extract readable text from that page."));
+        }
+        owned_input = text;
+        &owned_input
+    } else {
+        input
+    };
     let (system, user): (&str, String) = match cmd {
         "ask" | "chat" => (
             "You are a concise, helpful assistant. Answer directly in at most a few short paragraphs.",
@@ -1005,6 +1063,12 @@ mod tests {
     use super::*;
 
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_html_to_text() {
+        let html = "<html><head><style>p{color:red}</style></head><body><p>Hello &amp; <b>world</b></p><script>alert(1)</script></body></html>";
+        assert_eq!(super::html_to_text(html), "Hello & world");
+    }
 
     #[test]
     fn test_config_resolution() {
