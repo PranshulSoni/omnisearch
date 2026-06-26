@@ -905,15 +905,18 @@ unsafe extern "system" fn wnd_proc(
             let payload = unsafe { *Box::from_raw(lp.0 as *mut (bool, String)) };
             if !sp.is_null() {
                 let s = &mut *sp;
-                let (ok, text) = payload;
-                let _ = KillTimer(hwnd, TIMER_AI_ANIM);
-                s.ai_pending = false;
-                s.ai_tick = 0;
-                s.ai_scroll = 0;
-                // A new response just arrived — keep the latest message at the bottom.
-                s.ai_follow_bottom = true;
-                s.ai_answer = Some(if ok { text } else { format!("⚠ {}", text) });
-                let _ = InvalidateRect(hwnd, None, FALSE);
+                let target_chat = wp.0 as i64;
+                let active_chat = s.active_chat_id.unwrap_or(0);
+                if target_chat == 0 || target_chat == active_chat {
+                    let (ok, text) = payload;
+                    let _ = KillTimer(hwnd, TIMER_AI_ANIM);
+                    s.ai_pending = false;
+                    s.ai_tick = 0;
+                    s.ai_scroll = 0;
+                    s.ai_follow_bottom = true;
+                    s.ai_answer = Some(if ok { text } else { format!("⚠ {}", text) });
+                    let _ = InvalidateRect(hwnd, None, FALSE);
+                }
             }
             LRESULT(0)
         }
@@ -923,30 +926,30 @@ unsafe extern "system" fn wnd_proc(
                 let text = unsafe { *Box::from_raw(lp.0 as *mut String) };
                 if !sp.is_null() {
                     let s = &mut *sp;
-                    s.ai_answer = Some(text);
-                    s.ai_follow_bottom = true;
-                    let _ = InvalidateRect(hwnd, None, FALSE);
+                    let target_chat = wp.0 as i64;
+                    let active_chat = s.active_chat_id.unwrap_or(0);
+                    if target_chat == 0 || target_chat == active_chat {
+                        s.ai_answer = Some(text);
+                        s.ai_follow_bottom = true;
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                    }
                 }
             }
             LRESULT(0)
         }
 
         WM_HERMES_APPROVAL => {
-            // A Hermes tool needs approval. Stash it so the Approve/Deny buttons
-            // render, and keep the panel from auto-dismissing.
             if lp.0 != 0 {
                 let approval = unsafe { *Box::from_raw(lp.0 as *mut ai::HermesApproval) };
                 if !sp.is_null() {
                     let s = &mut *sp;
-                    s.hermes_approval = Some(approval);
-                    // Replace the "Executing…" text with the approval summary.
-                    if let Some(ans) = s.ai_answer.clone() {
-                        // Append an approval line to the current answer so the
-                        // user sees *what* needs approving, plus the buttons.
+                    let target_chat = wp.0 as i64;
+                    let active_chat = s.active_chat_id.unwrap_or(0);
+                    if target_chat == 0 || target_chat == active_chat {
+                        s.hermes_approval = Some(approval);
                         s.ai_follow_bottom = true;
-                        let _ = ans;
+                        let _ = InvalidateRect(hwnd, None, FALSE);
                     }
-                    let _ = InvalidateRect(hwnd, None, FALSE);
                 }
             }
             LRESULT(0)
@@ -1090,7 +1093,11 @@ unsafe extern "system" fn wnd_proc(
             if s.hermes_approval.is_some() && !ctrl_down {
                 match vk {
                     VK_RETURN => { resolve_current_approval(hwnd, s, true); return LRESULT(0); }
-                    VK_ESCAPE => { resolve_current_approval(hwnd, s, false); return LRESULT(0); }
+                    VK_ESCAPE => { 
+                        close_ai_panel(hwnd, s);
+                        start_hide(hwnd, s);
+                        return LRESULT(0); 
+                    }
                     _ => {}
                 }
                 if let Some(c) = char::from_u32(wp.0 as u32) {
@@ -1120,7 +1127,7 @@ unsafe extern "system" fn wnd_proc(
             // AI answer panel captures keys: Esc/Backspace closes, Enter submits follow-up.
             if s.ai_pending {
                 match vk {
-                    VK_ESCAPE => { close_ai_panel(hwnd, s); return LRESULT(0); },
+                    VK_ESCAPE => { close_ai_panel(hwnd, s); start_hide(hwnd, s); return LRESULT(0); },
                     VK_DOWN => { ai_scroll_down(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); }
                     VK_UP => { ai_scroll_up(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); }
                     _ => {}
@@ -1138,6 +1145,7 @@ unsafe extern "system" fn wnd_proc(
                 match vk {
                     VK_ESCAPE => {
                         close_ai_panel(hwnd, s);
+                        start_hide(hwnd, s);
                         return LRESULT(0);
                     }
                     VK_BACK => {
@@ -2625,7 +2633,8 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
                 let payload = (false, formatted_err);
                 let ptr = Box::into_raw(Box::new(payload)) as isize;
                 unsafe {
-                    let _ = PostMessageW(cb_hwnd.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
+                    let wp_chat_id = chat_id.unwrap_or(0) as usize;
+                    let _ = PostMessageW(cb_hwnd.0, WM_AI_RESULT, WPARAM(wp_chat_id), LPARAM(ptr));
                 }
             }
             // on_done (success) is delivered by the callback; nothing more to do.
@@ -2662,7 +2671,8 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
         };
         let ptr = Box::into_raw(Box::new(payload)) as isize;
         unsafe {
-            let _ = PostMessageW(HWND(hwnd_raw as *mut _), WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
+            let wp_chat_id = chat_id.unwrap_or(0) as usize;
+            let _ = PostMessageW(HWND(hwnd_raw as *mut _), WM_AI_RESULT, WPARAM(wp_chat_id), LPARAM(ptr));
         }
     });
 }
@@ -2727,7 +2737,8 @@ impl ai::RunCallbacks for UiRunCallbacks {
         }
         let ptr = Box::into_raw(Box::new(approval)) as isize;
         unsafe {
-            let _ = PostMessageW(self.hwnd.0, WM_HERMES_APPROVAL, WPARAM(0), LPARAM(ptr));
+            let wp_chat_id = self.chat_id.unwrap_or(0) as usize;
+            let _ = PostMessageW(self.hwnd.0, WM_HERMES_APPROVAL, WPARAM(wp_chat_id), LPARAM(ptr));
         }
     }
     fn on_progress(&self, text: &str) {
@@ -2738,7 +2749,8 @@ impl ai::RunCallbacks for UiRunCallbacks {
         };
         let ptr = Box::into_raw(Box::new(formatted)) as isize;
         unsafe {
-            let _ = PostMessageW(self.hwnd.0, WM_AI_PROGRESS, WPARAM(0), LPARAM(ptr));
+            let wp_chat_id = self.chat_id.unwrap_or(0) as usize;
+            let _ = PostMessageW(self.hwnd.0, WM_AI_PROGRESS, WPARAM(wp_chat_id), LPARAM(ptr));
         }
     }
     fn on_done(&self, ok: bool, text: &str) {
@@ -2776,7 +2788,8 @@ impl ai::RunCallbacks for UiRunCallbacks {
         let payload = (ok, formatted);
         let ptr = Box::into_raw(Box::new(payload)) as isize;
         unsafe {
-            let _ = PostMessageW(self.hwnd.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
+            let wp_chat_id = self.chat_id.unwrap_or(0) as usize;
+            let _ = PostMessageW(self.hwnd.0, WM_AI_RESULT, WPARAM(wp_chat_id), LPARAM(ptr));
         }
     }
 }
@@ -2811,7 +2824,8 @@ fn run_agent_via_runs_api(
             let payload = (false, formatted_err);
             let ptr = Box::into_raw(Box::new(payload)) as isize;
             unsafe {
-                let _ = PostMessageW(cb_hwnd.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
+                let wp_chat_id = chat_id.unwrap_or(0) as usize;
+                let _ = PostMessageW(cb_hwnd.0, WM_AI_RESULT, WPARAM(wp_chat_id), LPARAM(ptr));
             }
         }
     });
@@ -2827,6 +2841,7 @@ unsafe fn close_ai_panel(hwnd: HWND, s: &mut State) {
     s.ai_follow_bottom = true;
     s.hermes_approval = None;
     s.ai_tick = 0;
+    s.active_chat_id = None;
     trigger_search(hwnd, s); // restore normal results for the current query
     let _ = InvalidateRect(hwnd, None, FALSE);
 }
@@ -2943,7 +2958,8 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 };
                 let ptr = Box::into_raw(Box::new(payload)) as isize;
                 unsafe {
-                    let _ = PostMessageW(hwnd_ai.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
+                    let wp_chat_id = chat_id.unwrap_or(0) as usize;
+                    let _ = PostMessageW(hwnd_ai.0, WM_AI_RESULT, WPARAM(wp_chat_id), LPARAM(ptr));
                 }
             });
             return;
@@ -3197,7 +3213,8 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 };
                 let ptr = Box::into_raw(Box::new(payload)) as isize;
                 unsafe {
-                    let _ = PostMessageW(hwnd_ai.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
+                    let wp_chat_id = chat_id.unwrap_or(0) as usize;
+                    let _ = PostMessageW(hwnd_ai.0, WM_AI_RESULT, WPARAM(wp_chat_id), LPARAM(ptr));
                 }
             });
             return;
@@ -4348,8 +4365,22 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let _ = DrawTextW(mdc, &mut ph, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         SetTextColor(mdc, CLR_WHITE);
     } else {
+        let cur = floor_char_boundary(&s.query, s.cursor_pos);
+        let before = &s.query[..cur];
+        let mut dw_before: Vec<u16> = before.encode_utf16().collect();
+        let mut size = SIZE::default();
+        if !dw_before.is_empty() {
+            let _ = GetTextExtentPoint32W(mdc, &dw_before, &mut size);
+        }
+        let max_w = w - 80;
+        let mut scroll_x = 0;
+        if size.cx > max_w {
+            scroll_x = size.cx - max_w;
+        }
         let mut dw_query: Vec<u16> = s.query.encode_utf16().collect();
         let mut text_rect = tr;
+        text_rect.left -= scroll_x;
+        text_rect.right += 2000; // prevent clipping the remaining text
         let _ = DrawTextW(mdc, &mut dw_query, &mut text_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
@@ -4402,12 +4433,17 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     if s.cursor_visible && !(s.ai_pending || s.ai_answer.is_some()) {
         let cur = floor_char_boundary(&s.query, s.cursor_pos);
         let before = &s.query[..cur];
-        let dw_before: Vec<u16> = before.encode_utf16().collect();
+        let mut dw_before: Vec<u16> = before.encode_utf16().collect();
         let mut size = SIZE::default();
         if !dw_before.is_empty() {
             let _ = GetTextExtentPoint32W(mdc, &dw_before, &mut size);
         }
-        let cursor_x = tr.left + size.cx;
+        let max_w = w - 80;
+        let mut scroll_x = 0;
+        if size.cx > max_w {
+            scroll_x = size.cx - max_w;
+        }
+        let cursor_x = tr.left - scroll_x + size.cx;
         
         let mut dummy_size = SIZE::default();
         let _ = GetTextExtentPoint32W(mdc, &['A' as u16], &mut dummy_size);
