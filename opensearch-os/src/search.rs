@@ -2674,6 +2674,18 @@ impl SearchEngine {
             });
             results.push(SearchResult {
                 entry: CatalogEntry {
+                    id: "folder.focus".to_string(),
+                    control_name: "Focus Modes".to_string(),
+                    breadcrumb_path: "Focus > Modes".to_string(),
+                    launch_command: "focus:".to_string(),
+                    source: "FOLDER".to_string(),
+                    description: "Folder containing your Focus Modes".to_string(),
+                    synonyms: "focus modes categories pomodoro dnd".to_string(),
+                },
+                score: 3.45,
+            });
+            results.push(SearchResult {
+                entry: CatalogEntry {
                     id: "folder.files".to_string(),
                     control_name: "Local Files".to_string(),
                     breadcrumb_path: "Local > Files".to_string(),
@@ -2910,6 +2922,10 @@ impl SearchEngine {
             return self.search_commits_only(sub_query);
         }
 
+        if q_lower_trimmed.starts_with("focus:") {
+            let sub_query = q_lower_trimmed.strip_prefix("focus:").unwrap().trim();
+            return self.search_focus_categories(sub_query);
+        }
         if q_lower_trimmed.starts_with("todos:") {
             let sub_query = q_lower_trimmed.strip_prefix("todos:").unwrap().trim();
             return self.search_todos_only(sub_query);
@@ -8299,7 +8315,6 @@ impl SearchEngine {
         let mut results = Vec::new();
         let conn = &self.conn;
         let q = query.trim().to_lowercase();
-        if q.is_empty() { return results; }
         if let Ok(mut stmt) = conn.prepare("SELECT name, blocked_apps FROM focus_categories") {
             if let Ok(rows) = stmt.query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -8308,7 +8323,7 @@ impl SearchEngine {
                     let (name, blocked) = row;
                     let name_lower = name.to_lowercase();
                     let mut score = 0.0;
-                    if name_lower == q || q == "start focus session" || q == "focus session" || q == "focus" {
+                    if q.is_empty() || name_lower == q || q == "start focus session" || q == "focus session" || q == "focus" {
                         score = 4.0;
                     } else if name_lower.starts_with(&q) {
                         score = 3.5;
