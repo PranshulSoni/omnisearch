@@ -77,6 +77,7 @@ pub fn insert_memory_event(
     if ensure_memory_events_schema(conn).is_err() {
         return;
     }
+    let timestamp = normalize_event_timestamp(timestamp);
     let exists = conn
         .query_row(
             "SELECT COUNT(*) FROM memory_events
@@ -1746,13 +1747,15 @@ impl SearchEngine {
                      WHERE ( \
                          CASE \
                              WHEN last_visit_time > 10000000000000000 THEN (last_visit_time / 1000000) - 11644473600 \
-                             WHEN last_visit_time > 10000000000 THEN last_visit_time / 1000000 \
+                             WHEN last_visit_time > 10000000000000 THEN last_visit_time / 1000000 \
+                             WHEN last_visit_time > 10000000000 THEN last_visit_time / 1000 \
                              ELSE last_visit_time \
                          END \
                      ) >= ? - 600 AND ( \
                          CASE \
                              WHEN last_visit_time > 10000000000000000 THEN (last_visit_time / 1000000) - 11644473600 \
-                             WHEN last_visit_time > 10000000000 THEN last_visit_time / 1000000 \
+                             WHEN last_visit_time > 10000000000000 THEN last_visit_time / 1000000 \
+                             WHEN last_visit_time > 10000000000 THEN last_visit_time / 1000 \
                              ELSE last_visit_time \
                          END \
                      ) <= ? + 600 \
@@ -4912,6 +4915,20 @@ mod tests {
         );
         assert_eq!(workday_memory_query_days("what did i do today"), Some(0));
         assert_eq!(workday_memory_query_days("open chrome yesterday"), None);
+    }
+
+    #[test]
+    fn memory_timestamps_are_normalized_to_unix_seconds() {
+        assert_eq!(normalize_event_timestamp(1_700_000_000), 1_700_000_000);
+        assert_eq!(normalize_event_timestamp(1_700_000_000_123), 1_700_000_000);
+        assert_eq!(
+            normalize_event_timestamp(1_700_000_000_123_456),
+            1_700_000_000
+        );
+        assert_eq!(
+            normalize_event_timestamp(11_644_473_600_000_000 + 1_700_000_000_000_000),
+            1_700_000_000
+        );
     }
 
     #[test]
@@ -8287,7 +8304,20 @@ fn make_fts_prefix_query(query: &str) -> String {
         .join(" ")
 }
 
+fn normalize_event_timestamp(timestamp: i64) -> i64 {
+    if timestamp > 11_644_473_600_000_000 {
+        (timestamp / 1_000_000) - 11_644_473_600
+    } else if timestamp > 10_000_000_000_000 {
+        timestamp / 1_000_000
+    } else if timestamp > 10_000_000_000 {
+        timestamp / 1_000
+    } else {
+        timestamp
+    }
+}
+
 fn format_unix_date(timestamp: i64) -> String {
+    let timestamp = normalize_event_timestamp(timestamp);
     let filetime_val = ((timestamp as i128) + 11_644_473_600) * 10_000_000;
     if filetime_val < 0 {
         return "1970-01-01".to_string();
@@ -8304,6 +8334,7 @@ fn format_unix_date(timestamp: i64) -> String {
 }
 
 fn format_timestamp_local(timestamp: i64) -> String {
+    let timestamp = normalize_event_timestamp(timestamp);
     let filetime_val = (timestamp + 11644473600) * 10000000;
     let ft = windows::Win32::Foundation::FILETIME {
         dwLowDateTime: (filetime_val & 0xFFFFFFFF) as u32,
