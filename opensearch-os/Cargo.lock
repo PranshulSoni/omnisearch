@@ -1131,6 +1131,7 @@ dependencies = [
  "windows 0.58.0",
  "windows-core 0.58.0",
  "windows-implement 0.58.0",
+ "winvd",
 ]
 
 [[package]]
@@ -2485,6 +2486,19 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "winvd"
+version = "0.0.49"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58dbc69a306f6dc37e2b845aba89d5641848ffe73f5b23f0aae6a56a916b77b3"
+dependencies = [
+ "macro_rules_attribute",
+ "windows 0.58.0",
+ "windows-core 0.58.0",
+ "windows-implement 0.58.0",
+ "windows-interface 0.58.0",
+]
 
 [[package]]
 name = "wit-bindgen"

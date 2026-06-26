@@ -17,7 +17,6 @@
   - [Other Built Features](#other-built-features)
 - [Features NOT Yet Built](#features-not-yet-built)
   - [AI & Commands — Missing](#ai--commands--missing)
-  - [Window Management — Missing](#window-management--missing)
   - [System Actions — Missing](#system-actions--missing)
   - [Settings & Management — Missing](#settings--management--missing)
   - [Developer & Extensions — Missing](#developer--extensions--missing)
@@ -183,6 +182,13 @@
 | Bottom Three Fourths | `window:bottom_three_fourths` | ✅ |
 | Top Center Two Thirds | `window:top_center_two_thirds` | ✅ |
 | Bottom Center Two Thirds | `window:bottom_center_two_thirds` | ✅ |
+| Move to Desktop 1–10 | `window:move_desktop_N` | ✅ |
+| Move to Next/Previous Desktop | `window:move_next_desktop` | ✅ |
+| Move to Next/Previous Display | `window:move_next_display` | ✅ |
+| Open Desktop 1–10 | `window:open_desktop_N` | ✅ |
+| Close Desktop | `window:close_desktop` | ✅ |
+| Close Desktop Active | `window:close_desktop_active` | ✅ |
+| Rename Desktop | `window:rename_desktop` | ✅ |
 
 ### Quicklinks & Snippets
 
@@ -205,7 +211,7 @@
 | Paste Latest Screenshot | ✅ | Quick action → pastes newest screenshot |
 | Clear Clipboard | ✅ | `EmptyClipboard()` |
 | Save Clipboard Images | ✅ | BMP capture from clipboard to DB |
-| Paste Sequentially | ❌ | Not implemented |
+| Paste Sequentially | ✅ | Pastes top 3 clipboard text items sequentially |
 
 ### Voice & Input
 
@@ -255,17 +261,6 @@
 | 9 | Create AI Command | AI | No user-defined custom AI command builder |
 | 10 | Summarize Webpage | — | AI summarize only works on pasted text; no URL fetch + summarize pipeline |
 
-### Window Management — Missing
-
-| # | Feature | Status | Notes |
-|---|---------|--------|-------|
-| 3 | Move to Desktop 1–10 | ❌ | No virtual desktop COM integration (`IVirtualDesktop`) |
-| 4 | Move to Next/Previous Desktop | ❌ | Requires virtual desktop API |
-| 5 | Move to Next/Previous Display | ❌ | No multi-monitor move logic |
-| 6 | Open Desktop 1–10 | ❌ | Requires virtual desktop API |
-| 7 | Close Desktop | ❌ | Requires virtual desktop API |
-| 8 | Close Desktop Active | ❌ | Requires virtual desktop API |
-| 9 | Rename Desktop / Rename Desktop Active | ❌ | Requires virtual desktop API |
 
 ### System Actions — Missing
 

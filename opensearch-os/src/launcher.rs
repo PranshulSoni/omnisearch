@@ -223,6 +223,50 @@ fn handle_action(action: &str) {
         "restart" => {
             let _ = Command::new("shutdown").args(["/r", "/t", "0"]).spawn();
         }
+        "clipboard:paste_sequentially" => {
+            if let Ok(appdata) = std::env::var("APPDATA") {
+                let db_path = std::path::PathBuf::from(appdata).join("opensearch-os").join("index.db");
+                if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                    if let Ok(mut stmt) = conn.prepare("SELECT content FROM clipboard_history WHERE is_image = 0 ORDER BY timestamp DESC LIMIT 3") {
+                        let items: Vec<String> = stmt.query_map([], |row| row.get(0)).map(|m| m.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+                        std::thread::spawn(move || {
+                            for item in items.into_iter().rev() {
+                                std::thread::sleep(std::time::Duration::from_millis(500));
+                                use windows::Win32::System::DataExchange::{OpenClipboard, EmptyClipboard, SetClipboardData, CloseClipboard};
+                                use windows::Win32::Foundation::{HANDLE, HWND};
+                                use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+                                unsafe {
+                                    let wide: Vec<u16> = item.encode_utf16().chain(std::iter::once(0)).collect();
+                                    let size = wide.len() * 2;
+                                    if let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, size) {
+                                        let ptr = GlobalLock(hmem) as *mut u16;
+                                        if !ptr.is_null() {
+                                            std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
+                                            let _ = GlobalUnlock(hmem);
+                                            if OpenClipboard(HWND::default()).is_ok() {
+                                                let _ = EmptyClipboard();
+                                                let _ = SetClipboardData(13, HANDLE(hmem.0 as *mut _)); // CF_UNICODETEXT
+                                                let _ = CloseClipboard();
+                                            }
+                                        }
+                                    }
+                                }
+                                // Send Ctrl+V, then Enter
+                                let _ = std::process::Command::new("powershell")
+                                    .args([
+                                        "-WindowStyle", "Hidden",
+                                        "-Command",
+                                        "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v'); Start-Sleep -Milliseconds 100; [System.Windows.Forms.SendKeys]::SendWait('{ENTER}');"
+                                    ])
+                                    .creation_flags(0x08000000)
+                                    .spawn();
+                                std::thread::sleep(std::time::Duration::from_millis(500));
+                            }
+                        });
+                    }
+                }
+            }
+        }
         "sleep" => {
             unsafe {
                 let _ = windows::Win32::System::Power::SetSuspendState(false, false, false);
@@ -489,6 +533,147 @@ fn handle_window_action(action: &str) {
         Some(h) => h,
         None => return,
     };
+    if let Some(num_str) = action.strip_prefix("open_desktop_") {
+        if let Ok(idx) = num_str.parse::<u32>() {
+            if let Ok(desktops) = winvd::get_desktops() {
+                if let Some(d) = desktops.get(idx.saturating_sub(1) as usize) {
+                    let _ = winvd::switch_desktop(d.clone());
+                }
+            }
+        }
+        return;
+    }
+
+    if action == "close_desktop" || action == "close_desktop_active" {
+        if let Ok(d) = winvd::get_current_desktop() {
+            if let Ok(desktops) = winvd::get_desktops() {
+                if let Some(fallback) = desktops.first() {
+                    let _ = winvd::remove_desktop(d.clone(), fallback.clone());
+                }
+            }
+        }
+        return;
+    }
+
+    if action == "rename_desktop" {
+        std::thread::spawn(|| {
+            let output = std::process::Command::new("powershell")
+                .args(["-Command", "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::InputBox('Enter new desktop name:', 'Rename Desktop')"])
+                .creation_flags(0x08000000)
+                .output();
+            if let Ok(out) = output {
+                let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !name.is_empty() {
+                    if let Ok(d) = winvd::get_current_desktop() {
+                        let _ = d.set_name(&name);
+                    }
+                }
+            }
+        });
+        return;
+    }
+
+    if let Some(num_str) = action.strip_prefix("move_desktop_") {
+        if let Ok(idx) = num_str.parse::<u32>() {
+            if let Ok(desktops) = winvd::get_desktops() {
+                if let Some(d) = desktops.get(idx.saturating_sub(1) as usize) {
+                    let _ = winvd::move_window_to_desktop(d.clone(), &target_hwnd);
+                }
+            }
+        }
+        return;
+    }
+
+    if action == "move_next_desktop" || action == "move_previous_desktop" {
+        if let Ok(desktops) = winvd::get_desktops() {
+            if let Ok(current) = winvd::get_desktop_by_window(target_hwnd.clone()) {
+                if let Ok(idx) = current.get_index() {
+                    let new_idx = if action == "move_next_desktop" {
+                        idx as usize + 1
+                    } else {
+                        (idx as usize).saturating_sub(1)
+                    };
+                    if let Some(d) = desktops.get(new_idx) {
+                        let _ = winvd::move_window_to_desktop(d.clone(), &target_hwnd);
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    if action == "move_next_display" || action == "move_previous_display" {
+        unsafe {
+            use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+            use windows::Win32::Foundation::{LPARAM, BOOL};
+            
+            struct MonitorData {
+                monitors: Vec<HMONITOR>,
+            }
+            
+            unsafe extern "system" fn monitor_enum(
+                hmonitor: HMONITOR,
+                _hdc: HDC,
+                _rect: *mut RECT,
+                lparam: LPARAM,
+            ) -> BOOL {
+                let data = &mut *(lparam.0 as *mut MonitorData);
+                data.monitors.push(hmonitor);
+                BOOL(1)
+            }
+            
+            let mut data = MonitorData { monitors: Vec::new() };
+            let _ = EnumDisplayMonitors(None, None, Some(monitor_enum), LPARAM(&mut data as *mut _ as isize));
+            
+            if data.monitors.len() > 1 {
+                use windows::Win32::Graphics::Gdi::{MonitorFromWindow, GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+                let current_monitor = MonitorFromWindow(target_hwnd, MONITOR_DEFAULTTONEAREST);
+                let current_idx = data.monitors.iter().position(|&m| m.0 == current_monitor.0).unwrap_or(0);
+                
+                let new_idx = if action == "move_next_display" {
+                    (current_idx + 1) % data.monitors.len()
+                } else {
+                    (current_idx + data.monitors.len() - 1) % data.monitors.len()
+                };
+                
+                let new_monitor = data.monitors[new_idx];
+                
+                let mut current_info = MONITORINFO::default();
+                current_info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                let _ = GetMonitorInfoW(current_monitor, &mut current_info);
+                
+                let mut new_info = MONITORINFO::default();
+                new_info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                let _ = GetMonitorInfoW(new_monitor, &mut new_info);
+                
+                use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE};
+                let mut r = windows::Win32::Foundation::RECT::default();
+                if GetWindowRect(target_hwnd, &mut r).is_ok() {
+                    let w = r.right - r.left;
+                    let h = r.bottom - r.top;
+                    
+                    let cw = current_info.rcWork.right - current_info.rcWork.left;
+                    let ch = current_info.rcWork.bottom - current_info.rcWork.top;
+                    let nw = new_info.rcWork.right - new_info.rcWork.left;
+                    let nh = new_info.rcWork.bottom - new_info.rcWork.top;
+                    
+                    let rx = (r.left - current_info.rcWork.left) as f32 / cw as f32;
+                    let ry = (r.top - current_info.rcWork.top) as f32 / ch as f32;
+                    
+                    let new_x = new_info.rcWork.left + (rx * nw as f32) as i32;
+                    let new_y = new_info.rcWork.top + (ry * nh as f32) as i32;
+                    
+                    let _ = SetWindowPos(
+                        target_hwnd,
+                        HWND::default(),
+                        new_x, new_y, w, h,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
+            }
+        }
+        return;
+    }
 
     use windows::Win32::UI::WindowsAndMessaging::{
         IsZoomed, ShowWindow, SetWindowPos, GetWindowRect, GetWindowLongPtrW,
