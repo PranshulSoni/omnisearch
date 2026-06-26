@@ -1863,7 +1863,8 @@ unsafe extern "system" fn wnd_proc(
         WM_MOUSEWHEEL => {
             if sp.is_null() { return LRESULT(0); }
             let s = &mut *sp;
-            if s.ai_answer.is_some() {
+            let in_chat_history_list = s.query.starts_with("chats:") || s.query.starts_with("agentchats:");
+            if s.ai_answer.is_some() && !in_chat_history_list {
                 let delta = (wp.0 >> 16) as i16;
                 let step = (delta as i32).abs().max(40);
                 if delta > 0 {
@@ -2596,11 +2597,6 @@ fn store_ai_chat(db_path: &std::path::Path, command: &str, title: &str, prompt: 
             rusqlite::params![now, command, title, prompt, response],
         );
         let id = conn.last_insert_rowid();
-        // Keep only the most recent 200 chats.
-        let _ = conn.execute(
-            "DELETE FROM ai_chats WHERE id NOT IN (SELECT id FROM ai_chats ORDER BY ts DESC LIMIT 200);",
-            [],
-        );
         return Some(id);
     }
     None

@@ -1370,11 +1370,11 @@ fn format_relative_time(ts: i64) -> String {
         let q = query.trim().to_lowercase();
         let mut results = Vec::new();
         let sql = if q.is_empty() {
-            "SELECT id, title, prompt, response, ts, command FROM ai_chats WHERE command != 'agent' ORDER BY ts DESC LIMIT 50".to_string()
+            "SELECT id, title, prompt, response, ts, command FROM ai_chats WHERE command != 'agent' ORDER BY ts DESC".to_string()
         } else {
             "SELECT id, title, prompt, response, ts, command FROM ai_chats \
              WHERE command != 'agent' AND (lower(title) LIKE ?1 OR lower(prompt) LIKE ?1 OR lower(response) LIKE ?1) \
-             ORDER BY ts DESC LIMIT 50".to_string()
+             ORDER BY ts DESC".to_string()
         };
         let mut stmt = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return results };
         let like = format!("%{}%", q);
@@ -1458,11 +1458,11 @@ fn format_relative_time(ts: i64) -> String {
         }
 
         let sql = if q.is_empty() {
-            "SELECT id, title, prompt, response, ts, command FROM ai_chats WHERE command = 'agent' ORDER BY ts DESC LIMIT 50".to_string()
+            "SELECT id, title, prompt, response, ts, command FROM ai_chats WHERE command = 'agent' ORDER BY ts DESC".to_string()
         } else {
             "SELECT id, title, prompt, response, ts, command FROM ai_chats \
              WHERE command = 'agent' AND (lower(title) LIKE ?1 OR lower(prompt) LIKE ?1 OR lower(response) LIKE ?1) \
-             ORDER BY ts DESC LIMIT 50".to_string()
+             ORDER BY ts DESC".to_string()
         };
         let mut stmt = match conn.prepare(&sql) { Ok(s) => s, Err(_) => return results };
         let like = format!("%{}%", q);
