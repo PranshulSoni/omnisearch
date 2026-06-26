@@ -2429,6 +2429,8 @@ fn store_ai_chat(db_path: &std::path::Path, command: &str, title: &str, prompt: 
                 command TEXT, title TEXT, prompt TEXT, response TEXT);",
             [],
         );
+        let _ = conn.execute("ALTER TABLE ai_chats ADD COLUMN run_id TEXT;", []);
+        let _ = conn.execute("ALTER TABLE ai_chats ADD COLUMN pending_approval TEXT;", []);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -2559,6 +2561,21 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
                         Ok(())
                     }
                 );
+                // Immediately write the "Executing..." state to DB now that we have the original values.
+                let updated_prompt = if original_prompt.is_empty() {
+                    new_prompt.clone()
+                } else {
+                    format!("{}\n---\nUser: {}", original_prompt, new_prompt)
+                };
+                let updated_response = if original_response.is_empty() {
+                    "Executing...".to_string()
+                } else {
+                    format!("{}\n\n---\n\nExecuting...", original_response)
+                };
+                let _ = conn.execute(
+                    "UPDATE ai_chats SET prompt = ?, response = ? WHERE id = ?",
+                    rusqlite::params![updated_prompt, updated_response, id],
+                );
             }
         }
 
@@ -2676,7 +2693,34 @@ struct UiRunCallbacks {
 }
 
 impl ai::RunCallbacks for UiRunCallbacks {
+    fn on_run_id(&self, run_id: &str) {
+        if let Some(id) = self.chat_id {
+            if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
+                let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                let _ = conn.execute(
+                    "UPDATE ai_chats SET run_id = ? WHERE id = ?",
+                    rusqlite::params![run_id, id],
+                );
+            }
+        }
+    }
     fn on_approval(&self, approval: ai::HermesApproval) {
+        if let Some(id) = self.chat_id {
+            if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
+                let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                let approval_json = serde_json::json!({
+                    "run_id": approval.run_id,
+                    "approval_id": approval.approval_id,
+                    "tool": approval.tool,
+                    "summary": approval.summary,
+                }).to_string();
+                let _ = conn.execute(
+                    "UPDATE ai_chats SET pending_approval = ? WHERE id = ?",
+                    rusqlite::params![approval_json, id],
+                );
+            }
+        }
+
         if ai::ALWAYS_APPROVE.load(std::sync::atomic::Ordering::Relaxed) {
             std::thread::spawn(move || {
                 let _ = ai::resolve_run_approval(&approval, true);
@@ -2700,30 +2744,36 @@ impl ai::RunCallbacks for UiRunCallbacks {
         }
     }
     fn on_done(&self, ok: bool, text: &str) {
-        if ok {
-            if let Some(id) = self.chat_id {
-                if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
-                    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
-                    if self.original_prompt.is_empty() {
-                        let _ = conn.execute(
-                            "UPDATE ai_chats SET response = ? WHERE id = ?",
-                            rusqlite::params![text, id],
-                        );
+        if let Some(id) = self.chat_id {
+            if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
+                let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                let updated_response = if self.original_response.is_empty() {
+                    if ok { text.to_string() } else { format!("⚠ {}", text) }
+                } else {
+                    if ok {
+                        format!("{}\n\n---\n\n{}", self.original_response, text)
                     } else {
-                        let updated_prompt = format!("{}\n---\nUser: {}", self.original_prompt, self.user);
-                        let updated_response = format!("{}\n\n---\n\n{}", self.original_response, text);
-                        let _ = conn.execute(
-                            "UPDATE ai_chats SET prompt = ?, response = ? WHERE id = ?",
-                            rusqlite::params![updated_prompt, updated_response, id],
-                        );
+                        format!("{}\n\n---\n\n⚠ {}", self.original_response, text)
                     }
-                }
+                };
+                let _ = conn.execute(
+                    "UPDATE ai_chats SET response = ?, pending_approval = NULL WHERE id = ?",
+                    rusqlite::params![updated_response, id],
+                );
             }
         }
         let formatted = if self.prev_history.is_empty() {
-            format!("User: {}\n\n{}", self.user, text)
+            if ok {
+                format!("User: {}\n\n{}", self.user, text)
+            } else {
+                format!("User: {}\n\n⚠ {}", self.user, text)
+            }
         } else {
-            format!("{}\n\n---\n\nUser: {}\n\n{}", self.prev_history, self.user, text)
+            if ok {
+                format!("{}\n\n---\n\nUser: {}\n\n{}", self.prev_history, self.user, text)
+            } else {
+                format!("{}\n\n---\n\nUser: {}\n\n⚠ {}", self.prev_history, self.user, text)
+            }
         };
         let payload = (ok, formatted);
         let ptr = Box::into_raw(Box::new(payload)) as isize;
@@ -2788,6 +2838,15 @@ unsafe fn close_ai_panel(hwnd: HWND, s: &mut State) {
 // (so the blocked run can continue or abort) and clear the UI state.
 unsafe fn resolve_current_approval(hwnd: HWND, s: &mut State, approved: bool) {
     if let Some(ap) = s.hermes_approval.take() {
+        if let Some(id) = s.active_chat_id {
+            if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
+                let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                let _ = conn.execute(
+                    "UPDATE ai_chats SET pending_approval = NULL WHERE id = ?",
+                    rusqlite::params![id],
+                );
+            }
+        }
         std::thread::spawn(move || {
             let _ = ai::resolve_run_approval(&ap, approved);
         });
@@ -2863,7 +2922,7 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             let input_clone = input.clone();
 
             // Store chat in DB immediately to get a chat ID
-            let chat_id = store_ai_chat(&db_path, &aicmd_clone, &title, &input_clone, "");
+            let chat_id = store_ai_chat(&db_path, &aicmd_clone, &title, &input_clone, "Executing...");
             s.active_chat_id = chat_id;
             s.query.clear(); // Clear input box so they can immediately type follow-up
             s.cursor_pos = 0;
@@ -2892,16 +2951,21 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             });
             return;
         } else if let Some(id_str) = cmd.strip_prefix("aichat:") {
-            // Reopen a stored chat in the panel (no API call).
+            // Reopen a stored chat in the panel, reconnecting to its run if still active.
             if let Ok(id) = id_str.parse::<i64>() {
                 if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
-                    if let Ok((title, prompt, response)) = conn.query_row(
-                        "SELECT title, prompt, response FROM ai_chats WHERE id = ?",
+                    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                    if let Ok((title, prompt, response, run_id, pending_approval_str)) = conn.query_row(
+                        "SELECT title, prompt, response, run_id, pending_approval FROM ai_chats WHERE id = ?",
                         [id],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+                        |row| Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                            row.get::<_, Option<String>>(4)?
+                        )),
                     ) {
-                        s.ai_pending = false;
-                        s.ai_answer = Some(format_conversation(&prompt, &response));
                         s.ai_title = title;
                         s.ai_scroll = 0;
                         s.ai_follow_bottom = true;
@@ -2910,6 +2974,112 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                         s.cursor_pos = 0;
                         s.results.clear();
                         s.selected = 0;
+
+                        let mut is_active = false;
+                        let mut final_output: Option<String> = None;
+                        let mut run_error: Option<String> = None;
+                        let mut is_waiting_approval = false;
+
+                        if let Some(ref rid) = run_id {
+                            if let Ok(status_resp) = ai::get_run_status(rid) {
+                                match status_resp.status.as_str() {
+                                    "queued" | "running" => {
+                                        is_active = true;
+                                    }
+                                    "waiting_for_approval" => {
+                                        is_active = true;
+                                        is_waiting_approval = true;
+                                    }
+                                    "completed" => {
+                                        final_output = status_resp.output;
+                                    }
+                                    _ => {
+                                        run_error = status_resp.error;
+                                    }
+                                }
+                            }
+                        }
+
+                        if is_active {
+                            s.ai_pending = true;
+                            s.ai_tick = 0;
+                            let _ = unsafe { KillTimer(hwnd, TIMER_AI_ANIM) };
+                            let _ = unsafe { SetTimer(hwnd, TIMER_AI_ANIM, 180, None) };
+
+                            if is_waiting_approval {
+                                let mut restored_ap = None;
+                                if let Some(ref json_str) = pending_approval_str {
+                                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                        restored_ap = Some(ai::HermesApproval {
+                                            run_id: v.get("run_id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                                            approval_id: v.get("approval_id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                                            tool: v.get("tool").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                                            summary: v.get("summary").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                                        });
+                                    }
+                                }
+                                if restored_ap.is_none() {
+                                    restored_ap = Some(ai::HermesApproval {
+                                        run_id: run_id.clone().unwrap_or_default(),
+                                        approval_id: "".to_string(),
+                                        tool: "System command".to_string(),
+                                        summary: "Hermes is waiting for your approval to run a command.".to_string(),
+                                    });
+                                }
+                                s.hermes_approval = restored_ap;
+                            } else {
+                                s.hermes_approval = None;
+                            }
+
+                            s.ai_answer = Some(format_conversation(&prompt, &response));
+
+                            let rid_clone = run_id.clone().unwrap_or_default();
+                            let hwnd_ai = SendHwnd(hwnd);
+                            let db_path_clone = s.db_path.clone();
+                            let chat_id_opt = Some(id);
+                            let prompt_clone = prompt.clone();
+                            let response_clone = response.clone();
+
+                            std::thread::spawn(move || {
+                                let cb = UiRunCallbacks {
+                                    hwnd: hwnd_ai,
+                                    user: "".to_string(),
+                                    prev_history: "".to_string(),
+                                    db_path: db_path_clone,
+                                    chat_id: chat_id_opt,
+                                    original_prompt: prompt_clone,
+                                    original_response: response_clone,
+                                };
+                                let _ = ai::poll_and_stream_existing_run(&rid_clone, &cb);
+                            });
+                        } else {
+                            s.ai_pending = false;
+                            s.hermes_approval = None;
+                            if let Some(out) = final_output {
+                                if response.is_empty() || response.ends_with("Executing...") {
+                                    let _ = conn.execute(
+                                        "UPDATE ai_chats SET response = ?, pending_approval = NULL WHERE id = ?",
+                                        rusqlite::params![out, id],
+                                    );
+                                    s.ai_answer = Some(format_conversation(&prompt, &out));
+                                } else {
+                                    s.ai_answer = Some(format_conversation(&prompt, &response));
+                                }
+                            } else if let Some(err) = run_error {
+                                let updated_response = if response.is_empty() || response.ends_with("Executing...") {
+                                    format!("⚠ {}", err)
+                                } else {
+                                    response.clone()
+                                };
+                                let _ = conn.execute(
+                                    "UPDATE ai_chats SET response = ?, pending_approval = NULL WHERE id = ?",
+                                    rusqlite::params![updated_response, id],
+                                );
+                                s.ai_answer = Some(format_conversation(&prompt, &updated_response));
+                            } else {
+                                s.ai_answer = Some(format_conversation(&prompt, &response));
+                            }
+                        }
                         let _ = InvalidateRect(hwnd, None, FALSE);
                     }
                 }
@@ -2999,7 +3169,7 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             let msg_clone = msg.clone();
 
             // Store chat in DB immediately to get a chat ID
-            let chat_id = store_ai_chat(&db_path, "agent", &title, &msg_clone, "");
+            let chat_id = store_ai_chat(&db_path, "agent", &title, &msg_clone, "Executing...");
             s.active_chat_id = chat_id;
             s.query.clear(); // Clear input box so they can immediately type follow-up
             s.cursor_pos = 0;
