@@ -826,12 +826,22 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             LRESULT(0)
         }
 
+        // Clicking a result must not re-activate/churn focus, or the launcher
+        // (which holds focus via AttachThreadInput) dismisses itself before the
+        // click executes. MA_NOACTIVATE=3 keeps focus stable; the click still fires.
+        0x0021 /* WM_MOUSEACTIVATE */ => LRESULT(3),
+
         WM_KILLFOCUS => {
             if !sp.is_null() {
                 let s = &mut *sp;
                 // Don't dismiss while a voice flow is mid-setup — focus briefly bounces
                 // when the launcher is summoned from the background.
                 if s.voice_triggered || s.voice_pending_exec || s.note_editing {
+                    return LRESULT(0);
+                }
+                // The window receiving focus is wParam; if it's us (or none), don't hide.
+                let next = HWND(wp.0 as *mut std::ffi::c_void);
+                if next == hwnd || next.0.is_null() {
                     return LRESULT(0);
                 }
                 if !matches!(s.anim, Anim::Hidden | Anim::Hiding { .. }) {
