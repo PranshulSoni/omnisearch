@@ -3034,7 +3034,6 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                             let hwnd_ai = SendHwnd(hwnd);
                             let db_path_clone = s.db_path.clone();
                             let chat_id_opt = Some(id);
-                            let prompt_clone = prompt.clone();
                             let response_clone = response.clone();
 
                             std::thread::spawn(move || {
