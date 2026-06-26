@@ -2642,6 +2642,12 @@ fn start_ai_activity(hwnd: HWND, s: &mut State) {
 // the Runs API, so a real Approve/Deny button can be shown instead of hanging.
 struct UiRunCallbacks {
     hwnd: SendHwnd,
+    user: String,
+    prev_history: String,
+    db_path: std::path::PathBuf,
+    chat_id: Option<i64>,
+    original_prompt: String,
+    original_response: String,
 }
 
 impl ai::RunCallbacks for UiRunCallbacks {
@@ -2658,12 +2664,43 @@ impl ai::RunCallbacks for UiRunCallbacks {
         }
     }
     fn on_progress(&self, text: &str) {
-        // Show the streaming delta as the live "Executing…" replacement. We post
-        // a boxed string so WM_AI_RESULT isn't appropriate; reuse WM_HERMES_PROGRESS.
-        let _ = text;
+        let formatted = if self.prev_history.is_empty() {
+            format!("User: {}\n\n{}", self.user, text)
+        } else {
+            format!("{}\n\n---\n\nUser: {}\n\n{}", self.prev_history, self.user, text)
+        };
+        let ptr = Box::into_raw(Box::new(formatted)) as isize;
+        unsafe {
+            let _ = PostMessageW(self.hwnd.0, WM_AI_PROGRESS, WPARAM(0), LPARAM(ptr));
+        }
     }
     fn on_done(&self, ok: bool, text: &str) {
-        let payload = (ok, text.to_string());
+        if ok {
+            if let Some(id) = self.chat_id {
+                if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
+                    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                    if self.original_prompt.is_empty() {
+                        let _ = conn.execute(
+                            "UPDATE ai_chats SET response = ? WHERE id = ?",
+                            rusqlite::params![text, id],
+                        );
+                    } else {
+                        let updated_prompt = format!("{}\n---\nUser: {}", self.original_prompt, self.user);
+                        let updated_response = format!("{}\n\n---\n\n{}", self.original_response, text);
+                        let _ = conn.execute(
+                            "UPDATE ai_chats SET prompt = ?, response = ? WHERE id = ?",
+                            rusqlite::params![updated_prompt, updated_response, id],
+                        );
+                    }
+                }
+            }
+        }
+        let formatted = if self.prev_history.is_empty() {
+            format!("User: {}\n\n{}", self.user, text)
+        } else {
+            format!("{}\n\n---\n\nUser: {}\n\n{}", self.prev_history, self.user, text)
+        };
+        let payload = (ok, formatted);
         let ptr = Box::into_raw(Box::new(payload)) as isize;
         unsafe {
             let _ = PostMessageW(self.hwnd.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
@@ -2673,9 +2710,6 @@ impl ai::RunCallbacks for UiRunCallbacks {
 
 /// Run an agent turn through the streaming Runs API. Returns `false` if the
 /// gateway doesn't support it (caller should fall back to blocking complete_agent).
-///
-/// `db_update` receives the final assistant text on success so the caller can
-/// persist it into ai_chats (the blocking path already does this inline).
 fn run_agent_via_runs_api(
     hwnd: HWND,
     system: String,
@@ -2687,33 +2721,25 @@ fn run_agent_via_runs_api(
         return false;
     }
     let cb_hwnd = SendHwnd(hwnd);
+    let user_clone = user.clone();
+    let db_path_clone = db_path.clone();
     std::thread::spawn(move || {
-        let cb = UiRunCallbacks { hwnd: cb_hwnd };
+        let cb = UiRunCallbacks {
+            hwnd: cb_hwnd,
+            user: user_clone,
+            prev_history: String::new(),
+            db_path: db_path_clone,
+            chat_id,
+            original_prompt: String::new(),
+            original_response: String::new(),
+        };
         let result = ai::run_agent_streaming(&system, &user, &cb);
-        match &result {
-            Ok(_) => {
-                // The on_done callback already posted the success payload.
-                // Persist the final text into the chat row, if we have the id.
-                // (We re-derive it here minimally — complete path stored it earlier.)
-                if let Some(id) = chat_id {
-                    if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-                        let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
-                        // The streaming run already streamed the response; we mark
-                        // the row's response by reading it back is unreliable, so we
-                        // simply leave the row — it gets updated by on_done's payload
-                        // display. Persistence of full agent transcripts is a known
-                        // follow-up (see plan). Avoid a half-written row by no-op here.
-                        let _ = id;
-                        let _ = conn;
-                    }
-                }
-            }
-            Err(e) => {
-                let payload = (false, e.to_string());
-                let ptr = Box::into_raw(Box::new(payload)) as isize;
-                unsafe {
-                    let _ = PostMessageW(cb_hwnd.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
-                }
+        if let Err(e) = result {
+            let formatted_err = format!("User: {}\n\n⚠ {}", user, e);
+            let payload = (false, formatted_err);
+            let ptr = Box::into_raw(Box::new(payload)) as isize;
+            unsafe {
+                let _ = PostMessageW(cb_hwnd.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
             }
         }
     });
