@@ -119,7 +119,8 @@
 | Copy Version | `copy version` | `env!("CARGO_PKG_VERSION")` |
 | Account & Sync | `account` | URL shortcut |
 | Changelog | `changelog` | URL shortcut |
-| Check for Updates | `check for updates` | URL shortcut |
+| Check for App Updates | `update app` | URL shortcut |
+| Windows Update | `check for updates` | `ms-settings:windowsupdate` |
 | Copy Logs | `copy logs` | `Get-Content` to clipboard |
 | Quick Look | `quick look` | `VK_SPACE` keybd_event |
 
