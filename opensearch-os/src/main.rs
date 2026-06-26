@@ -1153,13 +1153,7 @@ unsafe extern "system" fn wnd_proc(
                                 return LRESULT(0);
                             }
                             0x56 => {
-                                if let Some(text) = paste_from_clipboard(hwnd) {
-                                    let clean_text: String = text.chars().filter(|c| !c.is_control()).collect();
-                                    s.chat_input.insert_str(s.chat_cursor_pos, &clean_text);
-                                    s.chat_cursor_pos += clean_text.len();
-                                    reset_cursor_blink(hwnd, s);
-                                    let _ = InvalidateRect(hwnd, None, FALSE);
-                                }
+                                paste_clipboard_into_chat(hwnd, s);
                                 return LRESULT(0);
                             }
                             _ => {}
@@ -1351,19 +1345,7 @@ unsafe extern "system" fn wnd_proc(
                                     return LRESULT(0);
                                 }
                                 0x56 => { // Ctrl + V
-                                    if let Some(text) = paste_from_clipboard(hwnd) {
-                                        let clean_text: String = text.chars().filter(|c| !c.is_control()).collect();
-                                        if s.text_selected {
-                                            s.query = clean_text;
-                                            s.cursor_pos = s.query.len();
-                                            s.text_selected = false;
-                                        } else {
-                                            s.query.insert_str(s.cursor_pos, &clean_text);
-                                            s.cursor_pos += clean_text.len();
-                                        }
-                                        reset_cursor_blink(hwnd, s);
-                                        let _ = InvalidateRect(hwnd, None, FALSE);
-                                    }
+                                    paste_clipboard_into_query(hwnd, s, false);
                                     return LRESULT(0);
                                 }
                                 _ => {}
@@ -1407,22 +1389,7 @@ unsafe extern "system" fn wnd_proc(
                         return LRESULT(0);
                     }
                     0x56 => { // Ctrl + V (Paste)
-                        if let Some(text) = paste_from_clipboard(hwnd) {
-                            let clean_text: String = text.chars().filter(|c| !c.is_control()).collect();
-                            if s.text_selected {
-                                s.query = clean_text;
-                                s.cursor_pos = s.query.len();
-                                s.text_selected = false;
-                            } else {
-                                s.query.insert_str(s.cursor_pos, &clean_text);
-                                s.cursor_pos += clean_text.len();
-                            }
-                            s.selected = 0;
-                            s.scroll_offset = 0;
-                            kick_debounce(hwnd);
-                            reset_cursor_blink(hwnd, s);
-                            let _ = InvalidateRect(hwnd, None, FALSE);
-                        }
+                        paste_clipboard_into_query(hwnd, s, true);
                         return LRESULT(0);
                     }
                     0x50 => { // Ctrl + P (Pin/Unpin toggle)
@@ -5569,6 +5536,84 @@ unsafe fn copy_image_to_clipboard(hwnd: HWND, file_path: &str) -> bool {
     false
 }
 
+unsafe fn paste_clipboard_into_chat(hwnd: HWND, s: &mut State) {
+    if let Some(text) = paste_from_clipboard(hwnd) {
+        let clean_text: String = text.chars().filter(|c| !c.is_control()).collect();
+        s.chat_input.insert_str(s.chat_cursor_pos, &clean_text);
+        s.chat_cursor_pos += clean_text.len();
+    } else if save_clipboard_image(hwnd, &s.db_path, "Pasted Image").is_some() {
+        let marker = "[Pasted image saved to Clipboard History]";
+        s.chat_input.insert_str(s.chat_cursor_pos, marker);
+        s.chat_cursor_pos += marker.len();
+    }
+    reset_cursor_blink(hwnd, s);
+    let _ = InvalidateRect(hwnd, None, FALSE);
+}
+
+unsafe fn paste_clipboard_into_query(hwnd: HWND, s: &mut State, search_now: bool) {
+    if let Some(text) = paste_from_clipboard(hwnd) {
+        let clean_text: String = text.chars().filter(|c| !c.is_control()).collect();
+        if s.text_selected {
+            s.query = clean_text;
+            s.cursor_pos = s.query.len();
+            s.text_selected = false;
+        } else {
+            s.query.insert_str(s.cursor_pos, &clean_text);
+            s.cursor_pos += clean_text.len();
+        }
+        if search_now {
+            s.selected = 0;
+            s.scroll_offset = 0;
+            kick_debounce(hwnd);
+        }
+    } else if save_clipboard_image(hwnd, &s.db_path, "Pasted Image").is_some() {
+        s.query = "clip:".to_string();
+        s.cursor_pos = s.query.len();
+        s.text_selected = false;
+        s.selected = 0;
+        s.scroll_offset = 0;
+        trigger_search(hwnd, s);
+    }
+    reset_cursor_blink(hwnd, s);
+    let _ = InvalidateRect(hwnd, None, FALSE);
+}
+
+fn clipboard_image_path(db_path: &std::path::Path, now_ms: u128) -> Option<(std::path::PathBuf, String)> {
+    let img_dir = db_path.parent()?.join("clipboard_images");
+    let filename = format!("image_{}.bmp", now_ms);
+    let img_path = img_dir.join(&filename);
+    Some((img_path.clone(), img_path.to_string_lossy().to_string()))
+}
+
+unsafe fn save_clipboard_image(hwnd: HWND, db_path: &std::path::Path, source_app: &str) -> Option<String> {
+    let (buf, bih) = capture_clipboard_image_data(hwnd)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let timestamp = now.as_secs() as i64;
+    let (img_path, img_path_str) = clipboard_image_path(db_path, now.as_millis())?;
+    std::fs::create_dir_all(img_path.parent()?).ok()?;
+    write_bmp_file(&img_path, &buf, bih).ok()?;
+
+    let conn = rusqlite::Connection::open(db_path).ok()?;
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+    let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+    conn.execute(
+        "INSERT INTO clipboard_history (content, timestamp, source_app, is_image, pinned) \
+         VALUES (?, ?, ?, 1, 0) \
+         ON CONFLICT(content) DO UPDATE SET \
+             timestamp = excluded.timestamp, \
+             source_app = excluded.source_app, \
+             is_image = excluded.is_image;",
+        rusqlite::params![img_path_str, timestamp, source_app],
+    ).ok()?;
+    let _ = conn.execute(
+        "DELETE FROM clipboard_history WHERE pinned = 0 AND id NOT IN (SELECT id FROM clipboard_history ORDER BY pinned DESC, timestamp DESC LIMIT 500);",
+        [],
+    );
+    Some(img_path.to_string_lossy().to_string())
+}
+
 unsafe fn capture_clipboard_image_data(hwnd: HWND) -> Option<(Vec<u8>, windows::Win32::Graphics::Gdi::BITMAPINFOHEADER)> {
     use windows::Win32::System::DataExchange::{OpenClipboard, CloseClipboard, GetClipboardData, IsClipboardFormatAvailable};
     use windows::Win32::Graphics::Gdi::{
@@ -6051,6 +6096,13 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn clipboard_image_path_uses_clipboard_images_dir() {
+        let db_path = std::path::PathBuf::from(r"C:\Users\Test\AppData\Roaming\opensearch-os\app.db");
+        let (_, path_str) = clipboard_image_path(&db_path, 123).unwrap();
+        assert!(path_str.ends_with(r"opensearch-os\clipboard_images\image_123.bmp"));
     }
 }
 
