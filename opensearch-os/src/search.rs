@@ -1489,6 +1489,87 @@ impl SearchEngine {
         results
     }
 
+    pub fn search_last_memory_session(&self) -> Vec<SearchResult> {
+        let events = latest_memory_session_events(&self.conn);
+        if events.is_empty() {
+            return vec![SearchResult {
+                entry: CatalogEntry {
+                    id: "memory.session.empty".to_string(),
+                    control_name: "No session captured yet".to_string(),
+                    breadcrumb_path: "Memory > Sessions".to_string(),
+                    launch_command: "memory:".to_string(),
+                    source: "MEMORY".to_string(),
+                    description:
+                        "MemoryOS is collecting activity now. Try again after using the PC."
+                            .to_string(),
+                    synonyms: "memory session continue last".to_string(),
+                },
+                score: 12.0,
+            }];
+        }
+
+        let newest = events.first().map(|e| e.1).unwrap_or(0);
+        let oldest = events.last().map(|e| e.1).unwrap_or(newest);
+        let source_summary = session_source_summary(&events);
+        let mut results = vec![SearchResult {
+            entry: CatalogEntry {
+                id: "memory.session.last".to_string(),
+                control_name: "Continue last session".to_string(),
+                breadcrumb_path: format!(
+                    "Memory > Sessions > {} to {}",
+                    format_timestamp_local(oldest),
+                    format_timestamp_local(newest)
+                ),
+                launch_command: "memory:".to_string(),
+                source: "MEMORY".to_string(),
+                description: format!(
+                    "{} remembered events. Evidence: {}",
+                    events.len(),
+                    source_summary
+                ),
+                synonyms: "continue last session coding work resume memory".to_string(),
+            },
+            score: 13.0,
+        }];
+
+        for (idx, (id, timestamp, source, event_type, title, detail, app_name, path, url)) in
+            events.into_iter().take(8).enumerate()
+        {
+            let launch_command = url
+                .clone()
+                .or_else(|| path.clone())
+                .unwrap_or_else(|| app_name.clone());
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: format!("memory.session.evidence.{}", id),
+                    control_name: title,
+                    breadcrumb_path: format!(
+                        "Memory > Last Session > {} > {}",
+                        source,
+                        format_timestamp_local(timestamp)
+                    ),
+                    launch_command,
+                    source: "MEMORY".to_string(),
+                    description: format!(
+                        "{}: {}",
+                        event_type,
+                        ellipsize_chars(&detail.replace("\r\n", " ").replace('\n', " "), 90)
+                    ),
+                    synonyms: format!(
+                        "{} {} {} {}",
+                        source.to_lowercase(),
+                        event_type.to_lowercase(),
+                        app_name.to_lowercase(),
+                        path.unwrap_or_default().to_lowercase()
+                    ),
+                },
+                score: 12.0 - (idx as f32 * 0.1),
+            });
+        }
+
+        results
+    }
+
     pub fn search_project(&self, project_keyword: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let conn = &self.conn;
@@ -2955,6 +3036,16 @@ impl SearchEngine {
 
         if let Some(days_ago) = workday_memory_query_days(&q_lower_trimmed) {
             return self.search_workday_memory_summary(days_ago);
+        }
+
+        if matches!(
+            q_lower_trimmed.as_str(),
+            "continue last session"
+                | "continue my last session"
+                | "continue my last coding session"
+                | "last session"
+        ) {
+            return self.search_last_memory_session();
         }
 
         // Intercept temporal context queries (e.g. yesterday before lunch)
@@ -4928,6 +5019,27 @@ mod tests {
         assert_eq!(
             normalize_event_timestamp(11_644_473_600_000_000 + 1_700_000_000_000_000),
             1_700_000_000
+        );
+    }
+
+    #[test]
+    fn session_source_summary_counts_events() {
+        let event = |source: &str| {
+            (
+                1,
+                1_700_000_000,
+                source.to_string(),
+                "Event".to_string(),
+                "Title".to_string(),
+                String::new(),
+                String::new(),
+                None,
+                None,
+            )
+        };
+        assert_eq!(
+            session_source_summary(&[event("Browser"), event("Git"), event("Browser")]),
+            "Browser 2, Git 1"
         );
     }
 
@@ -8275,6 +8387,75 @@ fn memory_source_summary(conn: &Connection, start: i64, end: i64) -> String {
         "No captured events yet.".to_string()
     } else {
         parts.join(", ")
+    }
+}
+
+type MemoryEventRow = (
+    i64,
+    i64,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
+fn latest_memory_session_events(conn: &Connection) -> Vec<MemoryEventRow> {
+    let mut stmt = match conn.prepare(
+        "SELECT id, timestamp, source, event_type, title, coalesce(detail, ''), coalesce(app_name, ''), path, url
+         FROM memory_events
+         ORDER BY timestamp DESC LIMIT 200",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows: Vec<MemoryEventRow> = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                normalize_event_timestamp(row.get::<_, i64>(1)?),
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+            ))
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+
+    let mut session = Vec::new();
+    let mut prev_ts = None;
+    for row in rows {
+        let ts = row.1;
+        if let Some(prev) = prev_ts {
+            if prev - ts > 30 * 60 {
+                break;
+            }
+        }
+        prev_ts = Some(ts);
+        session.push(row);
+    }
+    session
+}
+
+fn session_source_summary(events: &[MemoryEventRow]) -> String {
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    for event in events {
+        *counts.entry(event.2.as_str()).or_default() += 1;
+    }
+    if counts.is_empty() {
+        "No captured events yet.".to_string()
+    } else {
+        counts
+            .into_iter()
+            .map(|(source, count)| format!("{} {}", source, count))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
