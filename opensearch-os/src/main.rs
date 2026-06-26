@@ -5730,7 +5730,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         .unwrap_or(s.icon_control_panel)
                 } else if res.entry.launch_command.starts_with("ms-settings:") {
                     s.icon_settings
-                } else if res.entry.source == "web" || res.entry.source == "HISTORY" {
+                } else if res.entry.source == "web" || res.entry.source == "HISTORY" || res.entry.source == "QUICKLINK" || res.entry.launch_command.starts_with("https://") {
                     s.icon_web
                 } else if res.entry.source == "BOOKMARK" {
                     s.icon_bookmark
@@ -5738,14 +5738,16 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     s.icon_folder
                 } else if res.entry.source == "COMMIT" {
                     s.icon_commit
-                } else if res.entry.source == "TODO" {
+                } else if res.entry.source == "TODO" || res.entry.source == "SNIPPET" || res.entry.launch_command.starts_with("action:create_snippet") {
                     s.icon_todo
-                } else if res.entry.source == "CLIPBOARD" {
+                } else if res.entry.source == "CLIPBOARD" || res.entry.launch_command.starts_with("action:ask_clipboard") {
                     s.icon_clipboard
-                } else if res.entry.source == "AI" {
+                } else if res.entry.source == "AI" || res.entry.source == "MEMORY" || res.entry.launch_command.starts_with("action:reload_script_commands") {
                     s.icon_memory
-                } else if res.entry.source == "MEMORY" {
-                    s.icon_memory
+                } else if res.entry.launch_command.starts_with("start_focus_session:") || res.entry.launch_command.starts_with("action:toggle_focus_session") || res.entry.launch_command.starts_with("action:create_focus_category") {
+                    s.icon_bookmark // Star for focus
+                } else if res.entry.launch_command.starts_with("action:create_quicklink") {
+                    s.icon_web
                 } else {
                     s.icon_control_panel
                 };
