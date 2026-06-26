@@ -103,6 +103,7 @@ struct State {
     db_path: std::path::PathBuf,
     query: String,
     cursor_pos: usize,
+    search_input_active: bool,
     chat_input: String,
     chat_cursor_pos: usize,
     chat_input_active: bool,
@@ -442,6 +443,7 @@ unsafe fn run() {
         db_path: db_path.clone(),
         query: String::new(),
         cursor_pos: 0,
+        search_input_active: true,
         chat_input: String::new(),
         chat_cursor_pos: 0,
         chat_input_active: false,
@@ -1119,8 +1121,13 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     trigger_search(hwnd, s);
                 }
                 TIMER_CURSOR_BLINK => {
-                    s.cursor_visible = !s.cursor_visible;
-                    let _ = InvalidateRect(hwnd, None, FALSE);
+                    if text_caret_active(s) {
+                        s.cursor_visible = !s.cursor_visible;
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                    } else {
+                        s.cursor_visible = false;
+                        let _ = KillTimer(hwnd, TIMER_CURSOR_BLINK);
+                    }
                 }
                 TIMER_VOICE_ANIM => {
                     s.voice_dot_tick = (s.voice_dot_tick + 1) % 100;
@@ -1153,6 +1160,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             }
             let s = &mut *sp;
             if s.form_state != FormState::None {
+                s.search_input_active = true;
                 if let Some(c) = char::from_u32(wp.0 as u32) {
                     if !c.is_control() {
                         if s.text_selected {
@@ -1202,6 +1210,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         let _ = InvalidateRect(hwnd, None, FALSE);
                         return LRESULT(0);
                     }
+                    s.search_input_active = true;
                     if s.text_selected {
                         s.query.clear();
                         s.cursor_pos = 0;
@@ -2167,6 +2176,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
 
                 if mx >= input_x && mx < input_x + input_w && my >= input_y && my < input_y + 34 {
                     s.chat_input_active = true;
+                    s.search_input_active = false;
                     s.chat_cursor_pos = s.chat_input.len();
                     s.text_selected = false;
                     reset_cursor_blink(hwnd, s);
@@ -2176,6 +2186,8 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
 
                 // Click inside the chat history area (above bottom input box) copies the chat text
                 if my >= body_top && my < content_bottom {
+                    s.search_input_active = false;
+                    s.cursor_visible = false;
                     if let Some(ans) = &s.ai_answer {
                         copy_to_clipboard(hwnd, ans);
                     }
@@ -2250,6 +2262,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             let by = s.cy - s.win_h() / 2;
 
             if my >= by && my < by + SEARCH_H {
+                s.search_input_active = true;
                 if s.ai_answer.is_some() || s.ai_pending {
                     s.chat_input_active = false;
                     close_ai_panel(hwnd, s);
@@ -2281,6 +2294,8 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             for i in 0..n {
                 let r = s.result_rect(i);
                 if my >= r.top && my < r.bottom {
+                    s.search_input_active = false;
+                    s.cursor_visible = false;
                     s.selected = s.scroll_offset + i;
                     execute_selected(hwnd, s);
                     break;
@@ -2647,6 +2662,7 @@ unsafe fn start_voice_capture(hwnd: HWND, s: &mut State) {
     force_foreground(hwnd);
     s.query.clear();
     s.cursor_pos = 0;
+    s.search_input_active = false;
     s.selected = 0;
     s.scroll_offset = 0;
     s.text_selected = false;
@@ -2688,6 +2704,7 @@ unsafe fn reset_visible_chat_view(hwnd: HWND, s: &mut State) {
     s.active_chat_id = None;
     s.query.clear();
     s.cursor_pos = 0;
+    s.search_input_active = true;
     s.chat_input.clear();
     s.chat_cursor_pos = 0;
     s.chat_input_active = false;
@@ -4664,6 +4681,18 @@ fn floor_char_boundary(s: &str, index: usize) -> usize {
     i
 }
 
+fn search_input_caret_active(s: &State) -> bool {
+    search_input_caret_active_flags(s.search_input_active, s.note_editing, s.chat_input_active)
+}
+
+fn search_input_caret_active_flags(search_input_active: bool, note_editing: bool, chat_input_active: bool) -> bool {
+    search_input_active && !note_editing && !chat_input_active
+}
+
+fn text_caret_active(s: &State) -> bool {
+    s.note_editing || s.chat_input_active || search_input_caret_active(s)
+}
+
 fn delete_word_before(s: &mut State) {
     let cur = floor_char_boundary(&s.query, s.cursor_pos);
     let new_pos = word_left(&s.query, cur);
@@ -5238,7 +5267,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     }
 
     // Draw cursor
-    if s.cursor_visible && !s.chat_input_active {
+    if s.cursor_visible && search_input_caret_active(s) {
         let cur = floor_char_boundary(&s.query, s.cursor_pos);
         let before = &s.query[..cur];
         let dw_before: Vec<u16> = before.encode_utf16().collect();
@@ -5281,7 +5310,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         // Body — append a caret block so the user sees the insertion point.
         SelectObject(mdc, s.font_c);
         SetTextColor(mdc, CLR_WHITE);
-        let shown = if s.cursor_visible { format!("{}\u{2588}", s.note_text) } else { s.note_text.clone() };
+        let shown = if s.cursor_visible && s.note_editing { format!("{}\u{2588}", s.note_text) } else { s.note_text.clone() };
         let mut body: Vec<u16> = shown.encode_utf16().collect();
         let mut calc = RECT { left: x + pad, top: 0, right: x + w - pad, bottom: 0 };
         let _ = DrawTextW(mdc, &mut body.clone(), &mut calc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
@@ -7348,6 +7377,14 @@ mod tests {
         assert_eq!(u32::from_le_bytes(bmp[10..14].try_into().unwrap()), 54);
         assert_eq!(bmp.len(), 58);
     }
+
+    #[test]
+    fn search_cursor_only_belongs_to_search_input() {
+        assert!(search_input_caret_active_flags(true, false, false));
+        assert!(!search_input_caret_active_flags(false, false, false));
+        assert!(!search_input_caret_active_flags(true, true, false));
+        assert!(!search_input_caret_active_flags(true, false, true));
+    }
 }
 
 fn resolve_known_folder_path(path: &str) -> String {
@@ -7639,6 +7676,16 @@ unsafe fn open_note_editor(hwnd: HWND, s: &mut State, path: String) {
     s.note_path = Some(path);
     s.note_editing = true;
     s.note_scroll = 0;
+    s.ai_pending = false;
+    s.ai_answer = None;
+    s.ai_title.clear();
+    s.hermes_approval = None;
+    s.chat_input.clear();
+    s.chat_cursor_pos = 0;
+    s.chat_input_active = false;
+    s.search_input_active = false;
+    s.form_state = FormState::None;
+    s.text_selected = false;
     s.results.clear();
     s.selected = 0;
     reset_cursor_blink(hwnd, s);
@@ -7658,6 +7705,7 @@ unsafe fn close_note_editor(hwnd: HWND, s: &mut State) {
         s.note_text.clear();
         s.note_path = None;
         s.note_scroll = 0;
+        s.search_input_active = true;
         trigger_search(hwnd, s);
         let _ = InvalidateRect(hwnd, None, FALSE);
     }
