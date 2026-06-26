@@ -845,8 +845,11 @@ pub fn run(cmd: &str, input: &str) -> Result<String> {
 mod tests {
     use super::*;
 
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_config_resolution() {
+        let _guard = TEST_LOCK.lock().unwrap();
         // Isolate APPDATA to a temporary path to avoid reading host DB/configs
         let old_appdata = std::env::var("APPDATA").ok();
         let temp_dir = std::env::temp_dir().join("opensearch-os-test-appdata");
@@ -891,6 +894,7 @@ mod tests {
 
     #[test]
     fn hermes_falls_back_to_opencode_key_when_gateway_is_down() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let old_appdata = std::env::var("APPDATA").ok();
         let temp_dir = std::env::temp_dir().join("opensearch-os-test-hermes-fallback");
         let app_dir = temp_dir.join("opensearch-os");
@@ -903,8 +907,8 @@ mod tests {
 
         let conn = rusqlite::Connection::open(app_dir.join("file_index.db")).unwrap();
         conn.execute("CREATE TABLE IF NOT EXISTS ai_settings (key TEXT PRIMARY KEY, value TEXT);", []).unwrap();
-        conn.execute("INSERT INTO ai_settings (key, value) VALUES ('model', 'hermes-agent');", []).unwrap();
-        conn.execute("INSERT INTO ai_settings (key, value) VALUES ('api_key', 'sk-H-test-key');", []).unwrap();
+        conn.execute("INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('model', 'hermes-agent');", []).unwrap();
+        conn.execute("INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('api_key', 'sk-H-test-key');", []).unwrap();
         drop(conn);
 
         let cfg = get_agent_config();
