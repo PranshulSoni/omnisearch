@@ -2578,13 +2578,25 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
         // Agent follow-ups: prefer the streaming Runs API so a real Approve/Deny
         // button can be shown. The blocking path below is the fallback.
         if command == "agent" && ai::supports_runs_api() {
-            let cb = UiRunCallbacks { hwnd: SendHwnd(HWND(hwnd_raw as *mut _)) };
+            let cb_hwnd = SendHwnd(HWND(hwnd_raw as *mut _));
+            let prev_history = format_conversation(&original_prompt, &original_response);
+            let cb = UiRunCallbacks {
+                hwnd: cb_hwnd,
+                user: new_prompt.clone(),
+                prev_history,
+                db_path: db_path.clone(),
+                chat_id,
+                original_prompt: original_prompt.clone(),
+                original_response: original_response.clone(),
+            };
             let result = ai::run_agent_streaming(&system_prompt, &new_prompt, &cb);
             if let Err(e) = result {
-                let payload = (false, e.to_string());
+                let prev_history = format_conversation(&original_prompt, &original_response);
+                let formatted_err = format!("{}\n\n---\n\nUser: {}\n\n⚠ {}", prev_history, new_prompt, e);
+                let payload = (false, formatted_err);
                 let ptr = Box::into_raw(Box::new(payload)) as isize;
                 unsafe {
-                    let _ = PostMessageW(HWND(hwnd_raw as *mut _), WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
+                    let _ = PostMessageW(cb_hwnd.0, WM_AI_RESULT, WPARAM(0), LPARAM(ptr));
                 }
             }
             // on_done (success) is delivered by the callback; nothing more to do.
