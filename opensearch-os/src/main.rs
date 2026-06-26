@@ -145,6 +145,9 @@ struct State {
     note_text: String,
     note_path: Option<String>,
     note_scroll: i32,
+    // Explain Results: launch_command -> "why it surfaced" tag (e.g. "2h ago"),
+    // computed when results arrive so paint does no file I/O.
+    result_reasons: std::collections::HashMap<String, String>,
     // Voice activation
     voice_listening: bool,    // true = currently recording query
     voice_triggered: bool,    // launcher opened via voice (auto-execute on result)
@@ -480,6 +483,7 @@ unsafe fn run() {
         note_text: String::new(),
         note_path: None,
         note_scroll: 0,
+        result_reasons: std::collections::HashMap::new(),
         voice_listening: false,
         voice_triggered: false,
         voice_pending_exec: false,
@@ -978,6 +982,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 let s = &mut *sp;
                 if query_id == s.current_query_id {
                     s.results = results;
+                    s.result_reasons = compute_result_reasons(&s.results);
                     if s.results.is_empty() {
                         s.selected = 0;
                         s.scroll_offset = 0;
@@ -2834,6 +2839,46 @@ fn format_conversation(prompt: &str, response: &str) -> String {
         }
     }
     conversation
+}
+
+/// Relative-time tag for a file's mtime ("just now", "2h ago", "yesterday", "3w ago").
+/// ponytail: bucketed, no calendar lib — recency is the signal, exact dates aren't needed.
+fn relative_time(modified: std::time::SystemTime) -> String {
+    let secs = match std::time::SystemTime::now().duration_since(modified) {
+        Ok(d) => d.as_secs() as i64,
+        Err(_) => return String::new(), // mtime in the future — skip
+    };
+    match secs {
+        s if s < 60 => "just now".to_string(),
+        s if s < 3600 => format!("{}m ago", s / 60),
+        s if s < 86400 => format!("{}h ago", s / 3600),
+        s if s < 172800 => "yesterday".to_string(),
+        s if s < 604800 => format!("{}d ago", s / 86400),
+        s if s < 2592000 => format!("{}w ago", s / 604800),
+        s if s < 31536000 => format!("{}mo ago", s / 2592000),
+        s => format!("{}y ago", s / 31536000),
+    }
+}
+
+/// "Explain results": map each result's launch_command to a recency tag when it's a real
+/// file path. ponytail: stat per result on arrival (≤30, debounced) — not in the paint loop.
+fn compute_result_reasons(results: &[SearchResult]) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    for r in results {
+        let cmd = &r.entry.launch_command;
+        if map.contains_key(cmd) {
+            continue;
+        }
+        if let Ok(md) = std::fs::metadata(cmd) {
+            if let Ok(modified) = md.modified() {
+                let tag = relative_time(modified);
+                if !tag.is_empty() {
+                    map.insert(cmd.clone(), tag);
+                }
+            }
+        }
+    }
+    map
 }
 
 fn store_ai_chat(
@@ -5914,6 +5959,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
             );
 
+            // "Why it surfaced" recency tag (Explain Results), right-aligned on the
+            // breadcrumb line; the breadcrumb shortens to make room.
+            let reason = s.result_reasons.get(&res.entry.launch_command).filter(|r| !r.is_empty());
+            let reason_slot = if reason.is_some() { 96 } else { 0 };
+
             // Breadcrumb
             SelectObject(mdc, s.font_c);
             SetTextColor(mdc, CLR_GRAY);
@@ -5921,7 +5971,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let mut r2 = RECT {
                 left: tx,
                 top: cy + 24,
-                right: badge_left - 14,
+                right: badge_left - 14 - reason_slot,
                 bottom: cy + 40,
             };
             let _ = DrawTextW(
@@ -5930,6 +5980,23 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 &mut r2,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
             );
+
+            if let Some(reason) = reason {
+                SetTextColor(mdc, CLR_PH);
+                let mut rtxt: Vec<u16> = reason.encode_utf16().collect();
+                let mut rr = RECT {
+                    left: badge_left - 14 - reason_slot,
+                    top: cy + 24,
+                    right: badge_left - 14,
+                    bottom: cy + 40,
+                };
+                let _ = DrawTextW(
+                    mdc,
+                    &mut rtxt,
+                    &mut rr,
+                    DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+                );
+            }
 
             // Badge
             let badge_source = if res.entry.id.starts_with("clip.pinned.") {
@@ -7117,6 +7184,18 @@ unsafe fn draw_cached_bmp(hdc: HDC, x: i32, y: i32, w: i32, h: i32, hbitmap: HBI
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_relative_time() {
+        use std::time::{Duration, SystemTime};
+        let ago = |s| SystemTime::now() - Duration::from_secs(s);
+        assert_eq!(relative_time(ago(10)), "just now");
+        assert_eq!(relative_time(ago(120)), "2m ago");
+        assert_eq!(relative_time(ago(7200)), "2h ago");
+        assert_eq!(relative_time(ago(90000)), "yesterday");
+        assert_eq!(relative_time(ago(3 * 86400)), "3d ago");
+        assert_eq!(relative_time(ago(14 * 86400)), "2w ago");
+    }
 
     #[test]
     fn test_winrt_clipboard() {
