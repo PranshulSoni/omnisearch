@@ -572,9 +572,13 @@ pub trait RunCallbacks: Send {
 
 /// Returns true if the gateway advertises the runs + approval + SSE features.
 pub fn supports_runs_api() -> bool {
-    let cfg = get_hermes_config();
+    let cfg = get_agent_config();
+    if cfg.model == "hermes-agent" {
+        return true;
+    }
+    let cfg_hermes = get_hermes_config();
     let resp = ureq::get(&format!("{HERMES_BASE}/v1/capabilities"))
-        .set("Authorization", &format!("Bearer {}", cfg.api_key))
+        .set("Authorization", &format!("Bearer {}", cfg_hermes.api_key))
         .timeout(std::time::Duration::from_secs(4))
         .call();
     let v = match resp {
