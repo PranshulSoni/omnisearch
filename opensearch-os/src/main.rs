@@ -1120,7 +1120,7 @@ unsafe extern "system" fn wnd_proc(
             // AI answer panel captures keys: Esc/Backspace closes, Enter submits follow-up.
             if s.ai_pending {
                 match vk {
-                    VK_ESCAPE => start_hide(hwnd, s),
+                    VK_ESCAPE => { close_ai_panel(hwnd, s); return LRESULT(0); },
                     VK_DOWN => { ai_scroll_down(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); }
                     VK_UP => { ai_scroll_up(s, 40); let _ = InvalidateRect(hwnd, None, FALSE); }
                     _ => {}
@@ -1137,7 +1137,7 @@ unsafe extern "system" fn wnd_proc(
                 }
                 match vk {
                     VK_ESCAPE => {
-                        start_hide(hwnd, s);
+                        close_ai_panel(hwnd, s);
                         return LRESULT(0);
                     }
                     VK_BACK => {
@@ -2952,6 +2952,8 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             if let Ok(id) = id_str.parse::<i64>() {
                 if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
                     let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                    let _ = conn.execute("ALTER TABLE ai_chats ADD COLUMN run_id TEXT;", []);
+                    let _ = conn.execute("ALTER TABLE ai_chats ADD COLUMN pending_approval TEXT;", []);
                     if let Ok((title, prompt, response, run_id, pending_approval_str)) = conn.query_row(
                         "SELECT title, prompt, response, run_id, pending_approval FROM ai_chats WHERE id = ?",
                         [id],
