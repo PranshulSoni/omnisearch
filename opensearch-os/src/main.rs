@@ -1082,6 +1082,14 @@ unsafe extern "system" fn wnd_proc(
                     match c.to_ascii_lowercase() {
                         'a' => { resolve_current_approval(hwnd, s, true); return LRESULT(0); }
                         'd' => { resolve_current_approval(hwnd, s, false); return LRESULT(0); }
+                        'v' => {
+                            ai::ALWAYS_APPROVE.store(true, std::sync::atomic::Ordering::Relaxed);
+                            if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
+                                let _ = conn.execute("INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('always_approve', '1');", []);
+                            }
+                            resolve_current_approval(hwnd, s, true);
+                            return LRESULT(0);
+                        }
                         _ => {}
                     }
                 }
@@ -1795,7 +1803,7 @@ unsafe extern "system" fn wnd_proc(
                 // painter does, so the button rects line up exactly.
                 let win_h = s.win_h();
                 let y_start = s.cy - win_h / 2;
-                let footer_h = if s.ai_pending { 30 } else { 62 };
+                let footer_h = if s.hermes_approval.is_some() { 76 } else if s.ai_pending { 30 } else { 62 };
                 let content_bottom = y_start + SEARCH_H + 1 + AI_PANEL_H - footer_h;
                 let _ = win_h;
 
@@ -1803,6 +1811,7 @@ unsafe extern "system" fn wnd_proc(
                 let btn_h = 26;
                 let approve_w = 96;
                 let deny_w = 80;
+                let always_w = 130;
                 let gap = 8;
                 // The footer x-origin matches the morphed result box x. Reuse the
                 // same band the painter uses (the box is centered in the window).
@@ -1813,6 +1822,7 @@ unsafe extern "system" fn wnd_proc(
                 let pad = 24;
                 let approve_x = bx + pad;
                 let deny_x = approve_x + approve_w + gap;
+                let always_x = deny_x + deny_w + gap;
 
                 if my >= btn_y && my < btn_y + btn_h {
                     if mx >= approve_x && mx < approve_x + approve_w {
@@ -1821,6 +1831,14 @@ unsafe extern "system" fn wnd_proc(
                     }
                     if mx >= deny_x && mx < deny_x + deny_w {
                         resolve_current_approval(hwnd, s, false);
+                        return LRESULT(0);
+                    }
+                    if mx >= always_x && mx < always_x + always_w {
+                        ai::ALWAYS_APPROVE.store(true, std::sync::atomic::Ordering::Relaxed);
+                        if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
+                            let _ = conn.execute("INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('always_approve', '1');", []);
+                        }
+                        resolve_current_approval(hwnd, s, true);
                         return LRESULT(0);
                     }
                 }
@@ -2054,15 +2072,24 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
     if appearing {
         // Save the current foreground window so snippet auto-paste can restore focus to it
         s.prev_foreground = GetForegroundWindow();
-        s.query.clear();
-        s.cursor_pos = 0;
-        s.selected = 0;
-        s.scroll_offset = 0;
-        s.ai_pending = false;
-        s.ai_answer = None;
-        s.ai_scroll = 0;
-        s.ai_follow_bottom = true;
-        trigger_search(hwnd, s);
+        if !(s.ai_pending || s.ai_answer.is_some()) {
+            s.query.clear();
+            s.cursor_pos = 0;
+            s.selected = 0;
+            s.scroll_offset = 0;
+            s.ai_pending = false;
+            s.ai_answer = None;
+            s.ai_scroll = 0;
+            s.ai_follow_bottom = true;
+            trigger_search(hwnd, s);
+        } else {
+            s.selected = 0;
+            s.scroll_offset = 0;
+            if s.ai_pending {
+                let _ = KillTimer(hwnd, TIMER_AI_ANIM);
+                let _ = SetTimer(hwnd, TIMER_AI_ANIM, 180, None);
+            }
+        }
 
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
@@ -2338,7 +2365,6 @@ unsafe fn do_hide(hwnd: HWND, s: &mut State) {
     s.voice_pending_exec = false;
     s.voice_exec_deadline = None;
     s.form_state = FormState::None;
-    s.hermes_approval = None;
     let _ = ShowWindow(hwnd, SW_HIDE);
     s.anim = Anim::Hidden;
 }
@@ -2618,6 +2644,12 @@ struct UiRunCallbacks {
 
 impl ai::RunCallbacks for UiRunCallbacks {
     fn on_approval(&self, approval: ai::HermesApproval) {
+        if ai::ALWAYS_APPROVE.load(std::sync::atomic::Ordering::Relaxed) {
+            std::thread::spawn(move || {
+                let _ = ai::resolve_run_approval(&approval, true);
+            });
+            return;
+        }
         let ptr = Box::into_raw(Box::new(approval)) as isize;
         unsafe {
             let _ = PostMessageW(self.hwnd.0, WM_HERMES_APPROVAL, WPARAM(0), LPARAM(ptr));
@@ -3266,10 +3298,14 @@ unsafe fn measure_one(hdc: HDC, b: &markdown::MdBlock, s: &State, width: i32) ->
             let inner_w = (width - MD_CODE_PAD * 2).max(40);
             let mut h = 0;
             for line in text.split('\n') {
-                let mut wide: Vec<u16> = line.encode_utf16().collect();
-                let mut rc = RECT { left: 0, top: 0, right: inner_w, bottom: 0 };
-                let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
-                let lh = (rc.bottom - rc.top).max(18);
+                let lh = if line.is_empty() {
+                    18
+                } else {
+                    let mut wide: Vec<u16> = line.encode_utf16().collect();
+                    let mut rc = RECT { left: 0, top: 0, right: inner_w, bottom: 0 };
+                    let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+                    (rc.bottom - rc.top).max(18)
+                };
                 h += lh;
             }
             // Empty code block still shows one line.
@@ -3295,6 +3331,7 @@ fn strip_inline_text(b: &markdown::MdBlock) -> String {
 }
 
 unsafe fn wrap_text_height(hdc: HDC, text: &str, width: i32) -> i32 {
+    if text.is_empty() { return 16; }
     let mut wide: Vec<u16> = text.encode_utf16().collect();
     let mut rc = RECT { left: 0, top: 0, right: width, bottom: 0 };
     let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
@@ -3460,10 +3497,15 @@ unsafe fn paint_blocks(
                 // Measure height to draw the background box.
                 let mut h = 0;
                 for line in text.split('\n') {
-                    let mut wide: Vec<u16> = line.encode_utf16().collect();
-                    let mut rc = RECT { left: 0, top: 0, right: inner_w, bottom: 0 };
-                    let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
-                    h += (rc.bottom - rc.top).max(18);
+                    let lh = if line.is_empty() {
+                        18
+                    } else {
+                        let mut wide: Vec<u16> = line.encode_utf16().collect();
+                        let mut rc = RECT { left: 0, top: 0, right: inner_w, bottom: 0 };
+                        let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+                        (rc.bottom - rc.top).max(18)
+                    };
+                    h += lh;
                 }
                 if h == 0 { h = 18; }
                 let box_h = h + MD_CODE_PAD * 2;
@@ -3474,12 +3516,17 @@ unsafe fn paint_blocks(
                 SetTextColor(hdc, MD_CODE_FG);
                 let mut ly = y + MD_CODE_PAD;
                 for line in text.split('\n') {
-                    let mut wide: Vec<u16> = line.encode_utf16().collect();
-                    let mut measure = RECT { left: 0, top: 0, right: inner_w, bottom: 0 };
-                    let _ = DrawTextW(hdc, &mut wide, &mut measure, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
-                    let lh = (measure.bottom - measure.top).max(18);
-                    let mut rc = RECT { left: x + MD_CODE_PAD, top: ly, right: x + MD_CODE_PAD + inner_w, bottom: ly + lh };
-                    let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+                    let lh = if line.is_empty() {
+                        18
+                    } else {
+                        let mut wide: Vec<u16> = line.encode_utf16().collect();
+                        let mut measure = RECT { left: 0, top: 0, right: inner_w, bottom: 0 };
+                        let _ = DrawTextW(hdc, &mut wide, &mut measure, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+                        let lh = (measure.bottom - measure.top).max(18);
+                        let mut rc = RECT { left: x + MD_CODE_PAD, top: ly, right: x + MD_CODE_PAD + inner_w, bottom: ly + lh };
+                        let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+                        lh
+                    };
                     ly += lh;
                 }
                 y += box_h;
@@ -3525,7 +3572,7 @@ unsafe fn paint_run_lines(
 
             // Inline code chip: draw a rounded background behind the text.
             let is_code = std::ptr::eq(frag.font.0, s.font_code.0);
-            if is_code {
+            if is_code && !frag.text.is_empty() {
                 let tw = text_width(hdc, &frag.text, frag.font);
                 let metrics = font_metrics(hdc, frag.font);
                 let chip_h = metrics.0 + metrics.1 + 4;
@@ -3533,12 +3580,13 @@ unsafe fn paint_run_lines(
                 fill_rounded(hdc, cx, chip_top, tw + 10, chip_h, 4, MD_INLINE_CODE_BG);
             }
 
-            SetTextColor(hdc, color);
-            let wide: Vec<u16> = frag.text.encode_utf16().collect();
-            let mut rc = RECT { left: cx, top: baseline - (font_metrics(hdc, frag.font).0), right: cx + width, bottom: baseline + 40 };
-            let _ = DrawTextW(hdc, &mut wide.clone(), &mut rc, DT_LEFT | DT_NOPREFIX | DT_SINGLELINE);
-            cx += text_width(hdc, &frag.text, frag.font);
-            let _ = wide;
+            if !frag.text.is_empty() {
+                SetTextColor(hdc, color);
+                let mut wide: Vec<u16> = frag.text.encode_utf16().collect();
+                let mut rc = RECT { left: cx, top: baseline - (font_metrics(hdc, frag.font).0), right: cx + width, bottom: baseline + 40 };
+                let _ = DrawTextW(hdc, &mut wide, &mut rc, DT_LEFT | DT_NOPREFIX | DT_SINGLELINE);
+                cx += text_width(hdc, &frag.text, frag.font);
+            }
         }
         y += lh;
     }
@@ -4182,7 +4230,13 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         }
 
         let content_top = body_top + 48;
-        let footer_h = if s.ai_pending { 30 } else { 62 };
+        let footer_h = if s.hermes_approval.is_some() {
+            76
+        } else if s.ai_pending {
+            30
+        } else {
+            62
+        };
         let content_bottom = y + SEARCH_H + 1 + AI_PANEL_H - footer_h;
 
         let has_answer = s.ai_answer.is_some();
@@ -4343,7 +4397,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         fill(mdc, x, content_bottom, w, footer_h + 4, BG);
         fill(mdc, x, content_bottom, w, 1, CLR_DIV);
 
-        // ── Hermes approval banner + Approve/Deny buttons ───────────────
+        // ── Hermes approval banner + Approve/Deny/Always Approve buttons ───────────
         if let Some(ap) = &s.hermes_approval {
             // Banner row describing what needs approval.
             let banner_y = content_bottom + 2;
@@ -4354,27 +4408,34 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             } else {
                 format!("Hermes wants to run: {}", ap.tool)
             };
-            let mut bw: Vec<u16> = label.encode_utf16().collect();
-            let mut brc = RECT { left: x + pad, top: banner_y, right: x + w - pad, bottom: banner_y + 16 };
-            let _ = DrawTextW(mdc, &mut bw, &mut brc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            if !label.is_empty() {
+                let mut bw: Vec<u16> = label.encode_utf16().collect();
+                let mut brc = RECT { left: x + pad, top: banner_y, right: x + w - pad, bottom: banner_y + 16 };
+                let _ = DrawTextW(mdc, &mut bw, &mut brc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            }
 
             // Summary line (if any) in muted text.
             if !ap.summary.is_empty() {
                 SelectObject(mdc, s.font_c);
                 SetTextColor(mdc, CLR_GRAY);
                 let mut sw: Vec<u16> = ap.summary.chars().take(140).collect::<String>().encode_utf16().collect();
-                let mut src = RECT { left: x + pad, top: banner_y + 16, right: x + w - pad, bottom: banner_y + 32 };
-                let _ = DrawTextW(mdc, &mut sw, &mut src, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                if !sw.is_empty() {
+                    let mut src = RECT { left: x + pad, top: banner_y + 16, right: x + w - pad, bottom: banner_y + 32 };
+                    let _ = DrawTextW(mdc, &mut sw, &mut src, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                }
             }
 
-            // Two buttons: Approve (green) and Deny (red). Hit-tested in WM_LBUTTONDOWN.
+            // Three buttons: Approve (green), Deny (red), and Always Approve (blue). Hit-tested in WM_LBUTTONDOWN.
             let btn_y = banner_y + 36;
             let btn_h = 26;
             let approve_w = 96;
             let deny_w = 80;
+            let always_w = 130;
             let gap = 8;
             let approve_x = x + pad;
             let deny_x = approve_x + approve_w + gap;
+            let always_x = deny_x + deny_w + gap;
+
             // Approve button
             fill_rounded(mdc, approve_x, btn_y, approve_w, btn_h, 6, COLORREF(0x00_3A_6B_3A));
             SelectObject(mdc, s.font_b);
@@ -4382,17 +4443,26 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let mut aw: Vec<u16> = "Approve".encode_utf16().collect();
             let mut arc = RECT { left: approve_x, top: btn_y, right: approve_x + approve_w, bottom: btn_y + btn_h };
             let _ = DrawTextW(mdc, &mut aw, &mut arc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
             // Deny button
             fill_rounded(mdc, deny_x, btn_y, deny_w, btn_h, 6, COLORREF(0x00_6B_3A_3A));
             SetTextColor(mdc, COLORREF(0x00_F5_E6_E6));
             let mut dw: Vec<u16> = "Deny".encode_utf16().collect();
             let mut drc = RECT { left: deny_x, top: btn_y, right: deny_x + deny_w, bottom: btn_y + btn_h };
             let _ = DrawTextW(mdc, &mut dw, &mut drc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            // Always Approve button
+            fill_rounded(mdc, always_x, btn_y, always_w, btn_h, 6, COLORREF(0x00_2B_5B_8B));
+            SetTextColor(mdc, COLORREF(0x00_E6_EE_F5));
+            let mut alw: Vec<u16> = "Always Approve".encode_utf16().collect();
+            let mut alrc = RECT { left: always_x, top: btn_y, right: always_x + always_w, bottom: btn_y + btn_h };
+            let _ = DrawTextW(mdc, &mut alw, &mut alrc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
             // Hint
             SelectObject(mdc, s.font_b);
             SetTextColor(mdc, CLR_GRAY);
-            let mut hw: Vec<u16> = "A / Enter approve · D / Esc deny".encode_utf16().collect();
-            let mut hrc = RECT { left: deny_x + deny_w + 12, top: btn_y, right: x + w - pad, bottom: btn_y + btn_h };
+            let mut hw: Vec<u16> = "A approve · D deny · V always".encode_utf16().collect();
+            let mut hrc = RECT { left: always_x + always_w + 12, top: btn_y, right: x + w - pad, bottom: btn_y + btn_h };
             let _ = DrawTextW(mdc, &mut hw, &mut hrc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         } else if s.ai_pending {
             SelectObject(mdc, s.font_b);
