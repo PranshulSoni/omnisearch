@@ -2884,10 +2884,13 @@ fn compute_result_reasons(results: &[SearchResult]) -> std::collections::HashMap
                 .and_then(|t| t.parse::<i64>().ok())
                 .map(|ts| relative_age(now - ts))
                 .unwrap_or_default()
-        } else if let Ok(md) = std::fs::metadata(cmd) {
-            md.modified().map(relative_time).unwrap_or_default()
         } else {
-            String::new()
+            // Files use mtime. Notes wrap the path as open_note:<path>.
+            let path = cmd.strip_prefix("open_note:").unwrap_or(cmd);
+            std::fs::metadata(path)
+                .and_then(|md| md.modified())
+                .map(relative_time)
+                .unwrap_or_default()
         };
         if !tag.is_empty() {
             map.insert(cmd.clone(), tag);
