@@ -17,7 +17,6 @@
   - [Other Built Features](#other-built-features)
 - [Features NOT Yet Built](#features-not-yet-built)
   - [AI & Commands — Missing](#ai--commands--missing)
-  - [System Actions — Missing](#system-actions--missing)
   - [Settings & Management — Missing](#settings--management--missing)
   - [Developer & Extensions — Missing](#developer--extensions--missing)
   - [Focus — Missing](#focus--missing)
@@ -111,6 +110,12 @@
 | Next Track | `next track` | `VK_MEDIA_NEXT_TRACK` |
 | Previous Track | `previous track` | `VK_MEDIA_PREV_TRACK` |
 | Stop Playback | `stop playback` | `VK_MEDIA_STOP` |
+| Set Volume to 0/25/50/75/100% | `set volume to X%` | `action:volume:X` |
+| Toggle System Appearance | `toggle theme`, `dark mode` | PowerShell Registry toggle |
+| Quit All Apps | `quit all apps` | `EnumWindows` + `WM_CLOSE` |
+| Quit All Apps Except Frontmost | `quit other apps` | `EnumWindows` excluding foreground |
+| Hide All Apps Except Frontmost | `hide other apps` | `EnumWindows` + `SW_MINIMIZE` |
+| Toggle HDR | `toggle hdr` | `Win+Alt+B` keybd_event |
 
 **Windows Settings Shortcuts (via `ms-settings:` URIs):** Wi-Fi, Bluetooth, Display, Night Light (settings page), Sound, Notifications, Power & Battery, Installed Apps, Default Apps, Startup Apps, Account/Your Info, Sign-In Options, VPN, Proxy, Windows Update, Storage, Privacy, Location, Camera, Date & Time, Language & Region, Mouse, Touchpad, Personalization, Taskbar, Accessibility, Developer Mode, Activation.
 
@@ -262,23 +267,6 @@
 | 10 | Summarize Webpage | — | AI summarize only works on pasted text; no URL fetch + summarize pipeline |
 
 
-### System Actions — Missing
-
-| # | Feature | Status | Notes |
-|---|---------|--------|-------|
-| 1 | Confetti | ❌ | Fun/easter egg feature — not implemented |
-| 2 | Hide All Apps Except Frontmost | ❌ | No `minimize all except` logic |
-| 3 | Quit All Apps | ❌ | No mass-quit implementation |
-| 4 | Quit All Apps Except Frontmost | ❌ | — |
-| 5 | Toggle HDR | ❌ | No HDR toggle; would need `IDXGIOutput` or `DisplayConfig` |
-| 6 | Toggle Night Light (direct) | ⚠️ Partial | Current implementation only opens `ms-settings:nightlight`; not a true toggle |
-| 7 | Toggle System Appearance (dark/light) | ❌ | No registry toggle for `AppsUseLightTheme` / `SystemUsesLightTheme` |
-| 8 | Toggle Focus Session | ❌ | No focus/DND integration |
-| 9 | Set Volume to 0% | ❌ | No preset quick actions for 0/25/50/75/100% |
-| 10 | Set Volume to 25% | ❌ | — |
-| 11 | Set Volume to 50% | ❌ | — |
-| 12 | Set Volume to 75% | ❌ | — |
-| 13 | Set Volume to 100% | ❌ | — |
 
 ### Settings & Management — Missing
 
@@ -408,7 +396,7 @@ All 14 issues are currently **open** with zero closed/resolved.
 |----------|-------|-----------|------------|
 | AI & Commands | 14 | 10 | 58% |
 | Window Management | 50 | 7 | 88% |
-| System Actions | 22 | 13 | 63% |
+| System Actions | 32 | 0 | 100% |
 | Search Prefixes | 13 | 0 | 100% |
 | Quicklinks & Snippets | 8 | 0 | 100% |
 | Clipboard | 5 | 1 | 83% |

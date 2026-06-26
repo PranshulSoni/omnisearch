@@ -212,6 +212,90 @@ fn handle_action(action: &str) {
         return;
     }
     match action {
+        "toggle_theme" => {
+            let _ = Command::new("powershell")
+                .args([
+                    "-WindowStyle", "Hidden",
+                    "-Command",
+                    "$p = 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize'; $v = (Get-ItemProperty -Path $p).AppsUseLightTheme; $n = if ($v -eq 1) { 0 } else { 1 }; Set-ItemProperty -Path $p -Name AppsUseLightTheme -Value $n; Set-ItemProperty -Path $p -Name SystemUsesLightTheme -Value $n",
+                ])
+                .creation_flags(0x08000000)
+                .spawn();
+        }
+        "quit_all_apps" => {
+            unsafe {
+                use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, IsWindowVisible, PostMessageW, WM_CLOSE, GetWindowThreadProcessId};
+                use windows::Win32::Foundation::{HWND, LPARAM, BOOL, WPARAM};
+                struct Data { my_pid: u32 }
+                unsafe extern "system" fn enum_func(hwnd: HWND, lparam: LPARAM) -> BOOL {
+                    let data = &*(lparam.0 as *const Data);
+                    if IsWindowVisible(hwnd).as_bool() {
+                        let mut pid = 0;
+                        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                        if pid != data.my_pid {
+                            let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                        }
+                    }
+                    BOOL(1)
+                }
+                let data = Data { my_pid: std::process::id() };
+                let _ = EnumWindows(Some(enum_func), LPARAM(&data as *const _ as isize));
+            }
+        }
+        "quit_other_apps" => {
+            unsafe {
+                use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, EnumWindows, IsWindowVisible, PostMessageW, WM_CLOSE, GetWindowThreadProcessId};
+                use windows::Win32::Foundation::{HWND, LPARAM, BOOL, WPARAM};
+                struct Data { fg: HWND, my_pid: u32 }
+                unsafe extern "system" fn enum_func(hwnd: HWND, lparam: LPARAM) -> BOOL {
+                    let data = &*(lparam.0 as *const Data);
+                    if hwnd != data.fg && IsWindowVisible(hwnd).as_bool() {
+                        let mut pid = 0;
+                        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                        if pid != data.my_pid {
+                            let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                        }
+                    }
+                    BOOL(1)
+                }
+                let fg = GetForegroundWindow();
+                let data = Data { fg, my_pid: std::process::id() };
+                let _ = EnumWindows(Some(enum_func), LPARAM(&data as *const _ as isize));
+            }
+        }
+        "hide_other_apps" => {
+            unsafe {
+                use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, EnumWindows, IsWindowVisible, ShowWindow, SW_MINIMIZE, GetWindowThreadProcessId};
+                use windows::Win32::Foundation::{HWND, LPARAM, BOOL};
+                struct Data { fg: HWND, my_pid: u32 }
+                unsafe extern "system" fn enum_func(hwnd: HWND, lparam: LPARAM) -> BOOL {
+                    let data = &*(lparam.0 as *const Data);
+                    if hwnd != data.fg && IsWindowVisible(hwnd).as_bool() {
+                        let mut pid = 0;
+                        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                        if pid != data.my_pid {
+                            let _ = ShowWindow(hwnd, SW_MINIMIZE);
+                        }
+                    }
+                    BOOL(1)
+                }
+                let fg = GetForegroundWindow();
+                let data = Data { fg, my_pid: std::process::id() };
+                let _ = EnumWindows(Some(enum_func), LPARAM(&data as *const _ as isize));
+            }
+        }
+        "toggle_hdr" => {
+            unsafe {
+                use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_LWIN, VK_LMENU};
+                const VK_B: u8 = 0x42;
+                keybd_event(VK_LWIN.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
+                keybd_event(VK_LMENU.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
+                keybd_event(VK_B, 0, KEYBD_EVENT_FLAGS(0), 0);
+                keybd_event(VK_B, 0, KEYEVENTF_KEYUP, 0);
+                keybd_event(VK_LMENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+                keybd_event(VK_LWIN.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+            }
+        }
         "lock" => {
             unsafe {
                 let _ = windows::Win32::System::Shutdown::LockWorkStation();
