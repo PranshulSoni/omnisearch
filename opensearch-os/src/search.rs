@@ -124,6 +124,42 @@ pub struct SearchResult {
     pub score: f32,
 }
 
+/// lean-build allowlist: keep only the curated feature set. See SearchEngine::search.
+fn lean_allowed(r: &SearchResult) -> bool {
+    let s = r.entry.source.as_str();
+    let cmd = r.entry.launch_command.as_str();
+
+    // (4) Control panel + modern settings — matched by how Windows opens them.
+    if cmd.starts_with("ms-settings:")
+        || cmd.starts_with("control")
+        || cmd.contains(".cpl")
+        || cmd.ends_with(".msc")
+    {
+        return true;
+    }
+
+    // (9) AI agents and their history.
+    if cmd.starts_with("agent:")
+        || cmd.starts_with("openagent:")
+        || cmd.starts_with("mkagent:")
+        || cmd.starts_with("aichat:")
+    {
+        return true;
+    }
+
+    // Allowed scope-folders so the user can still navigate into these categories.
+    if s == "FOLDER" {
+        return matches!(
+            cmd,
+            "file:" | "code:" | "img:" | "image:" | "screenshots:"
+                | "commits:" | "history:" | "bookmarks:" | "agents:" | "agentchats:"
+        );
+    }
+
+    // (1-3) files / OCR / content, (5) apps incl. Microsoft, (6) commits, (7) history, (8) bookmarks.
+    matches!(s, "FILE" | "RECENT" | "CODE" | "app" | "COMMIT" | "HISTORY" | "BOOKMARK")
+}
+
 struct CatalogEntryIndex {
     name: String,
     name_chars: usize,
@@ -2855,7 +2891,19 @@ impl SearchEngine {
     }
 
     // ponytail: this 1350-line method is a God object. Skipped decomposition because it works fine and splitting it adds overhead and indirection. Decompose when a new search source actually breaks it.
+    /// lean-build: only surface the curated feature set (files/OCR/content, settings &
+    /// control panel, apps, git commits, browser history & bookmarks, AI agents & history).
+    /// Everything else (clipboard, notes, todos, snippets, quicklinks, window mgmt, system
+    /// actions, calculator, web search, AI text commands) is produced by search_raw but
+    /// filtered out here. ponytail: one gate beats deleting thousands of lines.
     pub fn search(&mut self, query: &str, top_k: usize) -> Vec<SearchResult> {
+        let mut results = self.search_raw(query, top_k * 3);
+        results.retain(lean_allowed);
+        results.truncate(top_k);
+        results
+    }
+
+    fn search_raw(&mut self, query: &str, top_k: usize) -> Vec<SearchResult> {
         let q = query.trim();
         let q_lower_trimmed = q.to_lowercase();
 
@@ -4895,6 +4943,41 @@ fn mean_pool_norm(hidden: &[f32], mask: &[i64], seq: usize, dim: usize) -> Vec<f
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lean_allowlist_keeps_only_curated() {
+        let mk = |source: &str, cmd: &str| SearchResult {
+            entry: CatalogEntry {
+                id: String::new(),
+                control_name: String::new(),
+                breadcrumb_path: String::new(),
+                launch_command: cmd.into(),
+                source: source.into(),
+                description: String::new(),
+                synonyms: String::new(),
+            },
+            score: 0.0,
+        };
+        // kept
+        for (s, c) in [
+            ("FILE", "C:/x.pdf"), ("RECENT", "C:/x"), ("CODE", "C:/x.rs"),
+            ("app", "shell:AppsFolder\\X"), ("COMMIT", "x"),
+            ("HISTORY", "https://x"), ("BOOKMARK", "https://x"),
+            ("X", "ms-settings:display"), ("X", "control.exe /name X"), ("X", "appwiz.cpl"),
+            ("AI", "agent:1\u{1f}hi"), ("AI", "openagent:1\u{1f}n"), ("AI", "aichat:5"),
+            ("FOLDER", "commits:"), ("FOLDER", "bookmarks:"), ("FOLDER", "agents:"),
+        ] {
+            assert!(lean_allowed(&mk(s, c)), "should keep {s} {c}");
+        }
+        // dropped
+        for (s, c) in [
+            ("CLIPBOARD", "copy:hi"), ("CALC", "copy:4"), ("AI", "ai:ask:hi"),
+            ("AI", "aichats:"), ("FOLDER", "clip:"), ("FOLDER", "notes:"),
+            ("TODO", "x"), ("SNIPPET", "x"), ("QUICKLINK", "https://x"), ("web", "https://google.com"),
+        ] {
+            assert!(!lean_allowed(&mk(s, c)), "should drop {s} {c}");
+        }
+    }
 
     #[test]
     fn catalog_index_caches_lowercase_fields() {
