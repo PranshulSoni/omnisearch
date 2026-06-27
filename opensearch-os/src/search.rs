@@ -2901,9 +2901,11 @@ impl SearchEngine {
     /// actions, calculator, web search, AI text commands) is produced by search_raw but
     /// filtered out here. ponytail: one gate beats deleting thousands of lines.
     pub fn search(&mut self, query: &str, top_k: usize) -> Vec<SearchResult> {
-        let mut results = self.search_raw(query, top_k * 3);
+        // Filter only — do NOT re-truncate. search_raw already applies the right limits
+        // per query type (file:/code: return up to 50, with content/OCR matches at the
+        // tail); truncating here cut those off when filename matches filled the top.
+        let mut results = self.search_raw(query, top_k);
         results.retain(lean_allowed);
-        results.truncate(top_k);
         results
     }
 
