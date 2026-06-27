@@ -341,6 +341,79 @@ fn flush_updates(conn: &mut Connection, updates: &mut Vec<PendingUpdate>) -> any
     Ok(())
 }
 
+struct ExtractJob {
+    path: PathBuf,
+    name: String,
+    ext: String,
+    modified: i64,
+    size: i64,
+}
+
+/// Extract document text + image OCR for the given files in parallel (the slow part of
+/// indexing). Returns a receiver of completed PendingUpdates so the caller can flush them
+/// to SQLite incrementally (bounded result channel keeps memory in check). Workers run at
+/// below-normal priority so a fast first-pass index still yields to the foreground.
+fn spawn_extractors(jobs: Vec<ExtractJob>) -> std::sync::mpsc::Receiver<PendingUpdate> {
+    use std::sync::mpsc;
+    use std::sync::{Arc, Mutex};
+
+    let n_workers = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(4);
+
+    let (job_tx, job_rx) = mpsc::channel::<ExtractJob>(); // unbounded; jobs are tiny (paths/meta)
+    let job_rx = Arc::new(Mutex::new(job_rx));
+    let (res_tx, res_rx) = mpsc::sync_channel::<PendingUpdate>(256); // bounded → backpressure
+
+    for _ in 0..n_workers {
+        let job_rx = Arc::clone(&job_rx);
+        let res_tx = res_tx.clone();
+        thread::spawn(move || {
+            // OCR (WinRT) needs COM; below-normal so we don't starve the user.
+            let _ = unsafe {
+                windows::Win32::System::Com::CoInitializeEx(
+                    None,
+                    windows::Win32::System::Com::COINIT_MULTITHREADED,
+                )
+            };
+            unsafe {
+                use windows::Win32::System::Threading::{
+                    GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
+                };
+                let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            }
+            loop {
+                let job = match job_rx.lock().unwrap().recv() {
+                    Ok(j) => j,
+                    Err(_) => break, // feeder dropped → all jobs done
+                };
+                let content = extract_content(&job.path, &job.ext).unwrap_or_default();
+                let _ = res_tx.send(PendingUpdate {
+                    path: job.path.to_string_lossy().into_owned(),
+                    name: job.name,
+                    extension: job.ext,
+                    modified: job.modified,
+                    size: job.size,
+                    is_dir: 0,
+                    content: Some(content),
+                });
+            }
+        });
+    }
+    drop(res_tx); // workers hold the only senders now → res_rx ends when they finish
+
+    // Feed jobs from a separate thread so sending never blocks the result drain.
+    thread::spawn(move || {
+        for job in jobs {
+            if job_tx.send(job).is_err() {
+                break;
+            }
+        }
+    });
+
+    res_rx
+}
+
 fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<()> {
     log_indexer(&format!(
         "run_indexer_folders started with folders: {:?}",
@@ -383,6 +456,7 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
     // They grew infinitely on large drives and caused memory leaks.
     let mut file_count = 0;
     let mut pending_updates = Vec::new();
+    let mut extract_jobs: Vec<ExtractJob> = Vec::new();
 
     for folder in folders {
         log_indexer(&format!("Evaluating folder for index: {:?}", folder));
@@ -474,57 +548,35 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
             }
 
             if db_modified.is_none() || db_modified.unwrap() != modified || needs_fts_check {
-                let mut content = None;
                 if is_file && should_fts {
-                    if is_text_or_doc {
-                        let is_pdf = ext == "pdf";
-                        let is_docx = ext == "docx";
-
-                        let extracted = if is_pdf {
-                            safe_extract_pdf_text(path)
-                        } else if is_docx {
-                            safe_extract_docx_text(path)
-                        } else {
-                            read_text_file(path).ok()
-                        };
-
-                        content = Some(extracted.unwrap_or_default());
-
-                        if is_pdf || is_docx {
-                            thread::sleep(std::time::Duration::from_millis(50));
-                        }
-                    } else if is_image {
-                        log_indexer(&format!("Extracting OCR text from image: {}", path_str));
-                        let extracted = extract_ocr_text(path);
-                        log_indexer(&format!(
-                            "OCR finished for: {}. Text found: {:?}",
-                            path_str, extracted
-                        ));
-                        content = Some(extracted.unwrap_or_default());
-                        thread::sleep(std::time::Duration::from_millis(100));
+                    // Defer the slow content/OCR extraction to the parallel pool below.
+                    extract_jobs.push(ExtractJob {
+                        path: path.to_path_buf(),
+                        name,
+                        ext,
+                        modified,
+                        size: file_size,
+                    });
+                } else {
+                    // Folders / non-indexable files: just the name+meta row, no extraction.
+                    pending_updates.push(PendingUpdate {
+                        path: path_str,
+                        name,
+                        extension: ext,
+                        modified,
+                        size: file_size,
+                        is_dir: if is_dir { 1 } else { 0 },
+                        content: None,
+                    });
+                    if pending_updates.len() >= 1000 {
+                        flush_updates(&mut conn, &mut pending_updates)?;
                     }
-                }
-
-                pending_updates.push(PendingUpdate {
-                    path: path_str,
-                    name,
-                    extension: ext,
-                    modified,
-                    size: file_size,
-                    is_dir: if is_dir { 1 } else { 0 },
-                    content,
-                });
-
-                if pending_updates.len() >= 1000 {
-                    log_indexer("Flushing 1000 index updates to database...");
-                    flush_updates(&mut conn, &mut pending_updates)?;
                 }
             }
 
-            // Yield CPU cycles after scanning every 1000 files
             file_count += 1;
-            if file_count % 1000 == 0 {
-                thread::sleep(std::time::Duration::from_millis(5));
+            if file_count % 5000 == 0 {
+                log_indexer(&format!("Scanned {} entries...", file_count));
             }
         }
         log_indexer(&format!(
@@ -533,8 +585,24 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
         ));
     }
 
-    log_indexer("Flushing remaining index updates to database...");
+    log_indexer("Flushing name/meta updates to database...");
     flush_updates(&mut conn, &mut pending_updates)?;
+
+    // Extract document text + image OCR for changed files in parallel (the slow part),
+    // flushing results as they stream back so memory stays bounded.
+    if !extract_jobs.is_empty() {
+        log_indexer(&format!(
+            "Extracting content/OCR for {} files in parallel...",
+            extract_jobs.len()
+        ));
+        for update in spawn_extractors(extract_jobs) {
+            pending_updates.push(update);
+            if pending_updates.len() >= 500 {
+                flush_updates(&mut conn, &mut pending_updates)?;
+            }
+        }
+        flush_updates(&mut conn, &mut pending_updates)?;
+    }
 
     // Deleted files cleanup skipped to prevent memory bloat of seen_paths (#8)
 
