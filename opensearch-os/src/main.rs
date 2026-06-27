@@ -1395,8 +1395,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         return LRESULT(0);
                     }
                     VK_ESCAPE => {
-                        close_ai_panel(hwnd, s);
-                        start_hide(hwnd, s);
+                        close_ai_panel_to_agent_history(hwnd, s);
                         return LRESULT(0);
                     }
                     _ => {}
@@ -1435,8 +1434,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             if s.ai_pending {
                 match vk {
                     VK_ESCAPE => {
-                        close_ai_panel(hwnd, s);
-                        start_hide(hwnd, s);
+                        close_ai_panel_to_agent_history(hwnd, s);
                         return LRESULT(0);
                     }
                     VK_DOWN => {
@@ -1470,8 +1468,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     }
                     match vk {
                         VK_ESCAPE => {
-                            close_ai_panel(hwnd, s);
-                            start_hide(hwnd, s);
+                            close_ai_panel_to_agent_history(hwnd, s);
                             return LRESULT(0);
                         }
                         VK_BACK => {
@@ -1546,8 +1543,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 }
                 match vk {
                     VK_ESCAPE => {
-                        close_ai_panel(hwnd, s);
-                        start_hide(hwnd, s);
+                        close_ai_panel_to_agent_history(hwnd, s);
                         return LRESULT(0);
                     }
                     VK_BACK => {
@@ -3630,6 +3626,17 @@ unsafe fn close_ai_panel(hwnd: HWND, s: &mut State) {
     s.reset_results();
     trigger_search(hwnd, s); // restore normal results for the current query
     let _ = InvalidateRect(hwnd, None, FALSE);
+}
+
+unsafe fn close_ai_panel_to_agent_history(hwnd: HWND, s: &mut State) {
+    close_ai_panel(hwnd, s);
+    s.query = "agentchats:".to_string();
+    s.cursor_pos = s.query.len();
+    s.selected = 0;
+    s.scroll_offset = 0;
+    s.active_filter = FilterType::All;
+    s.filter_scroll_x = 0;
+    trigger_search(hwnd, s);
 }
 
 // Resolve the currently-shown Hermes approval: POST the decision to the gateway
