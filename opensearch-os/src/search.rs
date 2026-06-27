@@ -924,14 +924,14 @@ impl SearchEngine {
                 "SELECT f.path, f.name, f.extension, snippet(files_fts, 1, '', '', '...', 15) \
                  FROM files f \
                  JOIN files_fts fts ON f.path = fts.path \
-                 WHERE files_fts MATCH ? AND f.extension IN ({}) LIMIT ?",
+                 WHERE files_fts MATCH ? AND f.extension IN ({}) ORDER BY rank LIMIT ?",
                 placeholders.join(",")
             )
         } else {
             "SELECT f.path, f.name, f.extension, snippet(files_fts, 1, '', '', '...', 15) \
              FROM files f \
              JOIN files_fts fts ON f.path = fts.path \
-             WHERE files_fts MATCH ? LIMIT ?"
+             WHERE files_fts MATCH ? ORDER BY rank LIMIT ?"
                 .to_string()
         };
         if let Ok(mut stmt_fts) = conn.prepare(&fts_query_str) {
@@ -942,7 +942,9 @@ impl SearchEngine {
                     fts_params_vec.push(rusqlite::types::Value::Text(ext.to_string()));
                 }
             }
-            fts_params_vec.push(rusqlite::types::Value::Integer(max_results as i64));
+            // Order by bm25 relevance and keep a generous cap so content/OCR matches
+            // aren't cut off by arbitrary rowid order (was LIMIT 50, unordered → misses).
+            fts_params_vec.push(rusqlite::types::Value::Integer(300));
             let fts_params_ref = rusqlite::params_from_iter(fts_params_vec.iter());
             if let Ok(rows) = stmt_fts.query_map(fts_params_ref, |row| {
                 Ok((
@@ -2112,7 +2114,7 @@ impl SearchEngine {
             if let Ok(mut stmt) = conn.prepare(&format!(
                 "SELECT f.path, f.name, f.extension, snippet(files_fts, 1, '', '', '...', 12) \
                           FROM files f JOIN files_fts fts ON f.path = fts.path \
-                          WHERE files_fts MATCH ? AND {IMG_FILTER} LIMIT 50"
+                          WHERE files_fts MATCH ? AND {IMG_FILTER} ORDER BY rank LIMIT 300"
             )) {
                 if let Ok(rows) = stmt.query_map([&fts_q], |r| {
                     Ok((
