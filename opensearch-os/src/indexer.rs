@@ -645,6 +645,16 @@ pub fn get_scan_folders() -> Vec<PathBuf> {
         }
     }
 
+    // 1b. Program Files (user wants installed-app files indexed too).
+    for var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+        if let Ok(p) = std::env::var(var) {
+            let pb = PathBuf::from(p);
+            if pb.exists() && !folders.contains(&pb) {
+                folders.push(pb);
+            }
+        }
+    }
+
     // 2. Discover all other fixed drives and scan them from their roots
     for c in b'A'..=b'Z' {
         let drive_letter = c as char;
