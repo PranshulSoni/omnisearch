@@ -71,14 +71,15 @@ const ANIM_DURATION_SEC: f32 = 0.115; // 115ms
 // const PILL_H: i32 = 12; // Starting height at top center
 
 // ── Colors (COLORREF = 0x00BBGGRR) ───────────────────────────────────────────
-const BG: COLORREF = COLORREF(0x00_1F_1D_1C);
-const BG_SEL: COLORREF = COLORREF(0x00_36_31_2F);
-const CLR_DIV: COLORREF = COLORREF(0x00_35_31_30);
-const CLR_WHITE: COLORREF = COLORREF(0x00_FF_FF_FF);
-const CLR_GRAY: COLORREF = COLORREF(0x00_A7_A1_9F);
-const CLR_PH: COLORREF = COLORREF(0x00_70_6A_68);
-const CLR_BDGBG: COLORREF = COLORREF(0x00_38_34_33);
-const CLR_BDGTX: COLORREF = COLORREF(0x00_B4_AD_AA);
+const BG: COLORREF = COLORREF(0x00_FC_FA_F7);
+const BG_SEL: COLORREF = COLORREF(0x00_FF_F3_EA);
+const CLR_DIV: COLORREF = COLORREF(0x00_E7_E1_D8);
+const CLR_WHITE: COLORREF = COLORREF(0x00_2A_1E_16);
+const CLR_GRAY: COLORREF = COLORREF(0x00_7A_69_5F);
+const CLR_PH: COLORREF = COLORREF(0x00_98_86_78);
+const CLR_BDGBG: COLORREF = COLORREF(0x00_F4_F1_ED);
+const CLR_BDGTX: COLORREF = COLORREF(0x00_5B_4B_43);
+const CLR_ACCENT: COLORREF = COLORREF(0x00_EB_83_16);
 const COLOR_KEY: COLORREF = COLORREF(0x00_12_34_56);
 
 #[derive(Debug, Clone, PartialEq)]
@@ -5187,7 +5188,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             FormState::CreateFocusCategoryName => "Create Focus Category: Enter Name...",
             FormState::CreateFocusCategoryBlocked { .. } => "Focus Category: Enter blocked apps (comma separated, e.g. discord.exe, slack.exe)...",
             FormState::CreateNoteName => "Create Note: Enter Title...",
-            FormState::None => "Search Windows settings...",
+            FormState::None => "Search files, code, PDFs, OCR...",
         };
         let mut ph: Vec<u16> = ph_str.encode_utf16().collect();
         SetTextColor(mdc, CLR_PH);
@@ -5940,28 +5941,69 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let res_idx = s.scroll_offset + i;
             let res = &s.results[res_idx];
             let ry = y + SEARCH_H + 1 + i as i32 * RESULT_H;
+            let starts_section = res_idx == 0
+                || source_section_label(&s.results[res_idx - 1].entry.source)
+                    != source_section_label(&res.entry.source);
+            let section_shift = if starts_section { 12 } else { 0 };
 
             let is_checked = s.selected_clip_ids.contains(&res.entry.id);
             if res_idx == s.selected {
-                if is_checked {
-                    fill(mdc, x, ry, list_w, RESULT_H, COLORREF(0x00_4E_45_45));
+                let row_bg = if is_checked {
+                    COLORREF(0x00_F0_E7_DA)
                 } else {
-                    fill(mdc, x, ry, list_w, RESULT_H, BG_SEL);
-                }
+                    BG_SEL
+                };
+                fill_rounded(
+                    mdc,
+                    x + 12,
+                    ry + 5,
+                    list_w - 24,
+                    RESULT_H - 10,
+                    8,
+                    COLORREF(0x00_DA_C5_AE),
+                );
+                fill_rounded(mdc, x + 13, ry + 6, list_w - 26, RESULT_H - 12, 7, row_bg);
             } else if is_checked {
-                fill(mdc, x, ry, list_w, RESULT_H, COLORREF(0x00_25_2A_2E));
+                fill_rounded(
+                    mdc,
+                    x + 12,
+                    ry + 5,
+                    list_w - 24,
+                    RESULT_H - 10,
+                    8,
+                    COLORREF(0x00_F1_EC_E5),
+                );
             }
-            if i > 0 {
+            if i > 0 && !starts_section {
                 fill(mdc, x + PAD_L, ry, list_w - PAD_L * 2, 1, CLR_DIV);
             }
+            if starts_section {
+                SelectObject(mdc, s.font_b);
+                SetTextColor(mdc, CLR_GRAY);
+                let mut label: Vec<u16> = source_section_label(&res.entry.source)
+                    .encode_utf16()
+                    .collect();
+                let mut label_rect = RECT {
+                    left: x + PAD_L,
+                    top: ry + 3,
+                    right: x + list_w - PAD_L,
+                    bottom: ry + 18,
+                };
+                let _ = DrawTextW(
+                    mdc,
+                    &mut label,
+                    &mut label_rect,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+                );
+            }
 
-            let cy = ry + (RESULT_H - 40) / 2;
+            let cy = ry + (RESULT_H - 40) / 2 + section_shift;
 
             // Draw Icon
             let mut drawn_custom_thumbnail = false;
             if res.entry.source == "CLIPBOARD" {
                 if let Some(path) = res.entry.launch_command.strip_prefix("copy_image:") {
-                    let icon_y = ry + (RESULT_H - 32) / 2;
+                    let icon_y = ry + (RESULT_H - 32) / 2 + section_shift;
                     let mut cache = s.clipboard_thumbnails.borrow_mut();
                     if let Some(&hbitmap) = cache.get(path) {
                         unsafe {
@@ -6064,7 +6106,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 };
 
                 if !icon_to_draw.0.is_null() {
-                    let icon_y = ry + (RESULT_H - 32) / 2;
+                    let icon_y = ry + (RESULT_H - 32) / 2 + section_shift;
                     let _ = unsafe {
                         DrawIconEx(
                             mdc,
@@ -6160,7 +6202,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 s,
                 badge_source,
                 badge_left,
-                ry + (RESULT_H - BADGE_H) / 2,
+                ry + (RESULT_H - BADGE_H) / 2 + section_shift,
             );
         }
 
@@ -6183,9 +6225,9 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             // Draw subtle track
             let sb_x = x + list_w - 10;
             let sb_w = 4;
-            fill(mdc, sb_x, track_top, sb_w, track_h, COLORREF(0x00_2A_2A_2A));
+            fill(mdc, sb_x, track_top, sb_w, track_h, COLORREF(0x00_F0_EB_E4));
             // Draw thumb
-            fill(mdc, sb_x, thumb_y, sb_w, thumb_h, CLR_GRAY);
+            fill(mdc, sb_x, thumb_y, sb_w, thumb_h, COLORREF(0x00_D0_C2_B5));
         }
 
         if s.submenu_active {
@@ -6199,7 +6241,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 y + SEARCH_H + 1,
                 238,
                 h - SEARCH_H - 1,
-                COLORREF(0x00_15_15_15),
+                COLORREF(0x00_F7_F4_F0),
             );
 
             let actions = ["Run as Administrator", "Open File Location", "Copy Path"];
@@ -6235,7 +6277,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
                 if s.submenu_selected == idx {
                     SelectObject(mdc, s.font_c);
-                    SetTextColor(mdc, COLORREF(0x00_A0_A0_A0));
+                    SetTextColor(mdc, CLR_GRAY);
                     let mut hint_wide: Vec<u16> = "Enter".encode_utf16().collect();
                     let mut r_hint = RECT {
                         left: x + w - 60,
@@ -6257,7 +6299,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     // Draw footer instructions if showing clipboard
     if s.query.starts_with("clip:") || s.query.starts_with("clipboard:") {
         let footer_y = y + h - 24;
-        fill(mdc, x, footer_y, w, 24, COLORREF(0x00_15_15_15));
+        fill(mdc, x, footer_y, w, 24, COLORREF(0x00_F7_F4_F0));
         fill(mdc, x, footer_y, w, 1, CLR_DIV);
 
         if s.delete_confirm {
@@ -6314,7 +6356,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     // Draw footer instructions if showing snippet/quicklink creation form
     if s.form_state != FormState::None {
         let footer_y = y + h - 24;
-        fill(mdc, x, footer_y, w, 24, COLORREF(0x00_15_15_15));
+        fill(mdc, x, footer_y, w, 24, COLORREF(0x00_F7_F4_F0));
         fill(mdc, x, footer_y, w, 1, CLR_DIV);
 
         SelectObject(mdc, s.font_c);
@@ -6370,52 +6412,50 @@ unsafe fn draw_rounded_border_and_bg(
     r: i32,
     gradient: bool,
 ) {
-    if gradient {
-        // Create a rounded region for the border
-        let rgn = CreateRoundRectRgn(x, y, x + w + 1, y + h + 1, r, r);
-        let _ = SelectClipRgn(hdc, rgn);
+    let border = if gradient { CLR_ACCENT } else { CLR_DIV };
+    fill_rounded(hdc, x + 2, y + 5, w - 4, h - 2, r, COLORREF(0x00_E9_E3_DC));
+    fill_rounded(hdc, x, y, w, h, r, border);
+    fill_rounded(hdc, x + 1, y + 1, w - 2, h - 2, r - 1, BG);
+}
 
-        // Draw horizontal gradient over the outer bounds
-        let vertices = [
-            TRIVERTEX {
-                x,
-                y,
-                Red: 0x4200,
-                Green: 0x4a00,
-                Blue: 0x5600,
-                Alpha: 0x0000,
-            },
-            TRIVERTEX {
-                x: x + w,
-                y: y + h,
-                Red: 0x3f00,
-                Green: 0x5d00,
-                Blue: 0x6200,
-                Alpha: 0x0000,
-            },
-        ];
-        let g_rect = [GRADIENT_RECT {
-            UpperLeft: 0,
-            LowerRight: 1,
-        }];
-        let _ = GradientFill(
-            hdc,
-            &vertices,
-            g_rect.as_ptr() as *const _,
-            1,
-            GRADIENT_FILL(0),
-        );
-
-        // Restore clipping
-        let _ = SelectClipRgn(hdc, HRGN(null_mut()));
-        let _ = DeleteObject(rgn);
-
-        // Draw the inner background
-        fill_rounded(hdc, x + 1, y + 1, w - 2, h - 2, r - 1, BG);
+fn source_section_label(source: &str) -> &'static str {
+    if source.eq_ignore_ascii_case("app") || source.eq_ignore_ascii_case("window") {
+        "APPS"
+    } else if source.eq_ignore_ascii_case("file")
+        || source.eq_ignore_ascii_case("recent")
+        || source.eq_ignore_ascii_case("folder")
+    {
+        "FILES"
+    } else if source.eq_ignore_ascii_case("code")
+        || source.eq_ignore_ascii_case("todo")
+        || source.eq_ignore_ascii_case("snippet")
+    {
+        "CODE MATCHES"
+    } else if source.eq_ignore_ascii_case("memory") {
+        "MEMORY"
+    } else if source.eq_ignore_ascii_case("clipboard") || source.eq_ignore_ascii_case("pinned_clip")
+    {
+        "CLIPBOARD"
+    } else if source.eq_ignore_ascii_case("bookmark")
+        || source.eq_ignore_ascii_case("browser")
+        || source.eq_ignore_ascii_case("history")
+        || source.eq_ignore_ascii_case("quicklink")
+        || source.eq_ignore_ascii_case("web")
+    {
+        "WEB"
+    } else if source.eq_ignore_ascii_case("commit") {
+        "GIT"
+    } else if source.eq_ignore_ascii_case("ai")
+        || source.eq_ignore_ascii_case("action")
+        || source.eq_ignore_ascii_case("calc")
+        || source.eq_ignore_ascii_case("confirm")
+        || source.eq_ignore_ascii_case("live")
+        || source.eq_ignore_ascii_case("project")
+        || source.eq_ignore_ascii_case("translated")
+    {
+        "COMMANDS"
     } else {
-        // Draw subtle solid gray border
-        fill_rounded(hdc, x, y, w, h, r, CLR_DIV);
-        fill_rounded(hdc, x + 1, y + 1, w - 2, h - 2, r - 1, BG);
+        "RESULTS"
     }
 }
 
@@ -6424,7 +6464,7 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
     let (label, bg_color, tx_color) = if src_lc == "window" {
         ("WIN", CLR_BDGBG, CLR_BDGTX)
     } else if src_lc == "live" {
-        ("LIVE", COLORREF(0x00_35_46_31), CLR_BDGTX)
+        ("LIVE", COLORREF(0x00_DF_F3_DD), COLORREF(0x00_38_78_2E))
     } else if src_lc == "project" {
         ("PROJ", CLR_BDGBG, CLR_BDGTX)
     } else if src_lc == "action" {
@@ -6436,7 +6476,7 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
     } else if src_lc == "app" {
         ("APP", CLR_BDGBG, CLR_BDGTX)
     } else if src_lc == "ai" {
-        ("AI", COLORREF(0x00_3A_37_46), COLORREF(0x00_D6_D0_F0))
+        ("AI", COLORREF(0x00_F2_EB_FF), COLORREF(0x00_7D_49_B8))
     } else if src_lc == "quicklink" {
         ("LINK", CLR_BDGBG, CLR_BDGTX)
     } else if src_lc == "snippet" {
@@ -6452,9 +6492,9 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
     } else if src_lc == "clipboard" {
         ("CLIP", CLR_BDGBG, CLR_BDGTX)
     } else if src_lc == "pinned_clip" {
-        ("PIN", COLORREF(0x00_46_43_31), CLR_BDGTX)
+        ("PIN", COLORREF(0x00_DF_F0_FF), COLORREF(0x00_9F_63_18))
     } else if src_lc == "confirm" {
-        ("DEL", COLORREF(0x00_30_30_55), CLR_WHITE)
+        ("DEL", COLORREF(0x00_E8_E8_FF), COLORREF(0x00_35_35_D0))
     } else if src_lc == "bookmark" {
         ("MARK", CLR_BDGBG, CLR_BDGTX)
     } else if src_lc == "history" {
@@ -6476,7 +6516,7 @@ unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
     } else {
         ("SET", CLR_BDGBG, CLR_BDGTX)
     };
-    fill_rounded(hdc, x, y, BADGE_W, BADGE_H, 8, bg_color);
+    fill_rounded(hdc, x, y, BADGE_W, BADGE_H, 5, bg_color);
     SelectObject(hdc, s.font_b);
     SetTextColor(hdc, tx_color);
     SetBkMode(hdc, TRANSPARENT);
@@ -7368,6 +7408,16 @@ mod tests {
         assert_eq!(relative_time(ago(90000)), "yesterday");
         assert_eq!(relative_time(ago(3 * 86400)), "3d ago");
         assert_eq!(relative_time(ago(14 * 86400)), "2w ago");
+    }
+
+    #[test]
+    fn test_source_section_labels_for_launcher_groups() {
+        assert_eq!(source_section_label("FILE"), "FILES");
+        assert_eq!(source_section_label("recent"), "FILES");
+        assert_eq!(source_section_label("CODE"), "CODE MATCHES");
+        assert_eq!(source_section_label("ACTION"), "COMMANDS");
+        assert_eq!(source_section_label("MEMORY"), "MEMORY");
+        assert_eq!(source_section_label("unknown"), "RESULTS");
     }
 
     #[test]
