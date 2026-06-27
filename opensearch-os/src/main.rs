@@ -264,6 +264,10 @@ impl State {
             self.results.clear();
         }
     }
+
+    fn shows_guidance_footer(&self) -> bool {
+        self.query.to_lowercase().starts_with("bookmarks:")
+    }
     
     fn win_h(&self) -> i32 {
         if self.note_editing {
@@ -276,25 +280,26 @@ impl State {
             return SEARCH_H + 24;
         }
         if self.query.is_empty() {
-            return SEARCH_H + 36 + 8 * RESULT_H + 40;
+            return SEARCH_H + 36 + 8 * RESULT_H + 8;
         }
         let n = self.results.len().min(VISIBLE_RESULTS) as i32;
         if n == 0 {
             SEARCH_H
         } else {
-            let offset = if self.has_prefix() { 48 } else { 80 };
-            SEARCH_H + offset + n * RESULT_H + 40
+            let offset = if self.has_prefix() { 1 } else { 80 };
+            let footer = if self.shows_guidance_footer() { 40 } else { 8 };
+            SEARCH_H + offset + n * RESULT_H + footer
         }
     }
     fn result_rect(&self, i: usize) -> RECT {
         let end_h = self.win_h();
         let end_y = self.cy - end_h / 2;
         let offset = if self.query.is_empty() {
-            36
+            37
         } else if self.has_prefix() {
-            48
+            1
         } else {
-            80
+            81
         };
         let y = end_y + SEARCH_H + offset + i as i32 * RESULT_H;
         RECT {
@@ -6730,6 +6735,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         && s.form_state == FormState::None
         && !s.query.starts_with("clip:")
         && !s.query.starts_with("clipboard:")
+        && s.shows_guidance_footer()
     {
         let footer_y = y + h - 28;
         fill(mdc, x, footer_y, w, 28, COLORREF(0x00_23_1D_19));
