@@ -1,47 +1,59 @@
-# Project-Raycast: Premium Native Windows Launcher (`opensearch-os`)
+# MemoryOS: The Memory Layer for Windows
 
-`opensearch-os` is a premium, high-performance, native Windows launcher and system-wide search tool written in Rust utilizing the native Win32 API directly. It is designed to be lightweight, lag-free, and highly visual, providing instant access to applications, files, bookmarks, git repositories, and system commands.
+**MemoryOS** is a premium Windows Intelligence Layer that continuously builds a searchable understanding of your digital life. 
+
+While it exposes a high-performance, native Windows launcher UI (`opensearch-os`) as its primary entry point, the core mission of MemoryOS is simple: **Never lose anything on your computer again.**
+
+It helps you find, understand, and continue anything you have seen, opened, copied, written, searched, or worked on.
 
 ---
 
-## Key Features & Achievements
+## Core Vision & Product Positioning
 
-### 1. Modern UI & Premium Aesthetics (Win32 & GDI)
-* **Tailored Form Factor**: Compact layout featuring an enlarged window (720px width), results (76px height per row), and typography centered around the modern `Segoe UI Variable` font family.
-* **Sleek Backdrop**: Opaque, charcoal-colored window backdrop (100% opacity, no heavy Acrylic backdrop blur overhead) for a clean, distraction-free aesthetic.
-* **Modern Mock Search Layout**: A modern layout showing filter pills at the top, a results sub-header ("Results" & "Best matches first"), flat results formatting, accent selection borders, and left-aligned vertical indicator bars.
+MemoryOS is **not** positioned as a simple Raycast clone, a basic launcher, or a Windows Search replacement. The launcher is merely the interface to a persistent, searchable, and explainable computer memory layer.
 
-### 2. High-Performance Application Launching & Icon Loading
-* **UWP & Windows Store Support**: Directly enumerates modern Windows Store apps (Calculator, Settings, Camera, etc.) via COM `IShellItem` and triggers launches using `shell:AppsFolder\<AppID>`.
-* **Watermark-free Icons**: Resolves target paths of `.lnk` shortcuts using `IShellLinkW` and extracts high-resolution icons using clean PIDLs to strip the shortcut arrow overlay.
-* **Async Icon Loading**: Spawns asynchronous background worker threads to load app and file-type icons, passing them to the main thread via custom Windows message passing (`WM_ICON_LOADED`) to keep the search UI entirely lag-free.
-* **Favicon Integration**: Uses Google's official favicon service for clean web search/URL results.
+### Core Promises
+* **"My computer finally remembers everything for me."**
+* **Search anything. Do anything. Continue everything.**
 
-### 3. In-Process Tools & Quick System Actions
-* **Recursive Math Parser**: High-speed, in-process calculator. Evaluates formulas (e.g., `2+2`, `15% of 340`, `sqrt(9)*4`, etc.) instantly and copies the output to the clipboard on Enter.
-* **Power & Quick Actions**: Instant execution of system power controls: `lock`, `sleep`, `shutdown`, `restart`, and recycle bin empty (`empty recycle bin`/`empty trash`).
-* **Recent Documents**: Parses `%APPDATA%\Microsoft\Windows\Recent` to display recently used files with appropriate file-type icons.
+---
 
-### 4. Local Filesystem & Document Content Search
-* **Throttled Indexer (`indexer.rs`)**: Runs a throttled background indexer that monitors and crawls directories like `Desktop`, `Documents`, and `Downloads`.
-* **Document Text Extraction**: Extracts and parses textual content from PDF files (using `pdf-extract`) and Microsoft Word DOCX files (using `docx-lite`), truncating them to 50KB to maintain a lightweight SQLite index.
-* **Source Code Indexing**: Indexes source files with extensions (`.rs`, `.py`, `.js`, `.ts`, `.c`, `.cpp`, `.h`, `.hpp`, `.cs`, `.go`, `.java`, `.kt`, `.sh`, `.bat`, `.ps1`, `.yaml`, `.yml`, `.toml`, `.ini`, `.sql`, `.xml`).
-* **SQLite FTS5**: Leverages SQLite's FTS5 extension (`files_fts` table) to perform sub-millisecond full-text queries across document contents and code metadata.
+## Technical Architecture & Built Features
 
-### 5. Multi-Browser Profiles Indexer (Bookmarks & History)
-* **Profile Scanner**: Scans user profiles for Chromium browsers (Chrome, Edge, Brave) and Gecko-based browsers (Firefox), creating temporary lock-free database copies before reading to prevent profile lock conflicts.
-* **Firefox Places Support**: Direct SQLite querying of Firefox's `places.sqlite` structure to pull bookmarks and search histories.
+MemoryOS is powered by `opensearch-os`, a native Windows shell written in Rust utilizing the raw Win32 APIs and direct GDI graphics rendering for absolute responsiveness.
 
-### 6. Developer & Git Repository Integration
-* **Superfast Git Discovery**: Crawls system folders metadata-first (ignoring `node_modules`, `target`, etc.) to discover Git repositories in under **186ms** without recursive loops.
+### 1. The Entry Point: Premium Launcher UI
+* **Custom Win32 Window**: Tailored form factor (720px width, 76px row height) with clean `Segoe UI Variable` typography.
+* **Opaque Backdrop**: Charcoal-colored window background (100% opacity, zero Acrylic blur overhead) for high-contrast visibility.
+* **Modern Search Layout**: Visual representation of active filter pills, search statistics ("Results" & "Best matches first" sub-headers), accent borders, and vertical indicator bars.
+* **Lag-Free Async Icons**: Spawns background worker threads to load app and file-type icons, passing them to the main thread via custom Windows message passing (`WM_ICON_LOADED`) to keep the interface completely smooth.
+* **Watermark-Free Resolving**: Resolves `.lnk` shortcut targets using `IShellLinkW` and clean PIDLs to strip shortcut arrows.
+
+### 2. Local File & Document Content Memory
+* **Background Crawler Indexer**: Runs a throttled background indexer (`indexer.rs`) that indexes files in `Desktop`, `Documents`, and `Downloads`.
+* **Deep Document Extraction**: Extracts and indexes text content from PDF (using `pdf-extract`) and Microsoft Word DOCX (using `docx-lite`) files, caching text up to 50KB to keep index databases lightweight.
+* **Universal Code Indexing**: Monitors and indexes plain text and source code extensions (`.rs`, `.py`, `.js`, `.ts`, `.c`, `.cpp`, `.h`, `.hpp`, `.cs`, `.go`, `.java`, `.kt`, `.sh`, `.bat`, `.ps1`, `.yaml`, `.yml`, `.toml`, `.ini`, `.sql`, `.xml`).
+* **SQLite FTS5**: Stores index text inside SQLite FTS5 (`files_fts` table) for sub-millisecond lexical full-text queries.
+
+### 3. Multi-Browser Profiles Memory
+* **Cross-Browser Bookmarks & History**: Scans Chromium profiles (Chrome, Edge, Brave) and Gecko profiles (Firefox). Pre-copies profile database locks before parsing to prevent browse conflict locks.
+* **Places Integration**: Direct SQLite querying of Firefox's `places.sqlite` structure.
+
+### 4. Developer & Git Repository Memory
+* **Fast Git Scanner**: Walks scan folders metadata-first (ignoring `node_modules`, `target`, etc.) to locate Git repositories in under **186ms** without recursive loops.
 * **Commits & Branches**: Directly queries the `HEAD` branch and the last 100 commits via Git CLI tools.
-* **Code Task Scanner**: Scans repository comments for `TODO` / `FIXME` tasks. Selecting a task and pressing `Enter` deep-links directly into VS Code at the exact file and line using `code -g <file>:<line>`.
+* **TODO / FIXME Tasks**: Scans codebase comments for task tags. Pressing `Enter` deep-links directly into VS Code at the exact file and line using `code -g <file>:<line>`.
+
+### 5. In-Process Tools & Power Controls
+* **Math Parser / Calculator**: High-speed, recursive descent math parser (evaluates formulas like `2+2`, `15% of 340`, `sqrt(9)*4`, etc.) and copies results to the clipboard.
+* **Quick System Actions**: Lock, sleep, shutdown, restart, and recycle bin empty.
+* **Recent Files Tracker**: Parses `%APPDATA%\Microsoft\Windows\Recent` to display recently used files with appropriate file-type icons.
 
 ---
 
 ## Search Prefixes & Scopes
 
-To minimize read overhead and database congestion, `opensearch-os` supports dedicated search scopes using query prefixes. 
+To avoid database congestion, MemoryOS utilizes specific search prefixes:
 
 > [!NOTE]
 > Prefix-based queries bypass the mocked search results layout, querying the active indexing databases directly and displaying results in the original card/category layout.
@@ -61,7 +73,7 @@ To minimize read overhead and database congestion, `opensearch-os` supports dedi
 
 The project is structured under the `opensearch-os/` subdirectory:
 
-* **`src/main.rs`**: Core entry point containing the Win32 window initialization, Windows message loop (`WndProc`), GDI-based double-buffered graphics rendering, keyboard/mouse input handling, and active view state management.
+* **`src/main.rs`**: Core window management, GDI-based double-buffered rendering, input handling, and event loop.
 * **`src/indexer.rs`**: Handles background threads for crawling, Chromium/Firefox profile database extraction, and document content parsing (PDF/Word).
 * **`src/search.rs`**: Core ranking, prefix matching logic, and SQLite database connector configuring WAL (Write-Ahead Logging) and thread concurrency settings.
 * **`build.rs`**: Embeds icons, manifests, and compilation properties for the executable.
@@ -72,7 +84,7 @@ The project is structured under the `opensearch-os/` subdirectory:
 
 ### Prerequisites
 * Rust compiler toolchain (Stable channel target `x86_64-pc-windows-msvc`).
-* SQLite runtime dependencies (configured automatically during `rusqlite` compilation).
+* SQLite runtime dependencies.
 
 ### Development Build
 To compile the launcher in debug mode:
