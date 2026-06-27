@@ -6300,7 +6300,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     "HOMEPAGE_CODE" => s.icon_new_source_code,
                     "HOMEPAGE_OCR" => s.icon_new_search_screenshots,
                     "HOMEPAGE_AI" => s.icon_new_agent_history,
-                    _ => s.icon_control_panel,
+                    _ => s.icon_new_all,
                 };
 
                 if !icon_to_draw.0.is_null() {
@@ -6435,14 +6435,22 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     let icon_to_draw = if let Some(hicon) = cached_icon {
                         hicon
                     } else if res.entry.source == "WINDOW" {
-                        s.app_icons.get(&res.entry.launch_command).copied().filter(|h| !h.0.is_null()).unwrap_or(s.icon_control_panel)
+                        s.app_icons.get(&res.entry.launch_command).copied().filter(|h| !h.0.is_null()).unwrap_or(s.icon_new_commands)
                     } else if res.entry.source == "app"
                         || res.entry.source == "RECENT"
                         || res.entry.source == "FILE"
                         || res.entry.source == "CODE"
                         || (res.entry.source == "ACTION" && res.entry.launch_command.starts_with("kill:"))
                     {
-                        s.app_icons.get(&res.entry.launch_command).copied().filter(|h| !h.0.is_null()).unwrap_or(s.icon_control_panel)
+                        s.app_icons.get(&res.entry.launch_command).copied().filter(|h| !h.0.is_null()).unwrap_or_else(|| {
+                            if res.entry.source == "FILE" || res.entry.source == "RECENT" {
+                                s.icon_new_files
+                            } else if res.entry.source == "CODE" {
+                                s.icon_new_code
+                            } else {
+                                s.icon_new_commands
+                            }
+                        })
                     } else if res.entry.launch_command.starts_with("ms-settings:") {
                         s.icon_settings
                     } else if res.entry.source == "web"
@@ -6479,7 +6487,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     } else if res.entry.launch_command.starts_with("action:create_quicklink") {
                         s.icon_web
                     } else {
-                        s.icon_control_panel
+                        s.icon_new_all
                     };
 
                     if !icon_to_draw.0.is_null() {
@@ -6538,7 +6546,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     "FILE" => s.icon_new_files,
                     "Settings" => s.icon_new_settings,
                     "SYSTEM" => s.icon_new_commands,
-                    _ => s.icon_control_panel,
+                    _ => s.icon_new_all,
                 };
 
                 if !icon_to_draw.0.is_null() {
