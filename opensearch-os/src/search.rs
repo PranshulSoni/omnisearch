@@ -153,11 +153,16 @@ fn lean_allowed(r: &SearchResult) -> bool {
             cmd,
             "file:" | "code:" | "img:" | "image:" | "screenshots:"
                 | "commits:" | "history:" | "bookmarks:" | "agents:" | "agentchats:"
+                | "clip:" | "clipboard:"
         );
     }
 
-    // (1-3) files / OCR / content, (5) apps incl. Microsoft, (6) commits, (7) history, (8) bookmarks.
-    matches!(s, "FILE" | "RECENT" | "CODE" | "app" | "COMMIT" | "HISTORY" | "BOOKMARK")
+    // (1-3) files / OCR / content, (5) apps incl. Microsoft, (6) commits, (7) history,
+    // (8) bookmarks, plus clipboard history.
+    matches!(
+        s,
+        "FILE" | "RECENT" | "CODE" | "app" | "COMMIT" | "HISTORY" | "BOOKMARK" | "CLIPBOARD"
+    )
 }
 
 struct CatalogEntryIndex {
@@ -4902,13 +4907,14 @@ mod tests {
             ("AI", "agent:1\u{1f}hi"), ("AI", "openagent:1\u{1f}n"), ("AI", "aichat:5"),
             ("FOLDER", "commits:"), ("FOLDER", "bookmarks:"), ("FOLDER", "agents:"),
             ("FOLDER", "C:\\Users\\me\\Documents"), ("FOLDER", "/home/x/docs"),
+            ("CLIPBOARD", "copy:hi"), ("FOLDER", "clip:"),
         ] {
             assert!(lean_allowed(&mk(s, c)), "should keep {s} {c}");
         }
         // dropped
         for (s, c) in [
-            ("CLIPBOARD", "copy:hi"), ("CALC", "copy:4"), ("AI", "ai:ask:hi"),
-            ("AI", "aichats:"), ("FOLDER", "clip:"), ("FOLDER", "notes:"),
+            ("CALC", "copy:4"), ("AI", "ai:ask:hi"),
+            ("AI", "aichats:"), ("FOLDER", "notes:"),
             ("TODO", "x"), ("SNIPPET", "x"), ("QUICKLINK", "https://x"), ("web", "https://google.com"),
         ] {
             assert!(!lean_allowed(&mk(s, c)), "should drop {s} {c}");
