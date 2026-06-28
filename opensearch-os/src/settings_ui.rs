@@ -5,114 +5,123 @@ use slint::{SharedString, ComponentHandle, CloseRequestResponse};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use once_cell::sync::Lazy;
 
-// Keep a global reference to the Slint UI so we can show/hide it repeatedly
-static SETTINGS_UI: Lazy<Mutex<Option<slint::Weak<SettingsWindow>>>> = Lazy::new(|| Mutex::new(None));
+// Signal channel: main thread sends () to ask settings window to show
+static SHOW_REQUEST: Lazy<Mutex<Option<std::sync::mpsc::SyncSender<()>>>> = Lazy::new(|| Mutex::new(None));
+// Track whether the settings thread is alive at all
+static SETTINGS_READY: AtomicBool = AtomicBool::new(false);
 
 pub fn init_settings_window(hwnd: HWND) {
     std::env::set_var("SLINT_STYLE", "fluent-dark");
-    let ui = SettingsWindow::new().unwrap();
-    let ui_weak = ui.as_weak();
     
-    // Store in global static
-    if let Ok(mut guard) = SETTINGS_UI.lock() {
-        *guard = Some(ui_weak.clone());
+    // Channel: main thread sends () → settings thread shows the window
+    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
+    if let Ok(mut guard) = SHOW_REQUEST.lock() {
+        *guard = Some(tx);
     }
-
-    // Load current settings
-    let mut settings = AppSettings::load();
-
-    // Initialize UI properties
-    ui.set_run_on_startup(settings.run_on_startup);
-    ui.set_hide_on_lose_focus(settings.hide_on_lose_focus);
-    ui.set_theme_mode(SharedString::from(settings.theme_mode.clone()));
-    ui.set_global_hotkey(SharedString::from(settings.global_hotkey.clone()));
-    ui.set_window_width(settings.window_width as i32);
-    ui.set_item_height(settings.item_height as i32);
-
-    // Intercept Close to Hide instead of Destroy
-    let ui_weak_close = ui.as_weak();
-    ui.window().on_close_requested(move || {
-        if let Some(ui) = ui_weak_close.upgrade() {
-            ui.window().hide().unwrap();
+    SETTINGS_READY.store(true, Ordering::SeqCst);
+    
+    // Wait for show requests in a loop. Each request creates a fresh window.
+    loop {
+        // Block until someone calls show_settings_window()
+        match rx.recv() {
+            Ok(_) => {},
+            Err(_) => break, // channel closed, exit thread
         }
-        CloseRequestResponse::KeepWindowShown
-    });
+        
+        // Create fresh Slint window each time (avoids all hide/show state issues)
+        let ui = match SettingsWindow::new() {
+            Ok(u) => u,
+            Err(_) => continue,
+        };
+        let ui_weak = ui.as_weak();
 
-    // Callback when UI wants to save settings
-    ui.on_save_settings(move || {
-        if let Some(ui) = ui_weak.upgrade() {
-            let mut current_settings = AppSettings::load();
-            current_settings.run_on_startup = ui.get_run_on_startup();
-            current_settings.hide_on_lose_focus = ui.get_hide_on_lose_focus();
-            current_settings.theme_mode = ui.get_theme_mode().to_string();
-            current_settings.global_hotkey = ui.get_global_hotkey().to_string();
-            current_settings.window_width = ui.get_window_width() as u32;
-            current_settings.item_height = ui.get_item_height() as u32;
-            current_settings.save();
-            
-            // Sync with Windows Registry
-            crate::settings_startup::set_run_on_startup(current_settings.run_on_startup);
-            
-            unsafe {
-                let _ = PostMessageW(hwnd, windows::Win32::UI::WindowsAndMessaging::WM_USER + 10, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
+        // Load and apply current settings
+        let settings = AppSettings::load();
+        ui.set_run_on_startup(settings.run_on_startup);
+        ui.set_hide_on_lose_focus(settings.hide_on_lose_focus);
+        ui.set_theme_mode(SharedString::from(settings.theme_mode.clone()));
+        ui.set_global_hotkey(SharedString::from(settings.global_hotkey.clone()));
+        ui.set_window_width(settings.window_width as i32);
+        ui.set_item_height(settings.item_height as i32);
+
+        // Close = hide window, then stop the inner run()
+        let ui_weak_close = ui.as_weak();
+        ui.window().on_close_requested(move || {
+            if let Some(ui) = ui_weak_close.upgrade() {
+                // Quit the inner event loop to unblock us
+                slint::quit_event_loop().ok();
+                ui.window().hide().ok();
             }
-        }
-    });
+            CloseRequestResponse::KeepWindowShown
+        });
 
-    let ui_weak_hotkey = ui.as_weak();
-    ui.on_record_hotkey(move || {
-        let weak_clone = ui_weak_hotkey.clone();
-        std::thread::spawn(move || {
-            if let Some(recorded) = crate::hotkey::record_hotkey_blocking() {
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = weak_clone.upgrade() {
-                        ui.set_global_hotkey(SharedString::from(recorded));
-                        ui.invoke_save_settings(); // Automatically save the newly recorded hotkey
-                    }
-                });
-            } else {
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = weak_clone.upgrade() {
-                        // Revert to old hotkey
-                        let current_settings = AppSettings::load();
-                        ui.set_global_hotkey(SharedString::from(current_settings.global_hotkey));
-                    }
-                });
+        // Save settings callback
+        let ui_weak_save = ui.as_weak();
+        ui.on_save_settings(move || {
+            if let Some(ui) = ui_weak_save.upgrade() {
+                let mut s = AppSettings::load();
+                s.run_on_startup = ui.get_run_on_startup();
+                s.hide_on_lose_focus = ui.get_hide_on_lose_focus();
+                s.theme_mode = ui.get_theme_mode().to_string();
+                s.global_hotkey = ui.get_global_hotkey().to_string();
+                s.window_width = ui.get_window_width() as u32;
+                s.item_height = ui.get_item_height() as u32;
+                s.save();
+                crate::settings_startup::set_run_on_startup(s.run_on_startup);
+                unsafe {
+                    let _ = PostMessageW(
+                        hwnd,
+                        windows::Win32::UI::WindowsAndMessaging::WM_USER + 10,
+                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
+                }
             }
         });
-    });
 
-    // Do not run here! If we run here, we block the thread. Wait, we are spawned in a background thread in main.rs, so blocking here is correct!
-    // But we need to make sure the window is initially HIDDEN. 
-    // In Slint, the window is shown automatically when `run` is called unless we hide it before.
-    let _ = ui.window().hide();
-    
-    // We run the event loop. This blocks this background thread forever.
-    let _ = ui.run();
+        // Hotkey recording
+        let ui_weak_hotkey = ui.as_weak();
+        ui.on_record_hotkey(move || {
+            let weak_clone = ui_weak_hotkey.clone();
+            std::thread::spawn(move || {
+                if let Some(recorded) = crate::hotkey::record_hotkey_blocking() {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak_clone.upgrade() {
+                            ui.set_global_hotkey(SharedString::from(recorded));
+                            ui.invoke_save_settings();
+                        }
+                    });
+                } else {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak_clone.upgrade() {
+                            let s = AppSettings::load();
+                            ui.set_global_hotkey(SharedString::from(s.global_hotkey));
+                        }
+                    });
+                }
+            });
+        });
+
+        // Show the window and run the event loop until it's closed
+        ui.window().show().ok();
+        ui.window().set_minimized(false);
+        slint::run_event_loop().ok();
+        // Window was closed — loop back and wait for next show request
+    }
 }
 
 pub fn show_settings_window() {
-    // Always dispatch into the Slint event loop - don't check weak outside
-    if let Ok(guard) = SETTINGS_UI.lock() {
-        if let Some(weak) = guard.as_ref() {
-            let weak_clone = weak.clone();
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = weak_clone.upgrade() {
-                    // Refresh data
-                    let settings = AppSettings::load();
-                    ui.set_run_on_startup(settings.run_on_startup);
-                    ui.set_hide_on_lose_focus(settings.hide_on_lose_focus);
-                    ui.set_theme_mode(SharedString::from(settings.theme_mode.clone()));
-                    ui.set_global_hotkey(SharedString::from(settings.global_hotkey.clone()));
-                    ui.set_window_width(settings.window_width as i32);
-                    ui.set_item_height(settings.item_height as i32);
-                    ui.window().show().unwrap();
-                    // Bring to front
-                    ui.window().set_minimized(false);
-                }
-            });
+    if !SETTINGS_READY.load(Ordering::SeqCst) {
+        // Settings thread not yet ready — spawn it now lazily
+        // (This path shouldn't normally be hit since init is called at startup)
+        return;
+    }
+    if let Ok(guard) = SHOW_REQUEST.lock() {
+        if let Some(tx) = guard.as_ref() {
+            let _ = tx.try_send(());
         }
     }
 }
