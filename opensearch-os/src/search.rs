@@ -126,8 +126,23 @@ fn content_match_source(extension: &str, only_code: bool) -> &'static str {
     } else if only_code
         || matches!(
             extension,
-            "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "c" | "cpp" | "h" | "hpp" | "cs"
-                | "go" | "java" | "kt" | "swift" | "dart" | "rb" | "php"
+            "rs" | "py"
+                | "js"
+                | "ts"
+                | "jsx"
+                | "tsx"
+                | "c"
+                | "cpp"
+                | "h"
+                | "hpp"
+                | "cs"
+                | "go"
+                | "java"
+                | "kt"
+                | "swift"
+                | "dart"
+                | "rb"
+                | "php"
         )
     {
         "CODE_CONTENT"
@@ -978,7 +993,8 @@ impl SearchEngine {
                             results.iter_mut().find(|r| r.entry.launch_command == path)
                         {
                             existing.score += 0.5; // content match bonus
-                            existing.entry.source = content_match_source(&ext, only_code).to_string();
+                            existing.entry.source =
+                                content_match_source(&ext, only_code).to_string();
                         }
                         continue;
                     }
@@ -5905,7 +5921,12 @@ struct QuickAction {
 
 static QUICK_ACTIONS: &[QuickAction] = &[
     QuickAction {
-        triggers: &["theme darker", "switch to darker", "darker theme", "dark mode"],
+        triggers: &[
+            "theme darker",
+            "switch to darker",
+            "darker theme",
+            "dark mode",
+        ],
         name: "Switch Theme: Darker",
         breadcrumb: "Theme Switcher > Darker",
         launch_command: "action:switch_theme:darker",
@@ -5919,7 +5940,12 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         description: "Switch launcher theme to Nord Darker.",
     },
     QuickAction {
-        triggers: &["theme light", "switch to light", "light theme", "light mode"],
+        triggers: &[
+            "theme light",
+            "switch to light",
+            "light theme",
+            "light mode",
+        ],
         name: "Switch Theme: Light",
         breadcrumb: "Theme Switcher > Light",
         launch_command: "action:switch_theme:light",

@@ -1,6 +1,8 @@
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
+pub const VOICE_DICTATION_HOTKEY: &str = "Ctrl+Shift+Space";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HotkeyConfig {
     pub ctrl: bool,
@@ -33,7 +35,13 @@ impl HotkeyConfig {
                 _ => {}
             }
         }
-        (vkey != 0).then_some(Self { ctrl, alt, shift, win, vkey })
+        (vkey != 0).then_some(Self {
+            ctrl,
+            alt,
+            shift,
+            win,
+            vkey,
+        })
     }
 
     pub fn modifiers(&self) -> HOT_KEY_MODIFIERS {
@@ -51,6 +59,27 @@ impl HotkeyConfig {
             modifiers |= MOD_WIN;
         }
         modifiers | MOD_NOREPEAT
+    }
+
+    fn has_modifier(&self) -> bool {
+        self.ctrl || self.alt || self.shift || self.win
+    }
+}
+
+pub fn validate_hotkey(config_str: &str, current_config: &str) -> Result<(), &'static str> {
+    let Some(cfg) = HotkeyConfig::parse(config_str) else {
+        return Err("Press a supported key with Ctrl, Alt, Shift, or Win.");
+    };
+    if !cfg.has_modifier() {
+        return Err("Use Ctrl, Alt, Shift, or Win with the key.");
+    }
+    if same_hotkey(config_str, VOICE_DICTATION_HOTKEY) {
+        return Err("Ctrl+Shift+Space is reserved for voice dictation.");
+    }
+    if same_hotkey(config_str, current_config) || hotkey_available(config_str) {
+        Ok(())
+    } else {
+        Err("That hotkey is already used by another app.")
     }
 }
 
@@ -86,7 +115,10 @@ pub fn format_recorded_hotkey(
 ) -> Option<String> {
     let key = normalize_slint_key(key_text)?;
     let lower = key.to_lowercase();
-    if matches!(lower.as_str(), "ctrl" | "control" | "alt" | "shift" | "win" | "meta") {
+    if matches!(
+        lower.as_str(),
+        "ctrl" | "control" | "alt" | "shift" | "win" | "meta"
+    ) {
         return None;
     }
 
@@ -105,6 +137,10 @@ pub fn format_recorded_hotkey(
     }
     parts.push(key.as_str());
     Some(parts.join("+"))
+}
+
+fn same_hotkey(left: &str, right: &str) -> bool {
+    HotkeyConfig::parse(left) == HotkeyConfig::parse(right)
 }
 
 fn normalize_slint_key(key_text: &str) -> Option<String> {
@@ -196,5 +232,13 @@ mod tests {
             Some("Alt+Space")
         );
         assert!(format_recorded_hotkey("Shift", false, false, true, false).is_none());
+    }
+
+    #[test]
+    fn validates_launcher_hotkeys_without_broken_states() {
+        assert!(validate_hotkey("Alt+Space", "Alt+Space").is_ok());
+        assert!(validate_hotkey("K", "Alt+Space").is_err());
+        assert!(validate_hotkey(VOICE_DICTATION_HOTKEY, "Alt+Space").is_err());
+        assert!(validate_hotkey("Nope", "Alt+Space").is_err());
     }
 }

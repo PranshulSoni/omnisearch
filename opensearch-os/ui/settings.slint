@@ -10,6 +10,8 @@ export component SettingsWindow inherits Window {
     in-out property <bool> hide-on-lose-focus;
     in-out property <string> theme-mode;
     in-out property <string> global-hotkey;
+    in-out property <string> voice-hotkey;
+    in-out property <string> hotkey-error;
     
     in-out property <int> window-width;
     in-out property <int> item-height;
@@ -17,6 +19,7 @@ export component SettingsWindow inherits Window {
     // Callbacks to Rust
     callback save-settings();
     callback format-hotkey(string, bool, bool, bool, bool) -> string;
+    callback validate-hotkey(string) -> string;
     callback set-hotkey-recording(bool);
     
     property <int> current-page: 0;
@@ -37,98 +40,234 @@ export component SettingsWindow inherits Window {
     property <color> active-bg: is-light ? #D5D5D5 : #3a3a3a;
     property <color> border-color: is-light ? #EAEAEA : #333333;
 
+    // Accent color
+    property <color> accent: #5b8af0;
+
     background: root.bg-color;
 
     HorizontalBox {
         padding: 0;
         spacing: 0;
         
-        // Sidebar Navigation
+        // ── Sidebar ──────────────────────────────────────────────
         Rectangle {
-            width: 220px;
+            width: 230px;
             background: root.sidebar-bg;
-            
+
             VerticalBox {
-                padding-top: 32px;
-                padding-left: 12px;
-                padding-right: 12px;
-                spacing: 8px;
-                
-                Text {
-                    text: "opensearch-os";
-                    font-size: 18px;
-                    font-weight: 700;
-                    color: root.text-primary;
-                    horizontal-alignment: center;
-                }
-                
-                Rectangle { height: 24px; } // Spacer
-                
-                // Sidebar Item: General
+                padding: 0px;
+                spacing: 0px;
+
+                // App identity block
                 Rectangle {
-                    height: 36px;
-                    border-radius: 6px;
-                    background: root.current-page == 0 ? root.active-bg : ta-general.has-hover ? root.hover-bg : transparent;
-                    animate background { duration: 150ms; }
-                    
+                    height: 80px;
+                    background: transparent;
                     HorizontalBox {
-                        padding-left: 12px;
-                        Text { text: "General"; vertical-alignment: center; color: root.current-page == 0 ? root.text-primary : root.text-secondary; font-weight: root.current-page == 0 ? 600 : 400; }
-                    }
-                    ta-general := TouchArea {
-                        clicked => { root.current-page = 0; }
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        spacing: 12px;
+                        // App icon pill
+                        Rectangle {
+                            width: 36px;
+                            height: 36px;
+                            border-radius: 10px;
+                            background: root.accent;
+                            Text {
+                                text: "⌖";
+                                color: #ffffff;
+                                font-size: 20px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        VerticalBox {
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "OmniSearch";
+                                font-size: 15px;
+                                font-weight: 700;
+                                color: root.text-primary;
+                            }
+                            Text {
+                                text: "Settings";
+                                font-size: 11px;
+                                color: root.text-muted;
+                            }
+                        }
                     }
                 }
-                
-                // Sidebar Item: Appearance
-                Rectangle {
-                    height: 36px;
-                    border-radius: 6px;
-                    background: root.current-page == 1 ? root.active-bg : ta-appearance.has-hover ? root.hover-bg : transparent;
-                    animate background { duration: 150ms; }
-                    
+
+                // Thin divider
+                Rectangle { height: 1px; background: root.border-color; }
+
+                // Nav items
+                Rectangle { height: 12px; }
+
+                // ── Nav item helper component would be ideal but Slint doesn't allow
+                // inline components, so we expand each one.
+
+                // General
+                nav-general := Rectangle {
+                    height: 42px;
+                    border-radius: 8px;
+                    x: 8px;
+                    width: parent.width - 16px;
+                    background: root.current-page == 0 ? #3a3a4a : (ta-general.has-hover ? root.hover-bg : transparent);
+                    animate background { duration: 120ms; }
+                    // Left accent bar
+                    Rectangle {
+                        x: 0px;
+                        y: 8px;
+                        width: 3px;
+                        height: parent.height - 16px;
+                        border-radius: 2px;
+                        background: root.current-page == 0 ? root.accent : transparent;
+                    }
                     HorizontalBox {
-                        padding-left: 12px;
-                        Text { text: "Appearance"; vertical-alignment: center; color: root.current-page == 1 ? root.text-primary : root.text-secondary; font-weight: root.current-page == 1 ? 600 : 400; }
+                        padding-left: 16px;
+                        spacing: 10px;
+                        Text {
+                            text: "⚙";
+                            font-size: 15px;
+                            color: root.current-page == 0 ? root.text-primary : root.text-muted;
+                            vertical-alignment: center;
+                            width: 18px;
+                        }
+                        Text {
+                            text: "General";
+                            font-size: 14px;
+                            font-weight: root.current-page == 0 ? 600 : 400;
+                            color: root.current-page == 0 ? root.text-primary : root.text-secondary;
+                            vertical-alignment: center;
+                        }
                     }
-                    ta-appearance := TouchArea {
-                        clicked => { root.current-page = 1; }
-                    }
+                    ta-general := TouchArea { clicked => { root.current-page = 0; } }
                 }
-                
-                // Sidebar Item: Hotkeys
-                Rectangle {
-                    height: 36px;
-                    border-radius: 6px;
-                    background: root.current-page == 2 ? root.active-bg : ta-hotkeys.has-hover ? root.hover-bg : transparent;
-                    animate background { duration: 150ms; }
-                    
+
+                Rectangle { height: 4px; }
+
+                // Appearance
+                nav-appearance := Rectangle {
+                    height: 42px;
+                    border-radius: 8px;
+                    x: 8px;
+                    width: parent.width - 16px;
+                    background: root.current-page == 1 ? #3a3a4a : (ta-appearance.has-hover ? root.hover-bg : transparent);
+                    animate background { duration: 120ms; }
+                    Rectangle {
+                        x: 0px;
+                        y: 8px;
+                        width: 3px;
+                        height: parent.height - 16px;
+                        border-radius: 2px;
+                        background: root.current-page == 1 ? root.accent : transparent;
+                    }
                     HorizontalBox {
-                        padding-left: 12px;
-                        Text { text: "Hotkeys"; vertical-alignment: center; color: root.current-page == 2 ? root.text-primary : root.text-secondary; font-weight: root.current-page == 2 ? 600 : 400; }
+                        padding-left: 16px;
+                        spacing: 10px;
+                        Text {
+                            text: "◑";
+                            font-size: 15px;
+                            color: root.current-page == 1 ? root.text-primary : root.text-muted;
+                            vertical-alignment: center;
+                            width: 18px;
+                        }
+                        Text {
+                            text: "Appearance";
+                            font-size: 14px;
+                            font-weight: root.current-page == 1 ? 600 : 400;
+                            color: root.current-page == 1 ? root.text-primary : root.text-secondary;
+                            vertical-alignment: center;
+                        }
                     }
-                    ta-hotkeys := TouchArea {
-                        clicked => { root.current-page = 2; }
-                    }
+                    ta-appearance := TouchArea { clicked => { root.current-page = 1; } }
                 }
-                
-                Rectangle { vertical-stretch: 1; } // Spacer pushing About to bottom
-                
-                // Sidebar Item: About
-                Rectangle {
-                    height: 36px;
-                    border-radius: 6px;
-                    background: root.current-page == 3 ? root.active-bg : ta-about.has-hover ? root.hover-bg : transparent;
-                    animate background { duration: 150ms; }
-                    
+
+                Rectangle { height: 4px; }
+
+                // Hotkeys
+                nav-hotkeys := Rectangle {
+                    height: 42px;
+                    border-radius: 8px;
+                    x: 8px;
+                    width: parent.width - 16px;
+                    background: root.current-page == 2 ? #3a3a4a : (ta-hotkeys.has-hover ? root.hover-bg : transparent);
+                    animate background { duration: 120ms; }
+                    Rectangle {
+                        x: 0px;
+                        y: 8px;
+                        width: 3px;
+                        height: parent.height - 16px;
+                        border-radius: 2px;
+                        background: root.current-page == 2 ? root.accent : transparent;
+                    }
                     HorizontalBox {
-                        padding-left: 12px;
-                        Text { text: "About"; vertical-alignment: center; color: root.current-page == 3 ? root.text-primary : root.text-secondary; font-weight: root.current-page == 3 ? 600 : 400; }
+                        padding-left: 16px;
+                        spacing: 10px;
+                        Text {
+                            text: "⌨";
+                            font-size: 15px;
+                            color: root.current-page == 2 ? root.text-primary : root.text-muted;
+                            vertical-alignment: center;
+                            width: 18px;
+                        }
+                        Text {
+                            text: "Hotkeys";
+                            font-size: 14px;
+                            font-weight: root.current-page == 2 ? 600 : 400;
+                            color: root.current-page == 2 ? root.text-primary : root.text-secondary;
+                            vertical-alignment: center;
+                        }
                     }
-                    ta-about := TouchArea {
-                        clicked => { root.current-page = 3; }
-                    }
+                    ta-hotkeys := TouchArea { clicked => { root.current-page = 2; } }
                 }
+
+                Rectangle { vertical-stretch: 1; }
+
+                // Thin divider above About
+                Rectangle { height: 1px; background: root.border-color; }
+                Rectangle { height: 8px; }
+
+                // About
+                nav-about := Rectangle {
+                    height: 42px;
+                    border-radius: 8px;
+                    x: 8px;
+                    width: parent.width - 16px;
+                    background: root.current-page == 3 ? #3a3a4a : (ta-about.has-hover ? root.hover-bg : transparent);
+                    animate background { duration: 120ms; }
+                    Rectangle {
+                        x: 0px;
+                        y: 8px;
+                        width: 3px;
+                        height: parent.height - 16px;
+                        border-radius: 2px;
+                        background: root.current-page == 3 ? root.accent : transparent;
+                    }
+                    HorizontalBox {
+                        padding-left: 16px;
+                        spacing: 10px;
+                        Text {
+                            text: "ℹ";
+                            font-size: 15px;
+                            color: root.current-page == 3 ? root.text-primary : root.text-muted;
+                            vertical-alignment: center;
+                            width: 18px;
+                        }
+                        Text {
+                            text: "About";
+                            font-size: 14px;
+                            font-weight: root.current-page == 3 ? 600 : 400;
+                            color: root.current-page == 3 ? root.text-primary : root.text-secondary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    ta-about := TouchArea { clicked => { root.current-page = 3; } }
+                }
+
+                Rectangle { height: 16px; }
             }
         }
         
@@ -148,42 +287,117 @@ export component SettingsWindow inherits Window {
                     // General Page
                     if root.current-page == 0: VerticalBox {
                         alignment: start;
-                        spacing: 12px;
-                        Text { text: "General Settings"; font-size: 26px; font-weight: 600; color: root.text-primary; }
-                        
-                        Rectangle {
-                            background: root.card-bg;
-                            border-radius: 8px;
-                            border-color: root.border-color;
-                            border-width: 1px;
-                            padding: 20px;
-                            HorizontalBox {
-                                Text { text: "Run on startup"; vertical-alignment: center; color: root.text-primary; font-size: 14px; }
-                                Rectangle { horizontal-stretch: 1; }
-                                CheckBox {
-                                    checked: root.run-on-startup;
-                                    toggled => {
-                                        root.run-on-startup = self.checked;
-                                        root.save-settings();
+                        spacing: 20px;
+
+                        // Page header
+                        VerticalBox {
+                            spacing: 4px;
+                            Text {
+                                text: "General";
+                                font-size: 22px;
+                                font-weight: 700;
+                                color: root.text-primary;
+                            }
+                            Text {
+                                text: "Launcher behavior and startup preferences";
+                                font-size: 13px;
+                                color: root.text-muted;
+                            }
+                        }
+
+                        // Section: Behavior
+                        VerticalBox {
+                            spacing: 2px;
+                            Text {
+                                text: "BEHAVIOR";
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: root.text-muted;
+                                letter-spacing: 1px;
+                            }
+                            Rectangle { height: 6px; }
+
+                            // Run on startup row
+                            Rectangle {
+                                background: root.card-bg;
+                                border-radius: 8px;
+                                border-color: root.border-color;
+                                border-width: 1px;
+                                height: 64px;
+                                HorizontalBox {
+                                    padding-left: 20px;
+                                    padding-right: 20px;
+                                    spacing: 16px;
+                                    // Icon
+                                    Rectangle {
+                                        width: 36px;
+                                        height: 36px;
+                                        border-radius: 9px;
+                                        background: #1e3a5f;
+                                        Text {
+                                            text: "▶";
+                                            color: #60a5fa;
+                                            font-size: 14px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    VerticalBox {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text { text: "Run on startup"; color: root.text-primary; font-size: 14px; font-weight: 600; }
+                                        Text { text: "Launch OmniSearch when Windows starts"; color: root.text-muted; font-size: 12px; }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    CheckBox {
+                                        checked: root.run-on-startup;
+                                        toggled => {
+                                            root.run-on-startup = self.checked;
+                                            root.save-settings();
+                                        }
                                     }
                                 }
                             }
-                        }
-                        
-                        Rectangle {
-                            background: root.card-bg;
-                            border-radius: 8px;
-                            border-color: root.border-color;
-                            border-width: 1px;
-                            padding: 20px;
-                            HorizontalBox {
-                                Text { text: "Hide on lose focus"; vertical-alignment: center; color: root.text-primary; font-size: 14px; }
-                                Rectangle { horizontal-stretch: 1; }
-                                CheckBox {
-                                    checked: root.hide-on-lose-focus;
-                                    toggled => {
-                                        root.hide-on-lose-focus = self.checked;
-                                        root.save-settings();
+
+                            Rectangle { height: 6px; }
+
+                            // Hide on lose focus row
+                            Rectangle {
+                                background: root.card-bg;
+                                border-radius: 8px;
+                                border-color: root.border-color;
+                                border-width: 1px;
+                                height: 64px;
+                                HorizontalBox {
+                                    padding-left: 20px;
+                                    padding-right: 20px;
+                                    spacing: 16px;
+                                    Rectangle {
+                                        width: 36px;
+                                        height: 36px;
+                                        border-radius: 9px;
+                                        background: #2a1f3d;
+                                        Text {
+                                            text: "◻";
+                                            color: #a78bfa;
+                                            font-size: 16px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    VerticalBox {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text { text: "Hide on lose focus"; color: root.text-primary; font-size: 14px; font-weight: 600; }
+                                        Text { text: "Dismiss launcher when it loses keyboard focus"; color: root.text-muted; font-size: 12px; }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    CheckBox {
+                                        checked: root.hide-on-lose-focus;
+                                        toggled => {
+                                            root.hide-on-lose-focus = self.checked;
+                                            root.save-settings();
+                                        }
                                     }
                                 }
                             }
@@ -277,29 +491,168 @@ export component SettingsWindow inherits Window {
                     // Hotkeys Page
                     if root.current-page == 2: VerticalBox {
                         alignment: start;
-                        spacing: 12px;
+                        spacing: 14px;
                         Text { text: "Hotkeys"; font-size: 26px; font-weight: 600; color: root.text-primary; }
-                        
+                        Text { text: "Keyboard shortcuts used by the launcher"; font-size: 13px; color: root.text-muted; }
+
                         Rectangle {
                             background: root.card-bg;
                             border-radius: 8px;
                             border-color: root.border-color;
                             border-width: 1px;
-                            padding: 20px;
-                            HorizontalBox {
-                                Text { text: "Global Hotkey"; vertical-alignment: center; color: root.text-primary; font-size: 14px; }
-                                Rectangle { horizontal-stretch: 1; }
-                                HorizontalBox {
-                                    width: 200px;
-                                    Button {
-                                        text: root.recording-hotkey ? "Listening..." : root.global-hotkey;
+                            VerticalBox {
+                                spacing: 0px;
+
+                                Rectangle {
+                                    height: 78px;
+                                    background: ta-launcher-row.has-hover ? root.hover-bg : transparent;
+                                    animate background { duration: 120ms; }
+
+                                    HorizontalBox {
+                                        padding-left: 20px;
+                                        padding-right: 20px;
+                                        spacing: 14px;
+
+                                        Rectangle {
+                                            width: 34px;
+                                            height: 34px;
+                                            border-radius: 7px;
+                                            background: #1f6feb;
+                                            Text {
+                                                text: "K";
+                                                color: #ffffff;
+                                                font-size: 16px;
+                                                font-weight: 700;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+
+                                        VerticalBox {
+                                            alignment: center;
+                                            spacing: 2px;
+                                            Text { text: "Open launcher"; color: root.text-primary; font-size: 15px; font-weight: 600; }
+                                            Text { text: "Toggles the search window"; color: root.text-muted; font-size: 12px; }
+                                        }
+
+                                        Rectangle { horizontal-stretch: 1; }
+
+                                        Rectangle {
+                                            width: 186px;
+                                            height: 36px;
+                                            border-radius: 6px;
+                                            border-width: root.recording-hotkey ? 2px : 1px;
+                                            border-color: root.recording-hotkey ? #3b82f6 : root.border-color;
+                                            background: root.recording-hotkey ? #13243d : root.bg-color;
+                                            Text {
+                                                text: root.recording-hotkey ? "Press shortcut..." : root.global-hotkey;
+                                                color: root.recording-hotkey ? #93c5fd : root.text-primary;
+                                                font-size: 13px;
+                                                font-weight: 600;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    ta-launcher-row := TouchArea {
                                         clicked => {
+                                            root.hotkey-error = "";
                                             root.previous-hotkey = root.global-hotkey;
                                             root.recording-hotkey = true;
                                             root.set-hotkey-recording(true);
                                             hotkey-capture.focus();
                                         }
                                     }
+                                }
+
+                                Rectangle { height: 1px; background: root.border-color; }
+
+                                Rectangle {
+                                    height: 72px;
+                                    HorizontalBox {
+                                        padding-left: 20px;
+                                        padding-right: 20px;
+                                        spacing: 14px;
+
+                                        Rectangle {
+                                            width: 34px;
+                                            height: 34px;
+                                            border-radius: 7px;
+                                            background: #303030;
+                                            Text {
+                                                text: "M";
+                                                color: root.text-secondary;
+                                                font-size: 16px;
+                                                font-weight: 700;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+
+                                        VerticalBox {
+                                            alignment: center;
+                                            spacing: 2px;
+                                            Text { text: "Voice dictation"; color: root.text-primary; font-size: 15px; font-weight: 600; }
+                                            Text { text: "Reserved by the launcher backend"; color: root.text-muted; font-size: 12px; }
+                                        }
+
+                                        Rectangle { horizontal-stretch: 1; }
+
+                                        Rectangle {
+                                            width: 186px;
+                                            height: 34px;
+                                            border-radius: 6px;
+                                            border-width: 1px;
+                                            border-color: root.border-color;
+                                            background: root.bg-color;
+                                            Text {
+                                                text: root.voice-hotkey;
+                                                color: root.text-muted;
+                                                font-size: 13px;
+                                                font-weight: 600;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.hotkey-error != "": Rectangle {
+                            height: 42px;
+                            border-radius: 8px;
+                            background: #3a1d1d;
+                            border-color: #7f1d1d;
+                            border-width: 1px;
+                            HorizontalBox {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                Text {
+                                    text: root.hotkey-error;
+                                    color: #fecaca;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            background: root.card-bg;
+                            border-radius: 8px;
+                            border-color: root.border-color;
+                            border-width: 1px;
+                            height: 66px;
+                            HorizontalBox {
+                                padding-left: 20px;
+                                padding-right: 20px;
+                                Text { text: "Invalid shortcuts are rejected before saving."; vertical-alignment: center; color: root.text-muted; font-size: 13px; }
+                                Rectangle { horizontal-stretch: 1; }
+                                HorizontalBox {
+                                    spacing: 8px;
+                                    Text { text: "Editable"; color: root.text-muted; font-size: 12px; vertical-alignment: center; }
+                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: #22c55e; }
                                 }
                             }
                         }
@@ -347,12 +700,19 @@ export component SettingsWindow inherits Window {
             }
             let hotkey = root.format-hotkey(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift, event.modifiers.meta);
             if (hotkey != "") {
-                root.global-hotkey = hotkey;
-                root.recording-hotkey = false;
-                root.set-hotkey-recording(false);
-                root.save-settings();
+                let status = root.validate-hotkey(hotkey);
+                if (status == "OK") {
+                    root.hotkey-error = "";
+                    root.global-hotkey = hotkey;
+                    root.recording-hotkey = false;
+                    root.set-hotkey-recording(false);
+                    root.save-settings();
+                } else {
+                    root.hotkey-error = status;
+                }
                 return accept;
             }
+            root.hotkey-error = "Press a supported key with Ctrl, Alt, Shift, or Win.";
             return accept;
         }
     }

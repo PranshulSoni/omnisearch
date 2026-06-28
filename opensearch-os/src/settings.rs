@@ -1,24 +1,24 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default = "default_true")]
     pub run_on_startup: bool,
-    
+
     #[serde(default = "default_true")]
     pub hide_on_lose_focus: bool,
-    
+
     #[serde(default = "default_theme")]
     pub theme_mode: String,
-    
+
     #[serde(default = "default_global_hotkey")]
     pub global_hotkey: String,
-    
+
     #[serde(default = "default_window_width")]
     pub window_width: u32,
-    
+
     #[serde(default = "default_item_height")]
     pub item_height: u32,
 }
@@ -36,11 +36,21 @@ impl Default for AppSettings {
     }
 }
 
-fn default_true() -> bool { true }
-fn default_theme() -> String { "Dark".to_string() }
-fn default_global_hotkey() -> String { "Alt+Space".to_string() }
-fn default_window_width() -> u32 { 720 }
-fn default_item_height() -> u32 { 76 }
+fn default_true() -> bool {
+    true
+}
+fn default_theme() -> String {
+    "Dark".to_string()
+}
+fn default_global_hotkey() -> String {
+    "Alt+Space".to_string()
+}
+fn default_window_width() -> u32 {
+    720
+}
+fn default_item_height() -> u32 {
+    76
+}
 
 impl AppSettings {
     pub fn get_settings_path() -> PathBuf {
