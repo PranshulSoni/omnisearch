@@ -1,0 +1,277 @@
+import { Button, VerticalBox, HorizontalBox, CheckBox, ComboBox, LineEdit, StandardListView, TabWidget, Slider, ScrollView, Palette } from "std-widgets.slint";
+
+export component SettingsWindow inherits Window {
+    title: "Settings";
+    width: 800px;
+    height: 600px;
+    background: #1e1e1e;
+    
+    // Properties to bind to Rust
+    in-out property <bool> run-on-startup;
+    in-out property <bool> hide-on-lose-focus;
+    in-out property <string> theme-mode;
+    in-out property <string> global-hotkey;
+    
+    in-out property <int> window-width;
+    in-out property <int> item-height;
+    
+    // Callbacks to Rust
+    callback save-settings();
+    
+    property <int> current-page: 0;
+
+    HorizontalBox {
+        padding: 0;
+        spacing: 0;
+        
+        // Sidebar Navigation
+        Rectangle {
+            width: 220px;
+            background: #252525;
+            
+            VerticalBox {
+                padding-top: 32px;
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+                
+                Text {
+                    text: "opensearch-os";
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: #ffffff;
+                    horizontal-alignment: center;
+                }
+                
+                Rectangle { height: 24px; } // Spacer
+                
+                // Sidebar Item: General
+                Rectangle {
+                    height: 36px;
+                    border-radius: 6px;
+                    background: root.current-page == 0 ? #3a3a3a : ta-general.has-hover ? #2f2f2f : transparent;
+                    animate background { duration: 150ms; }
+                    
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "General"; vertical-alignment: center; color: root.current-page == 0 ? #ffffff : #cccccc; font-weight: root.current-page == 0 ? 600 : 400; }
+                    }
+                    ta-general := TouchArea {
+                        clicked => { root.current-page = 0; }
+                    }
+                }
+                
+                // Sidebar Item: Appearance
+                Rectangle {
+                    height: 36px;
+                    border-radius: 6px;
+                    background: root.current-page == 1 ? #3a3a3a : ta-appearance.has-hover ? #2f2f2f : transparent;
+                    animate background { duration: 150ms; }
+                    
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Appearance"; vertical-alignment: center; color: root.current-page == 1 ? #ffffff : #cccccc; font-weight: root.current-page == 1 ? 600 : 400; }
+                    }
+                    ta-appearance := TouchArea {
+                        clicked => { root.current-page = 1; }
+                    }
+                }
+                
+                // Sidebar Item: Hotkeys
+                Rectangle {
+                    height: 36px;
+                    border-radius: 6px;
+                    background: root.current-page == 2 ? #3a3a3a : ta-hotkeys.has-hover ? #2f2f2f : transparent;
+                    animate background { duration: 150ms; }
+                    
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Hotkeys"; vertical-alignment: center; color: root.current-page == 2 ? #ffffff : #cccccc; font-weight: root.current-page == 2 ? 600 : 400; }
+                    }
+                    ta-hotkeys := TouchArea {
+                        clicked => { root.current-page = 2; }
+                    }
+                }
+                
+                Rectangle { vertical-stretch: 1; } // Spacer pushing About to bottom
+                
+                // Sidebar Item: About
+                Rectangle {
+                    height: 36px;
+                    border-radius: 6px;
+                    background: root.current-page == 3 ? #3a3a3a : ta-about.has-hover ? #2f2f2f : transparent;
+                    animate background { duration: 150ms; }
+                    
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "About"; vertical-alignment: center; color: root.current-page == 3 ? #ffffff : #cccccc; font-weight: root.current-page == 3 ? 600 : 400; }
+                    }
+                    ta-about := TouchArea {
+                        clicked => { root.current-page = 3; }
+                    }
+                }
+            }
+        }
+        
+        // Main Content Area
+        Rectangle {
+            background: #1e1e1e;
+            
+            ScrollView {
+                width: 100%;
+                height: 100%;
+                
+                VerticalBox {
+                    padding: 40px;
+                    spacing: 24px;
+                    
+                    // General Page
+                    if root.current-page == 0: VerticalBox {
+                        spacing: 24px;
+                        Text { text: "General Settings"; font-size: 26px; font-weight: 600; color: #ffffff; }
+                        
+                        Rectangle {
+                            background: #2b2b2b;
+                            border-radius: 8px;
+                            padding: 20px;
+                            HorizontalBox {
+                                Text { text: "Run on startup"; vertical-alignment: center; color: #eeeeee; font-size: 14px; }
+                                Rectangle { horizontal-stretch: 1; }
+                                CheckBox {
+                                    checked: root.run-on-startup;
+                                    toggled => {
+                                        root.run-on-startup = self.checked;
+                                        root.save-settings();
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Rectangle {
+                            background: #2b2b2b;
+                            border-radius: 8px;
+                            padding: 20px;
+                            HorizontalBox {
+                                Text { text: "Hide on lose focus"; vertical-alignment: center; color: #eeeeee; font-size: 14px; }
+                                Rectangle { horizontal-stretch: 1; }
+                                CheckBox {
+                                    checked: root.hide-on-lose-focus;
+                                    toggled => {
+                                        root.hide-on-lose-focus = self.checked;
+                                        root.save-settings();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Appearance Page
+                    if root.current-page == 1: VerticalBox {
+                        spacing: 24px;
+                        Text { text: "Appearance"; font-size: 26px; font-weight: 600; color: #ffffff; }
+                        
+                        Rectangle {
+                            background: #2b2b2b;
+                            border-radius: 8px;
+                            padding: 20px;
+                            HorizontalBox {
+                                Text { text: "Theme"; vertical-alignment: center; color: #eeeeee; font-size: 14px; }
+                                Rectangle { horizontal-stretch: 1; }
+                                ComboBox {
+                                    model: ["Light", "Dark"];
+                                    current-value: root.theme-mode;
+                                    selected(val) => {
+                                        root.theme-mode = val;
+                                        root.save-settings();
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Rectangle {
+                            background: #2b2b2b;
+                            border-radius: 8px;
+                            padding: 20px;
+                            VerticalBox {
+                                spacing: 16px;
+                                HorizontalBox {
+                                    Text { text: "Window Width: " + root.window-width + "px"; vertical-alignment: center; color: #eeeeee; font-size: 14px; }
+                                }
+                                Slider {
+                                    minimum: 400;
+                                    maximum: 1200;
+                                    value: root.window-width;
+                                    changed(val) => {
+                                        root.window-width = Math.round(val);
+                                        root.save-settings();
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Rectangle {
+                            background: #2b2b2b;
+                            border-radius: 8px;
+                            padding: 20px;
+                            VerticalBox {
+                                spacing: 16px;
+                                HorizontalBox {
+                                    Text { text: "Item Height: " + root.item-height + "px"; vertical-alignment: center; color: #eeeeee; font-size: 14px; }
+                                }
+                                Slider {
+                                    minimum: 40;
+                                    maximum: 120;
+                                    value: root.item-height;
+                                    changed(val) => {
+                                        root.item-height = Math.round(val);
+                                        root.save-settings();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Hotkeys Page
+                    if root.current-page == 2: VerticalBox {
+                        spacing: 24px;
+                        Text { text: "Hotkeys"; font-size: 26px; font-weight: 600; color: #ffffff; }
+                        
+                        Rectangle {
+                            background: #2b2b2b;
+                            border-radius: 8px;
+                            padding: 20px;
+                            HorizontalBox {
+                                Text { text: "Global Hotkey"; vertical-alignment: center; color: #eeeeee; font-size: 14px; }
+                                Rectangle { horizontal-stretch: 1; }
+                                LineEdit {
+                                    text: root.global-hotkey;
+                                    accepted(val) => {
+                                        root.global-hotkey = val;
+                                        root.save-settings();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // About Page
+                    if root.current-page == 3: VerticalBox {
+                        spacing: 24px;
+                        Text { text: "About"; font-size: 26px; font-weight: 600; color: #ffffff; }
+                        Rectangle {
+                            background: #2b2b2b;
+                            border-radius: 8px;
+                            padding: 32px;
+                            VerticalBox {
+                                spacing: 12px;
+                                Text { text: "opensearch-os"; font-size: 22px; font-weight: 700; color: #ffffff; }
+                                Text { text: "Version 0.1.0"; font-size: 14px; color: #aaaaaa; }
+                                Text { text: "A blazing fast Win32 search launcher in Rust."; color: #cccccc; font-size: 14px; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

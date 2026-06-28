@@ -6,8 +6,13 @@ mod browser_indexer;
 mod git_indexer;
 mod indexer;
 mod launcher;
+mod inspect_db;
 mod markdown;
 mod search;
+mod settings;
+mod settings_ui;
+mod settings_startup;
+mod uninstall;
 mod voice;
 
 use search::{SearchEngine, SearchResult};
@@ -62,6 +67,7 @@ const WM_HERMES_APPROVAL: u32 = WM_USER + 7;
 // Hermes Runs API: streaming output progress (lparam = boxed String).
 const WM_AI_PROGRESS: u32 = WM_USER + 8;
 const WM_TRAYICON: u32 = WM_USER + 9;
+const WM_RELOAD_SETTINGS: u32 = WM_USER + 10;
 
 unsafe fn setup_tray_icon(hwnd: windows::Win32::Foundation::HWND, hinst: windows::Win32::Foundation::HMODULE) {
     use windows::Win32::UI::Shell::{Shell_NotifyIconW, NOTIFYICONDATAW, NIM_ADD, NIF_MESSAGE, NIF_ICON, NIF_TIP};
@@ -232,6 +238,7 @@ impl Theme {
 
 // ── App state ─────────────────────────────────────────────────────────────────
 struct State {
+    app_settings: crate::settings::AppSettings,
     theme: Theme,
     hovered_item: Option<usize>,
     mouse_tracking: bool,
@@ -658,6 +665,7 @@ unsafe fn run() {
     let (icon_tx, icon_rx) = std::sync::mpsc::channel::<IconRequest>();
 
     let state = Box::new(State {
+        app_settings: crate::settings::AppSettings::load(),
         theme: Theme::Darker,
         hovered_item: None,
         mouse_tracking: false,
@@ -892,6 +900,12 @@ unsafe fn run() {
         indexer::start_watcher(db_path.clone()); // instant indexing of new/changed files
         browser_indexer::start_browser_indexer(db_path.clone());
         git_indexer::start_git_indexer(db_path.clone());
+        
+        let hwnd_settings_usize = hwnd_usize;
+        std::thread::spawn(move || {
+            let hwnd_for_settings = windows::Win32::Foundation::HWND(hwnd_settings_usize as *mut std::ffi::c_void);
+            settings_ui::init_settings_window(hwnd_for_settings);
+        });
 
         let db_path_for_timeline = db_path.clone();
         let hwnd_for_timeline = SendHwnd(HWND(hwnd_usize as *mut std::ffi::c_void));
@@ -3033,6 +3047,9 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 let mut open_text: Vec<u16> = "Open".encode_utf16().chain(std::iter::once(0)).collect();
                 let _ = unsafe { AppendMenuW(hmenu, MF_STRING, 1, PCWSTR(open_text.as_ptr())) };
                 
+                let mut settings_text: Vec<u16> = "Settings".encode_utf16().chain(std::iter::once(0)).collect();
+                let _ = unsafe { AppendMenuW(hmenu, MF_STRING, 3, PCWSTR(settings_text.as_ptr())) };
+                
                 let mut exit_text: Vec<u16> = "Exit".encode_utf16().chain(std::iter::once(0)).collect();
                 let _ = unsafe { AppendMenuW(hmenu, MF_STRING, 2, PCWSTR(exit_text.as_ptr())) };
                 
@@ -3041,10 +3058,34 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 
                 let _ = unsafe { SetForegroundWindow(hwnd) };
                 
-                let _ = unsafe { TrackPopupMenu(hmenu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, 0, hwnd, None) };
+                let selection = unsafe { TrackPopupMenu(hmenu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | windows::Win32::UI::WindowsAndMessaging::TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, None) };
                 let _ = unsafe { PostMessageW(hwnd, WM_NULL, WPARAM(0), LPARAM(0)) };
                 
                 let _ = unsafe { DestroyMenu(hmenu) };
+                
+                if selection.0 == 1 {
+                    if !sp.is_null() {
+                        let s = &mut *sp;
+                        do_show(hwnd, s);
+                    }
+                } else if selection.0 == 2 {
+                    let _ = unsafe { PostMessageW(hwnd, windows::Win32::UI::WindowsAndMessaging::WM_CLOSE, WPARAM(0), LPARAM(0)) };
+                } else if selection.0 == 3 {
+                    settings_ui::show_settings_window();
+                }
+            }
+            LRESULT(0)
+        }
+
+        WM_RELOAD_SETTINGS => {
+            if !sp.is_null() {
+                let s = &mut *sp;
+                s.app_settings = crate::settings::AppSettings::load();
+                
+                // Parse theme manually if needed, or trigger redraw
+                unsafe {
+                    windows::Win32::Graphics::Gdi::InvalidateRect(hwnd, None, true);
+                }
             }
             LRESULT(0)
         }
