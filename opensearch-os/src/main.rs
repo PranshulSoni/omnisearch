@@ -83,7 +83,14 @@ unsafe fn setup_tray_icon(hwnd: windows::Win32::Foundation::HWND, hinst: windows
     for (i, &c) in tip.iter().enumerate().take(127) {
         nid.szTip[i] = c;
     }
-    Shell_NotifyIconW(NIM_ADD, &nid);
+    let res = Shell_NotifyIconW(NIM_ADD, &nid);
+    
+    if let Ok(mut log_file) = std::fs::OpenOptions::new().create(true).append(true).open("C:\\Users\\Pranshul Soni\\Documents\\Projects\\Backend\\Project-Raycast\\opensearch-os\\tray_debug.log") {
+        use std::io::Write;
+        let _ = writeln!(log_file, "setup_tray_icon: hwnd={:?}, hicon={:?}, NIM_ADD res={:?}, last_error={:?}", 
+            hwnd, hicon, res, std::io::Error::last_os_error()
+        );
+    }
 }
 
 unsafe fn remove_tray_icon(hwnd: windows::Win32::Foundation::HWND) {
@@ -92,7 +99,14 @@ unsafe fn remove_tray_icon(hwnd: windows::Win32::Foundation::HWND) {
     nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
     nid.hWnd = hwnd;
     nid.uID = 1;
-    Shell_NotifyIconW(NIM_DELETE, &nid);
+    let res = Shell_NotifyIconW(NIM_DELETE, &nid);
+    
+    if let Ok(mut log_file) = std::fs::OpenOptions::new().create(true).append(true).open("C:\\Users\\Pranshul Soni\\Documents\\Projects\\Backend\\Project-Raycast\\opensearch-os\\tray_debug.log") {
+        use std::io::Write;
+        let _ = writeln!(log_file, "remove_tray_icon: hwnd={:?}, NIM_DELETE res={:?}, last_error={:?}", 
+            hwnd, res, std::io::Error::last_os_error()
+        );
+    }
 }
 
 // AI answer panel height (below the search bar) when showing an AI response.
