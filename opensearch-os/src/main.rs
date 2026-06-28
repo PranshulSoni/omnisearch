@@ -6704,12 +6704,13 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     }
 
     // ── Results ───────────────────────────────────────────────────────────
-    let n = if s.ai_pending || s.ai_answer.is_some() || s.note_editing {
+    let is_special_mode = s.ai_pending || s.ai_answer.is_some() || s.note_editing;
+    let n = if is_special_mode {
         0
     } else {
         (s.results.len().saturating_sub(s.scroll_offset)).min(VISIBLE_RESULTS)
     };
-    if n > 0 {
+    if !is_special_mode {
         let list_w = if s.submenu_active {
             w - 240
         } else {
