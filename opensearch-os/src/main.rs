@@ -6253,17 +6253,17 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         } else {
             // Search state layout: Filter Row
             let filters = [
-                ("All", FilterType::All, s.icon_new_all),
-                ("Files", FilterType::Files, s.icon_new_files),
-                ("Content", FilterType::Content, s.icon_new_content),
-                ("Images", FilterType::Images, s.icon_new_images),
-                ("Code", FilterType::Code, s.icon_new_code),
-                ("Settings", FilterType::Settings, s.icon_new_settings),
-                ("Commands", FilterType::Commands, s.icon_new_commands),
+                ("All", FilterType::All),
+                ("Files", FilterType::Files),
+                ("Content", FilterType::Content),
+                ("Images", FilterType::Images),
+                ("Code", FilterType::Code),
+                ("Settings", FilterType::Settings),
+                ("Commands", FilterType::Commands),
             ];
             
             let mut fx = x + PAD_L - s.filter_scroll_x;
-            for &(label, ftype, icon) in filters.iter() {
+            for &(label, ftype) in filters.iter() {
                 let count = s.filter_counts[filter_index(ftype)];
                 let full_label = format!("{} {}", label, count);
                 let mut lw: Vec<u16> = full_label.encode_utf16().collect();
@@ -6272,9 +6272,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 let mut sz_lbl = SIZE::default();
                 let _ = GetTextExtentPoint32W(mdc, &lw, &mut sz_lbl);
                 
-                let icon_w = if !icon.0.is_null() { 16 } else { 0 };
-                let icon_gap = if !icon.0.is_null() { 6 } else { 0 };
-                let fw = 8 + icon_w + icon_gap + sz_lbl.cx + 8;
+                let fw = sz_lbl.cx + 16;
                 
                 if ftype == s.active_filter {
                     fill_rounded(mdc, fx, list_y + 8, fw, 32, 16, CLR_ACCENT);
@@ -6285,13 +6283,8 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     fill_rounded(mdc, fx, list_y + 8, fw, 32, 16, COLORREF(0x00_24_20_1d));
                 }
                 
-                if !icon.0.is_null() {
-                    let _ = unsafe { DrawIconEx(mdc, fx + 8, list_y + 16, icon, 16, 16, 0, HBRUSH(null_mut()), DI_NORMAL) };
-                }
-                
                 SetTextColor(mdc, if ftype == s.active_filter { CLR_WHITE } else { CLR_GRAY });
-                let text_x = fx + 8 + icon_w + icon_gap;
-                let mut l_rc = RECT { left: text_x, top: list_y + 8, right: fx + fw, bottom: list_y + 40 };
+                let mut l_rc = RECT { left: fx + 8, top: list_y + 8, right: fx + fw, bottom: list_y + 40 };
                 let _ = DrawTextW(mdc, &mut lw, &mut l_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
                 
                 fx += fw + 8;
@@ -6990,13 +6983,13 @@ fn filter_counts_for_results(results: &[SearchResult]) -> [usize; 7] {
 
 fn filter_pill_rects(s: &State, x_start: i32, list_y: i32) -> Vec<(FilterType, RECT)> {
     let filters = [
-        ("All", FilterType::All, !s.icon_new_all.0.is_null()),
-        ("Files", FilterType::Files, !s.icon_new_files.0.is_null()),
-        ("Content", FilterType::Content, !s.icon_new_content.0.is_null()),
-        ("Images", FilterType::Images, !s.icon_new_images.0.is_null()),
-        ("Code", FilterType::Code, !s.icon_new_code.0.is_null()),
-        ("Settings", FilterType::Settings, !s.icon_new_settings.0.is_null()),
-        ("Commands", FilterType::Commands, !s.icon_new_commands.0.is_null()),
+        ("All", FilterType::All),
+        ("Files", FilterType::Files),
+        ("Content", FilterType::Content),
+        ("Images", FilterType::Images),
+        ("Code", FilterType::Code),
+        ("Settings", FilterType::Settings),
+        ("Commands", FilterType::Commands),
     ];
     
     let mut res = Vec::new();
@@ -7004,16 +6997,14 @@ fn filter_pill_rects(s: &State, x_start: i32, list_y: i32) -> Vec<(FilterType, R
         let hdc = GetDC(HWND(std::ptr::null_mut()));
         let old_font = SelectObject(hdc, s.font_c);
         let mut fx = x_start + PAD_L - s.filter_scroll_x;
-        for &(label, ftype, has_icon) in &filters {
+        for &(label, ftype) in &filters {
             let count = s.filter_counts[filter_index(ftype)];
             let full_label = format!("{} {}", label, count);
             let mut lw: Vec<u16> = full_label.encode_utf16().collect();
             let mut sz_lbl = SIZE::default();
             let _ = GetTextExtentPoint32W(hdc, &lw, &mut sz_lbl);
             
-            let icon_w = if has_icon { 16 } else { 0 };
-            let icon_gap = if has_icon { 6 } else { 0 };
-            let fw = 8 + icon_w + icon_gap + sz_lbl.cx + 8;
+            let fw = sz_lbl.cx + 16;
             
             res.push((ftype, RECT {
                 left: fx,
