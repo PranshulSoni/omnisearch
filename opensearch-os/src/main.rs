@@ -1317,6 +1317,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     s.cursor_pos += c.len_utf8();
                     s.selected = 0;
                     s.scroll_offset = 0;
+                    s.results.clear();
                     kick_debounce(hwnd, s);
                     reset_cursor_blink(hwnd, s);
                     let _ = InvalidateRect(hwnd, None, FALSE);
@@ -1597,6 +1598,8 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                             s.reset_results();
                         } else {
                             s.selected = 0;
+                            s.results.clear();
+                            kick_debounce(hwnd, s);
                         }
                         reset_cursor_blink(hwnd, s);
                         let _ = InvalidateRect(hwnd, None, FALSE);
@@ -5254,7 +5257,7 @@ fn task_manager_icon_path() -> Option<String> {
 fn is_file_result_source(source: &str) -> bool {
     matches!(
         source,
-        "RECENT" | "FILE" | "FILE_CONTENT" | "CODE" | "CODE_CONTENT" | "OCR"
+        "RECENT" | "FILE" | "FILE_CONTENT" | "CODE" | "CODE_CONTENT" | "OCR" | "PDF" | "DOCX"
     )
 }
 
@@ -7348,13 +7351,8 @@ unsafe fn load_png_to_hicon(bytes: &[u8], size: u32) -> HICON {
     let img = match image::load_from_memory_with_format(bytes, image::ImageFormat::Png) {
         Ok(img) => {
             let rgba = img.into_rgba8();
-            let cropped = if let Some((x, y, width, height)) = alpha_bounds(&rgba) {
-                image::imageops::crop_imm(&rgba, x, y, width, height).to_image()
-            } else {
-                rgba
-            };
             image::imageops::resize(
-                &cropped,
+                &rgba,
                 size,
                 size,
                 image::imageops::FilterType::Lanczos3,
@@ -7637,6 +7635,7 @@ unsafe fn paste_clipboard_into_query(hwnd: HWND, s: &mut State, search_now: bool
         if search_now {
             s.selected = 0;
             s.scroll_offset = 0;
+            s.results.clear();
             kick_debounce(hwnd, s);
         }
     } else if save_clipboard_image(hwnd, &s.db_path, "Pasted Image").is_some() {
