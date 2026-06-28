@@ -183,6 +183,7 @@ struct State {
     editing_item: Option<String>,
     submenu_active: bool,
     submenu_selected: usize,
+    image_preview_active: bool,
     // In-app note editor (self-rendered — no child control, which broke on the layered window)
     note_editing: bool,
     note_text: String,
@@ -606,6 +607,7 @@ unsafe fn run() {
         editing_item: None,
         submenu_active: false,
         submenu_selected: 0,
+        image_preview_active: false,
         note_editing: false,
         note_text: String::new(),
         note_path: None,
@@ -1369,6 +1371,17 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             LRESULT(0)
         }
 
+        WM_KEYUP if wp.0 == VK_TAB.0 as usize => {
+            if !sp.is_null() {
+                let s = &mut *sp;
+                if s.image_preview_active {
+                    s.image_preview_active = false;
+                    let _ = InvalidateRect(hwnd, None, FALSE);
+                }
+            }
+            LRESULT(0)
+        }
+
         WM_KEYDOWN => {
             if sp.is_null() {
                 return LRESULT(0);
@@ -1968,7 +1981,10 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         }
                     } else {
                         if let Some(r) = s.results.get(s.selected) {
-                            if r.entry.source == "app" {
+                            if image_path_for_result(r).is_some() {
+                                s.image_preview_active = true;
+                                let _ = InvalidateRect(hwnd, None, FALSE);
+                            } else if r.entry.source == "app" {
                                 s.submenu_active = !s.submenu_active;
                                 s.submenu_selected = 0;
                                 let _ = InvalidateRect(hwnd, None, FALSE);
@@ -3042,6 +3058,7 @@ unsafe fn do_hide(hwnd: HWND, s: &mut State) {
     s.voice_pending_exec = false;
     s.voice_exec_deadline = None;
     s.form_state = FormState::None;
+    s.image_preview_active = false;
     let _ = ShowWindow(hwnd, SW_HIDE);
     s.anim = Anim::Hidden;
 }
@@ -4327,6 +4344,7 @@ unsafe fn kick_debounce(hwnd: HWND) {
 
 unsafe fn trigger_search(_hwnd: HWND, s: &mut State) {
     s.submenu_active = false;
+    s.image_preview_active = false;
     if s.editing_item.is_some() {
         return;
     }
@@ -5260,6 +5278,23 @@ fn icon_file_path(source: &str, key: &str) -> Option<String> {
     None
 }
 
+fn image_path_for_result(result: &SearchResult) -> Option<&str> {
+    let path = result
+        .entry
+        .launch_command
+        .strip_prefix("copy_image:")
+        .unwrap_or(&result.entry.launch_command);
+    let extension = std::path::Path::new(path)
+        .extension()?
+        .to_str()?
+        .to_ascii_lowercase();
+    matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp"
+    )
+    .then_some(path)
+}
+
 unsafe fn paint(hwnd: HWND, s: &State) {
     let mut ps = PAINTSTRUCT::default();
     let hdc = BeginPaint(hwnd, &mut ps);
@@ -6188,7 +6223,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         (s.results.len().saturating_sub(s.scroll_offset)).min(VISIBLE_RESULTS)
     };
     if n > 0 {
-        let list_w = if s.submenu_active { w - 240 } else { w };
+        let list_w = if s.submenu_active || s.image_preview_active {
+            w - 240
+        } else {
+            w
+        };
         
         // Draw top separator
         fill(mdc, x, y + SEARCH_H, list_w, 1, CLR_DIV);
@@ -6431,13 +6470,13 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
                 let icon_y = row_card_y + (row_card_h - 28) / 2;
                 let mut drew_thumbnail = false;
-                if let Some(path) = res.entry.launch_command.strip_prefix("copy_image:") {
+                if let Some(path) = image_path_for_result(res) {
                     let mut cache = s.clipboard_thumbnails.borrow_mut();
                     if let Some(&hbitmap) = cache.get(path) {
-                        draw_cached_bmp(mdc, x + PAD_L + 2, icon_y, 28, 28, hbitmap);
+                        draw_cached_bmp(mdc, x + PAD_L, icon_y - 2, 32, 32, hbitmap);
                         drew_thumbnail = true;
-                    } else if let Some(hbitmap) = load_bmp_file(path) {
-                        draw_cached_bmp(mdc, x + PAD_L + 2, icon_y, 28, 28, hbitmap);
+                    } else if let Some(hbitmap) = load_shell_thumbnail(path, 256) {
+                        draw_cached_bmp(mdc, x + PAD_L, icon_y - 2, 32, 32, hbitmap);
                         cache.insert(path.to_string(), hbitmap);
                         drew_thumbnail = true;
                     }
@@ -6551,6 +6590,22 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     fill(mdc, x + 13, border_y + 4, 3, border_h - 8, CLR_ACCENT);
                 }
 
+                let mut drew_thumbnail = false;
+                if let Some(path) = image_path_for_result(res) {
+                    let mut cache = s.clipboard_thumbnails.borrow_mut();
+                    let hbitmap = cache
+                        .get(path)
+                        .copied()
+                        .or_else(|| load_shell_thumbnail(path, 256).inspect(|h| {
+                            cache.insert(path.to_string(), *h);
+                        }));
+                    if let Some(hbitmap) = hbitmap {
+                        let icon_y = ry + (RESULT_H - 32) / 2;
+                        draw_cached_bmp(mdc, x + PAD_L, icon_y, 32, 32, hbitmap);
+                        drew_thumbnail = true;
+                    }
+                }
+
                 let icon_to_draw = match res.entry.source.as_str() {
                     "ACTION" | "SYSTEM" | "WINDOW" => s.icon_new_commands,
                     "BOOKMARK" | "QUICKLINK" => s.icon_new_browser_bookmarks,
@@ -6567,7 +6622,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     _ => s.icon_new_all,
                 };
 
-                if !icon_to_draw.0.is_null() {
+                if !drew_thumbnail && !icon_to_draw.0.is_null() {
                     let icon_y = ry + (RESULT_H - 32) / 2;
                     let _ = unsafe { DrawIconEx(mdc, x + PAD_L, icon_y, icon_to_draw, 32, 32, 0, HBRUSH(null_mut()), DI_NORMAL) };
                 }
@@ -6647,7 +6702,55 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             fill(mdc, sb_x, thumb_y, sb_w, thumb_h, COLORREF(0x00_70_62_58));
         }
 
-        if s.submenu_active {
+        if s.image_preview_active {
+            fill(mdc, x + list_w, y + SEARCH_H, 1, h - SEARCH_H, CLR_DIV);
+            fill(
+                mdc,
+                x + list_w + 1,
+                y + SEARCH_H + 1,
+                238,
+                h - SEARCH_H - 1,
+                COLORREF(0x00_23_1D_19),
+            );
+            if let Some((result, path)) = s
+                .results
+                .get(s.selected)
+                .and_then(|result| image_path_for_result(result).map(|path| (result, path)))
+            {
+                let mut cache = s.clipboard_thumbnails.borrow_mut();
+                let hbitmap = cache
+                    .get(path)
+                    .copied()
+                    .or_else(|| load_shell_thumbnail(path, 256).inspect(|h| {
+                        cache.insert(path.to_string(), *h);
+                    }));
+                if let Some(hbitmap) = hbitmap {
+                    draw_cached_bmp(
+                        mdc,
+                        x + list_w + 12,
+                        y + SEARCH_H + 20,
+                        216,
+                        216,
+                        hbitmap,
+                    );
+                }
+                SelectObject(mdc, s.font_c);
+                SetTextColor(mdc, CLR_GRAY);
+                let mut name: Vec<u16> = result.entry.control_name.encode_utf16().collect();
+                let mut name_rect = RECT {
+                    left: x + list_w + 12,
+                    top: y + SEARCH_H + 248,
+                    right: x + w - 12,
+                    bottom: y + SEARCH_H + 286,
+                };
+                let _ = DrawTextW(
+                    mdc,
+                    &mut name,
+                    &mut name_rect,
+                    DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX,
+                );
+            }
+        } else if s.submenu_active {
             fill(mdc, x + list_w, y + SEARCH_H, 1, h - SEARCH_H, CLR_DIV);
             fill(mdc, x + list_w + 1, y + SEARCH_H + 1, 238, h - SEARCH_H - 1, COLORREF(0x00_23_1D_19));
             let actions = ["Run as Administrator", "Open File Location", "Copy Path"];
@@ -8148,23 +8251,22 @@ fn log_timeline_event(
     }
 }
 
-unsafe fn load_bmp_file(path: &str) -> Option<HBITMAP> {
-    use windows::core::PCWSTR;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        LoadImageW, IMAGE_BITMAP, LR_CREATEDIBSECTION, LR_LOADFROMFILE,
-    };
-
+unsafe fn load_shell_thumbnail(path: &str, size: i32) -> Option<HBITMAP> {
     let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
-    let h_img = LoadImageW(
-        None,
-        PCWSTR(wide_path.as_ptr()),
-        IMAGE_BITMAP,
-        0,
-        0,
-        LR_LOADFROMFILE | LR_CREATEDIBSECTION,
-    );
-
-    h_img.ok().map(|h| HBITMAP(h.0))
+    let item: windows::Win32::UI::Shell::IShellItem =
+        windows::Win32::UI::Shell::SHCreateItemFromParsingName(
+            PCWSTR(wide_path.as_ptr()),
+            None,
+        )
+        .ok()?;
+    let factory: windows::Win32::UI::Shell::IShellItemImageFactory = item.cast().ok()?;
+    factory
+        .GetImage(
+            SIZE { cx: size, cy: size },
+            windows::Win32::UI::Shell::SIIGBF_THUMBNAILONLY
+                | windows::Win32::UI::Shell::SIIGBF_BIGGERSIZEOK,
+        )
+        .ok()
 }
 
 unsafe fn draw_cached_bmp(hdc: HDC, x: i32, y: i32, w: i32, h: i32, hbitmap: HBITMAP) {
@@ -8180,12 +8282,15 @@ unsafe fn draw_cached_bmp(hdc: HDC, x: i32, y: i32, w: i32, h: i32, hbitmap: HBI
         if GetObjectW(hbitmap, size, Some(&mut bmp as *mut BITMAP as *mut _)) != 0 {
             let old_obj = SelectObject(mem_dc, hbitmap);
             let old_mode = SetStretchBltMode(hdc, COLORONCOLOR);
+            let scale = (w as f32 / bmp.bmWidth as f32).min(h as f32 / bmp.bmHeight as f32);
+            let draw_w = (bmp.bmWidth as f32 * scale).round() as i32;
+            let draw_h = (bmp.bmHeight as f32 * scale).round() as i32;
             let _ = StretchBlt(
                 hdc,
-                x,
-                y,
-                w,
-                h,
+                x + (w - draw_w) / 2,
+                y + (h - draw_h) / 2,
+                draw_w,
+                draw_h,
                 mem_dc,
                 0,
                 0,
@@ -8261,6 +8366,31 @@ mod tests {
         image.put_pixel(2, 1, image::Rgba([255, 255, 255, 255]));
         image.put_pixel(5, 6, image::Rgba([255, 255, 255, 255]));
         assert_eq!(alpha_bounds(&image), Some((2, 1, 4, 6)));
+    }
+
+    #[test]
+    fn image_results_accept_files_and_clipboard_commands() {
+        let result = |command: &str| SearchResult {
+            score: 1.0,
+            entry: search::CatalogEntry {
+                id: String::new(),
+                control_name: String::new(),
+                breadcrumb_path: String::new(),
+                launch_command: command.to_string(),
+                source: "FILE".to_string(),
+                description: String::new(),
+                synonyms: String::new(),
+            },
+        };
+        assert_eq!(
+            image_path_for_result(&result("C:\\Pictures\\shot.PNG")),
+            Some("C:\\Pictures\\shot.PNG")
+        );
+        assert_eq!(
+            image_path_for_result(&result("copy_image:C:\\Pictures\\shot.jpg")),
+            Some("C:\\Pictures\\shot.jpg")
+        );
+        assert_eq!(image_path_for_result(&result("C:\\notes.txt")), None);
     }
 
     #[test]
