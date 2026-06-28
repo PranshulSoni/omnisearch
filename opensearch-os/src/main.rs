@@ -511,27 +511,28 @@ unsafe fn run() {
     let icon_clipboard = load_icon_from_dll("shell32.dll", 260, 64);
     let icon_memory = load_icon_from_dll("shell32.dll", 238, 64);
 
-    let icon_new_agent_history = load_png_to_hicon(include_bytes!("../../launcher_source_icons/agent-history.png"), 64);
-    let icon_new_all = load_png_to_hicon(include_bytes!("../../launcher_source_icons/all.png"), 64);
-    let icon_new_browser_bookmarks = load_png_to_hicon(include_bytes!("../../launcher_source_icons/browser-bookmarks.png"), 64);
-    let icon_new_browser_history = load_png_to_hicon(include_bytes!("../../launcher_source_icons/browser-history.png"), 64);
-    let icon_new_clipboard_history = load_png_to_hicon(include_bytes!("../../launcher_source_icons/clipboard-history.png"), 64);
-    let icon_new_code = load_png_to_hicon(include_bytes!("../../launcher_source_icons/code.png"), 64);
-    let icon_new_commands = load_png_to_hicon(include_bytes!("../../launcher_source_icons/commands.png"), 64);
-    let icon_new_content = load_png_to_hicon(include_bytes!("../../launcher_source_icons/content.png"), 64);
-    let icon_new_enter = load_png_to_hicon(include_bytes!("../../launcher_source_icons/enter.png"), 64);
-    let icon_new_esc = load_png_to_hicon(include_bytes!("../../launcher_source_icons/esc.png"), 64);
-    let icon_new_files = load_png_to_hicon(include_bytes!("../../launcher_source_icons/files.png"), 64);
-    let icon_new_git_commits = load_png_to_hicon(include_bytes!("../../launcher_source_icons/git-commits.png"), 64);
-    let icon_new_images = load_png_to_hicon(include_bytes!("../../launcher_source_icons/images.png"), 64);
-    let icon_new_local_files = load_png_to_hicon(include_bytes!("../../launcher_source_icons/local-files.png"), 64);
-    let icon_new_mic = load_png_to_hicon(include_bytes!("../../launcher_source_icons/mic.png"), 64);
-    let icon_new_navigate = load_png_to_hicon(include_bytes!("../../launcher_source_icons/navigate.png"), 64);
-    let icon_new_search_screenshots = load_png_to_hicon(include_bytes!("../../launcher_source_icons/search-screenshots.png"), 64);
-    let icon_new_search = load_png_to_hicon(include_bytes!("../../launcher_source_icons/search.png"), 64);
-    let icon_new_settings = load_png_to_hicon(include_bytes!("../../launcher_source_icons/settings.png"), 64);
-    let icon_new_source_code = load_png_to_hicon(include_bytes!("../../launcher_source_icons/source-code.png"), 64);
-    let icon_new_tab = load_png_to_hicon(include_bytes!("../../launcher_source_icons/tab.png"), 64);
+    let icon_new_agent_history = load_png_to_hicon(include_bytes!("../../launcher_source_icons/agent-history.png"), 32);
+    let icon_new_all = load_png_to_hicon(include_bytes!("../../launcher_source_icons/all.png"), 32);
+    let icon_new_browser_bookmarks = load_png_to_hicon(include_bytes!("../../launcher_source_icons/browser-bookmarks.png"), 32);
+    let icon_new_browser_history = load_png_to_hicon(include_bytes!("../../launcher_source_icons/browser-history.png"), 32);
+    let icon_new_clipboard_history = load_png_to_hicon(include_bytes!("../../launcher_source_icons/clipboard-history.png"), 32);
+    let icon_new_code = load_png_to_hicon(include_bytes!("../../launcher_source_icons/code.png"), 32);
+    let icon_new_commands = load_png_to_hicon(include_bytes!("../../launcher_source_icons/commands.png"), 32);
+    let icon_new_content = load_png_to_hicon(include_bytes!("../../launcher_source_icons/content.png"), 32);
+    let icon_new_enter = load_png_to_hicon(include_bytes!("../../launcher_source_icons/enter.png"), 32);
+    let icon_new_esc = load_png_to_hicon(include_bytes!("../../launcher_source_icons/esc.png"), 32);
+    let icon_new_files = load_png_to_hicon(include_bytes!("../../launcher_source_icons/files.png"), 32);
+    let icon_new_git_commits = load_png_to_hicon(include_bytes!("../../launcher_source_icons/git-commits.png"), 32);
+    let icon_new_images = load_png_to_hicon(include_bytes!("../../launcher_source_icons/images.png"), 32);
+    let icon_new_local_files = load_png_to_hicon(include_bytes!("../../launcher_source_icons/local-files.png"), 32);
+    let icon_new_mic = load_png_to_hicon(include_bytes!("../../launcher_source_icons/mic.png"), 36);
+    let icon_new_navigate = load_png_to_hicon(include_bytes!("../../launcher_source_icons/navigate.png"), 32);
+    let icon_new_search_screenshots = load_png_to_hicon(include_bytes!("../../launcher_source_icons/search-screenshots.png"), 32);
+    let icon_new_search = load_png_to_hicon(include_bytes!("../../launcher_source_icons/search.png"), 36);
+    let icon_new_settings = load_png_to_hicon(include_bytes!("../../launcher_source_icons/settings.png"), 32);
+    let icon_new_source_code = load_png_to_hicon(include_bytes!("../../launcher_source_icons/source-code.png"), 32);
+    let icon_new_tab = load_png_to_hicon(include_bytes!("../../launcher_source_icons/tab.png"), 32);
+
 
     let (icon_tx, icon_rx) = std::sync::mpsc::channel::<IconRequest>();
 
@@ -1358,6 +1359,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     s.query.insert(s.cursor_pos, c);
                     s.cursor_pos += c.len_utf8();
                     s.selected = 0;
+                    s.results.clear(); // Clear results immediately to hide homepage
                     s.scroll_offset = 0;
                     kick_debounce(hwnd);
                     reset_cursor_blink(hwnd, s);
@@ -1622,6 +1624,13 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                             }
                             s.query.remove(p);
                             s.cursor_pos = p;
+                        }
+                        if s.query.is_empty() {
+                            s.selected = 2;
+                            s.reset_results();
+                        } else {
+                            s.selected = 0;
+                            s.results.clear(); // Clear results immediately to hide homepage
                         }
                         reset_cursor_blink(hwnd, s);
                         let _ = InvalidateRect(hwnd, None, FALSE);
@@ -1928,6 +1937,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         s.reset_results();
                     } else {
                         s.selected = 0;
+                        s.results.clear(); // Clear results immediately to hide homepage
                     }
                     s.scroll_offset = 0;
                     kick_debounce(hwnd);
@@ -5395,14 +5405,14 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
     // Draw Search Icon
     if !s.icon_new_search.0.is_null() {
-        let icon_y = y + (SEARCH_H - 30) / 2;
+        let icon_y = y + (SEARCH_H - 36) / 2;
         let _ = DrawIconEx(
             mdc,
-            x + PAD_L + 3, // x + 27 (symmetrical 27px margin)
+            x + PAD_L,
             icon_y,
             s.icon_new_search,
-            30,
-            30,
+            36,
+            36,
             0,
             HBRUSH(null_mut()),
             DI_NORMAL,
@@ -5485,14 +5495,14 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     // muted otherwise. Click toggles dictation (hit-test in WM_LBUTTONDOWN).
     if w >= WIN_W - 8 {
         if !s.icon_new_mic.0.is_null() {
-            let icon_y = y + (SEARCH_H - 30) / 2;
+            let icon_y = y + (SEARCH_H - 36) / 2;
             let _ = DrawIconEx(
                 mdc,
-                x + w - PAD_L - 30 - 3, // x + w - 57 (symmetrical 27px margin)
+                x + w - PAD_L - 36, // Align correctly for 36x36
                 icon_y,
                 s.icon_new_mic,
-                30,
-                30,
+                36,
+                36,
                 0,
                 HBRUSH(null_mut()),
                 DI_NORMAL,
@@ -7541,6 +7551,7 @@ unsafe fn paste_clipboard_into_query(hwnd: HWND, s: &mut State, search_now: bool
         }
         if search_now {
             s.selected = 0;
+            s.results.clear(); // Clear results immediately to hide homepage
             s.scroll_offset = 0;
             kick_debounce(hwnd);
         }
