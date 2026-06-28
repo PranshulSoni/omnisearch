@@ -398,9 +398,7 @@ impl State {
             return SEARCH_H + 36 + 8 * RESULT_H + 8;
         }
         let n = self.results.len().min(VISIBLE_RESULTS) as i32;
-        if n == 0 {
-            SEARCH_H
-        } else if self.has_prefix() {
+        if self.has_prefix() {
             let mut headers_count = 0;
             for idx in 0..(n as usize) {
                 let res_idx = self.scroll_offset + idx;
