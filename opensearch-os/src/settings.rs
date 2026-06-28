@@ -37,7 +37,7 @@ impl Default for AppSettings {
 }
 
 fn default_true() -> bool { true }
-fn default_theme() -> String { "Dark".to_string() }
+fn default_theme() -> String { "Darker".to_string() }
 fn default_global_hotkey() -> String { "Alt+Space".to_string() }
 fn default_window_width() -> u32 { 720 }
 fn default_item_height() -> u32 { 76 }

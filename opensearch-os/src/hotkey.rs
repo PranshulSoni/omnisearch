@@ -172,23 +172,53 @@ unsafe extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam:
     CallNextHookEx(None, ncode, wparam, lparam)
 }
 
-pub fn record_hotkey_blocking() -> String {
+pub fn record_hotkey_blocking() -> Option<String> {
     // Spinlock waiting for recording to finish
     RECORDING_MODE.store(true, Ordering::SeqCst);
     if let Ok(mut g) = RECORDED_HOTKEY.lock() {
         *g = None;
     }
     
+    let mut recorded_str = None;
     loop {
         if !RECORDING_MODE.load(Ordering::SeqCst) {
             if let Ok(g) = RECORDED_HOTKEY.lock() {
                 if let Some(s) = &*g {
-                    return s.clone();
+                    recorded_str = Some(s.clone());
                 }
             }
             break;
         }
         thread::sleep(std::time::Duration::from_millis(50));
     }
-    "Alt+Space".to_string()
+    
+    if let Some(key_str) = recorded_str {
+        // Parse the recorded string to see if it conflicts
+        if let Some(cfg) = HotkeyConfig::parse(&key_str) {
+            let mut modifiers = MOD_NOREPEAT;
+            if cfg.alt { modifiers |= MOD_ALT; }
+            if cfg.ctrl { modifiers |= MOD_CONTROL; }
+            if cfg.shift { modifiers |= MOD_SHIFT; }
+            if cfg.win { modifiers |= MOD_WIN; }
+            
+            unsafe {
+                let test_id = 9999;
+                if RegisterHotKey(HWND(std::ptr::null_mut()), test_id, modifiers, cfg.vkey).is_err() {
+                    // Conflict!
+                    let msg: Vec<u16> = "This hotkey is already in use by Windows or another app.\n\nDo you want OmniSearch to forcefully override it?\n(Choosing Yes will hijack the hotkey globally)".encode_utf16().chain(std::iter::once(0)).collect();
+                    let title: Vec<u16> = "Hotkey Conflict\0".encode_utf16().collect();
+                    let res = MessageBoxW(HWND(std::ptr::null_mut()), windows::core::PCWSTR(msg.as_ptr()), windows::core::PCWSTR(title.as_ptr()), MB_YESNO | MB_ICONWARNING);
+                    if res.0 == 6 /* IDYES */ {
+                        return Some(key_str);
+                    } else {
+                        return None;
+                    }
+                } else {
+                    let _ = UnregisterHotKey(HWND(std::ptr::null_mut()), test_id);
+                }
+            }
+        }
+        return Some(key_str);
+    }
+    None
 }

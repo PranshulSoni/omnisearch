@@ -138,11 +138,13 @@ export component SettingsWindow inherits Window {
                 height: 100%;
                 
                 VerticalBox {
+                    alignment: start;
                     padding: 24px;
                     spacing: 12px;
                     
                     // General Page
                     if root.current-page == 0: VerticalBox {
+                        alignment: start;
                         spacing: 12px;
                         Text { text: "General Settings"; font-size: 26px; font-weight: 600; color: root.text-primary; }
                         
@@ -187,6 +189,7 @@ export component SettingsWindow inherits Window {
                     
                     // Appearance Page
                     if root.current-page == 1: VerticalBox {
+                        alignment: start;
                         spacing: 12px;
                         Text { text: "Appearance"; font-size: 26px; font-weight: 600; color: root.text-primary; }
                         
@@ -202,7 +205,7 @@ export component SettingsWindow inherits Window {
                                 HorizontalBox {
                                     width: 160px;
                                     ComboBox {
-                                        model: ["Light", "Dark"];
+                                        model: ["Light", "Darker", "NordDarker"];
                                         current-value: root.theme-mode;
                                         selected(val) => {
                                             root.theme-mode = val;
@@ -218,6 +221,7 @@ export component SettingsWindow inherits Window {
                     
                     // Hotkeys Page
                     if root.current-page == 2: VerticalBox {
+                        alignment: start;
                         spacing: 12px;
                         Text { text: "Hotkeys"; font-size: 26px; font-weight: 600; color: root.text-primary; }
                         
@@ -246,6 +250,7 @@ export component SettingsWindow inherits Window {
                     
                     // About Page
                     if root.current-page == 3: VerticalBox {
+                        alignment: start;
                         spacing: 24px;
                         Text { text: "About"; font-size: 26px; font-weight: 600; color: root.text-primary; }
                         Rectangle {

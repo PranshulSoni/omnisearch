@@ -11,6 +11,7 @@ use once_cell::sync::Lazy;
 static SETTINGS_UI: Lazy<Mutex<Option<slint::Weak<SettingsWindow>>>> = Lazy::new(|| Mutex::new(None));
 
 pub fn init_settings_window(hwnd: HWND) {
+    std::env::set_var("SLINT_STYLE", "fluent-dark");
     let ui = SettingsWindow::new().unwrap();
     let ui_weak = ui.as_weak();
     
@@ -64,13 +65,22 @@ pub fn init_settings_window(hwnd: HWND) {
     ui.on_record_hotkey(move || {
         let weak_clone = ui_weak_hotkey.clone();
         std::thread::spawn(move || {
-            let recorded = crate::hotkey::record_hotkey_blocking();
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = weak_clone.upgrade() {
-                    ui.set_global_hotkey(SharedString::from(recorded));
-                    ui.invoke_save_settings(); // Automatically save the newly recorded hotkey
-                }
-            });
+            if let Some(recorded) = crate::hotkey::record_hotkey_blocking() {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak_clone.upgrade() {
+                        ui.set_global_hotkey(SharedString::from(recorded));
+                        ui.invoke_save_settings(); // Automatically save the newly recorded hotkey
+                    }
+                });
+            } else {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak_clone.upgrade() {
+                        // Revert to old hotkey
+                        let current_settings = AppSettings::load();
+                        ui.set_global_hotkey(SharedString::from(current_settings.global_hotkey));
+                    }
+                });
+            }
         });
     });
 
