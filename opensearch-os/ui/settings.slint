@@ -246,11 +246,7 @@ export component SettingsWindow inherits Window {
                     ta-hotkeys := TouchArea { clicked => { root.current-page = 2; } }
                 }
 
-                Rectangle { vertical-stretch: 1; }
-
-                // Thin divider above About
-                Rectangle { height: 1px; background: root.border-color; }
-                Rectangle { height: 8px; }
+                Rectangle { height: 4px; }
 
                 // Agent
                 nav-agent := Rectangle {
@@ -328,7 +324,11 @@ export component SettingsWindow inherits Window {
                     ta-database := TouchArea { clicked => { root.current-page = 4; } }
                 }
 
-                Rectangle { height: 4px; }
+                Rectangle { vertical-stretch: 1; }
+
+                // Thin divider above About
+                Rectangle { height: 1px; background: root.border-color; }
+                Rectangle { height: 8px; }
 
                 // About
                 nav-about := Rectangle {

@@ -3313,17 +3313,6 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
         }
 
         let _ = DwmFlush();
-
-        let mut msg = MSG::default();
-        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-            let _ = TranslateMessage(&msg);
-            let _ = DispatchMessageW(&msg);
-            if msg.message == WM_QUIT {
-                IN_ANIMATION = false;
-                PostQuitMessage(0);
-                return;
-            }
-        }
     }
 
     IN_ANIMATION = false;

@@ -17,66 +17,73 @@ static SETTINGS_READY: AtomicBool = AtomicBool::new(false);
 pub fn init_settings_window(hwnd: HWND) {
     std::env::set_var("SLINT_STYLE", "fluent-dark");
 
-    // Channel: main thread sends () → settings thread shows the window
+    let ui = match SettingsWindow::new() {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+
     let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
     if let Ok(mut guard) = SHOW_REQUEST.lock() {
         *guard = Some(tx);
     }
     SETTINGS_READY.store(true, Ordering::SeqCst);
 
-    // Wait for show requests in a loop. Each request creates a fresh window.
-    loop {
-        // Block until someone calls show_settings_window()
-        match rx.recv() {
-            Ok(_) => {}
-            Err(_) => break, // channel closed, exit thread
-        }
-
-        // Create fresh Slint window each time (avoids all hide/show state issues)
-        let ui = match SettingsWindow::new() {
-            Ok(u) => u,
-            Err(_) => continue,
-        };
-
-        // Load current settings
-        let settings = AppSettings::load();
-        let (api_key, endpoint, model, always_approve) = load_ai_settings();
-
-        ui.set_run_on_startup(settings.run_on_startup);
-        ui.set_hide_on_lose_focus(settings.hide_on_lose_focus);
-        ui.set_theme_mode(SharedString::from(settings.normalized_theme_mode()));
-        ui.set_global_hotkey(SharedString::from(settings.global_hotkey.clone()));
-        ui.set_voice_hotkey(SharedString::from(crate::hotkey::VOICE_DICTATION_HOTKEY));
-        ui.set_hotkey_error(SharedString::from(""));
-        ui.set_window_width(settings.window_width as i32);
-        ui.set_item_height(settings.item_height as i32);
-
-        // Load Agent properties
-        ui.set_agent_api_key(SharedString::from(api_key));
-        ui.set_agent_endpoint(SharedString::from(endpoint));
-        ui.set_agent_model(SharedString::from(model));
-        ui.set_agent_always_approve(always_approve);
-
-        // Load Database folders
-        let folders_vec: Vec<slint::SharedString> = settings
-            .scan_folders
-            .iter()
-            .map(|f| slint::SharedString::from(f.clone()))
-            .collect();
-        let folders_model = slint::ModelRc::new(slint::VecModel::from(folders_vec));
-        ui.set_db_folders(folders_model);
-
-        // Close = hide window, then stop the inner run()
-        let ui_weak_close = ui.as_weak();
-        ui.window().on_close_requested(move || {
-            if let Some(ui) = ui_weak_close.upgrade() {
-                ui.invoke_set_hotkey_recording(false);
-                // Quit the inner event loop to unblock us
-                slint::quit_event_loop().ok();
-                ui.window().hide().ok();
+    let ui_weak_show = ui.as_weak();
+    std::thread::spawn(move || {
+        loop {
+            match rx.recv() {
+                Ok(_) => {
+                    let weak = ui_weak_show.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.window().show().ok();
+                            ui.window().set_minimized(false);
+                            ui.window().request_redraw();
+                        }
+                    });
+                }
+                Err(_) => break,
             }
-            CloseRequestResponse::KeepWindowShown
-        });
+        }
+    });
+
+    // Load current settings
+    let settings = AppSettings::load();
+    let (api_key, endpoint, model, always_approve) = load_ai_settings();
+
+    ui.set_run_on_startup(settings.run_on_startup);
+    ui.set_hide_on_lose_focus(settings.hide_on_lose_focus);
+    ui.set_theme_mode(SharedString::from(settings.normalized_theme_mode()));
+    ui.set_global_hotkey(SharedString::from(settings.global_hotkey.clone()));
+    ui.set_voice_hotkey(SharedString::from(crate::hotkey::VOICE_DICTATION_HOTKEY));
+    ui.set_hotkey_error(SharedString::from(""));
+    ui.set_window_width(settings.window_width as i32);
+    ui.set_item_height(settings.item_height as i32);
+
+    // Load Agent properties
+    ui.set_agent_api_key(SharedString::from(api_key));
+    ui.set_agent_endpoint(SharedString::from(endpoint));
+    ui.set_agent_model(SharedString::from(model));
+    ui.set_agent_always_approve(always_approve);
+
+    // Load Database folders
+    let folders_vec: Vec<slint::SharedString> = settings
+        .scan_folders
+        .iter()
+        .map(|f| slint::SharedString::from(f.clone()))
+        .collect();
+    let folders_model = slint::ModelRc::new(slint::VecModel::from(folders_vec));
+    ui.set_db_folders(folders_model);
+
+    // Close = hide window, keep event loop alive
+    let ui_weak_close = ui.as_weak();
+    ui.window().on_close_requested(move || {
+        if let Some(ui) = ui_weak_close.upgrade() {
+            ui.invoke_set_hotkey_recording(false);
+            ui.window().hide().ok();
+        }
+        CloseRequestResponse::KeepWindowShown
+    });
 
         // Save settings callback
         let ui_weak_save = ui.as_weak();
@@ -249,8 +256,6 @@ pub fn init_settings_window(hwnd: HWND) {
 
         ui.window().set_minimized(false);
         slint::run_event_loop().ok();
-        // Window was closed — loop back and wait for next show request
-    }
 }
 
 fn get_db_conn() -> Option<rusqlite::Connection> {
@@ -353,36 +358,35 @@ fn get_indexed_files_count() -> u32 {
 }
 
 fn pick_folder() -> Option<std::path::PathBuf> {
-    use windows::core::Interface;
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL, CoInitializeEx, COINIT_APARTMENTTHREADED};
-    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, FOS_PICKFOLDERS};
-    
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        use windows::core::Interface;
+        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL, CoInitializeEx, COINIT_APARTMENTTHREADED, CoUninitialize};
+        use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, FOS_PICKFOLDERS};
         
-        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL).ok()?;
-        
-        let mut options = dialog.GetOptions().ok()?;
-        let _ = dialog.SetOptions(options | FOS_PICKFOLDERS);
-        
-        if dialog.Show(None).is_err() {
-            return None;
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            let mut path_res = None;
+            
+            if let Ok(dialog) = CoCreateInstance::<_, IFileOpenDialog>(&FileOpenDialog, None, CLSCTX_ALL) {
+                if let Ok(options) = dialog.GetOptions() {
+                    let _ = dialog.SetOptions(options | FOS_PICKFOLDERS);
+                    if dialog.Show(None).is_ok() {
+                        if let Ok(result) = dialog.GetResult() {
+                            if let Ok(display_name) = result.GetDisplayName(windows::Win32::UI::Shell::SIGDN_FILESYSPATH) {
+                                if let Ok(s) = display_name.to_string() {
+                                    path_res = Some(std::path::PathBuf::from(s));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let _ = tx.send(path_res);
+            CoUninitialize();
         }
-        
-        let result = match dialog.GetResult() {
-            Ok(r) => r,
-            Err(_) => return None,
-        };
-        let display_name = match result.GetDisplayName(windows::Win32::UI::Shell::SIGDN_FILESYSPATH) {
-            Ok(name) => name,
-            Err(_) => return None,
-        };
-        let path = match display_name.to_string() {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
-        Some(std::path::PathBuf::from(path))
-    }
+    });
+    rx.recv().unwrap_or(None)
 }
 
 pub fn show_settings_window() {
