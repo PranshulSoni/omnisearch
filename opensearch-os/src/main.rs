@@ -132,15 +132,15 @@ const ANIM_DURATION_SEC: f32 = 0.115; // 115ms
 // const PILL_H: i32 = 12; // Starting height at top center
 
 // ── Colors (COLORREF = 0x00BBGGRR) ───────────────────────────────────────────
-const BG: COLORREF = COLORREF(0x00_1D_18_16);
-const BG_SEL: COLORREF = COLORREF(0x00_3A_2A_1F);
-const CLR_DIV: COLORREF = COLORREF(0x00_3C_34_30);
-const CLR_WHITE: COLORREF = COLORREF(0x00_FB_F7_F5);
-const CLR_GRAY: COLORREF = COLORREF(0x00_B3_A8_A1);
-const CLR_PH: COLORREF = COLORREF(0x00_8C_7D_74);
-const CLR_BDGBG: COLORREF = COLORREF(0x00_32_2A_25);
-const CLR_BDGTX: COLORREF = COLORREF(0x00_D8_CD_C6);
-const CLR_ACCENT: COLORREF = COLORREF(0x00_FF_A3_5E);
+// const s.theme.palette().bg: COLORREF ...
+// const s.theme.palette().bg_sel: COLORREF ...
+// const s.theme.palette().clr_div: COLORREF ...
+// const s.theme.palette().clr_white: COLORREF ...
+// const s.theme.palette().clr_gray: COLORREF ...
+// const s.theme.palette().clr_ph: COLORREF ...
+// const s.theme.palette().clr_bdgbg: COLORREF ...
+// const s.theme.palette().clr_bdgtx: COLORREF ...
+// const s.theme.palette().clr_accent: COLORREF ...
 const COLOR_KEY: COLORREF = COLORREF(0x00_12_34_56);
 
 #[derive(Debug, Clone, PartialEq)]
@@ -664,9 +664,15 @@ unsafe fn run() {
 
     let (icon_tx, icon_rx) = std::sync::mpsc::channel::<IconRequest>();
 
+    let app_settings = crate::settings::AppSettings::load();
+    let theme = match app_settings.theme_mode.as_str() {
+        "Light" => Theme::Light,
+        "NordDarker" => Theme::NordDarker,
+        _ => Theme::Darker,
+    };
     let state = Box::new(State {
-        app_settings: crate::settings::AppSettings::load(),
-        theme: Theme::Darker,
+        app_settings,
+        theme,
         hovered_item: None,
         mouse_tracking: false,
         search_tx: None,
@@ -1084,32 +1090,17 @@ unsafe extern "system" fn preview_wnd_proc(
                         let img_w = bmp_info.bmWidth;
                         let img_h = bmp_info.bmHeight;
                         
-                        let max_w = win_w - 32;
-                        let max_h = win_h - 48;
+                        let max_w = win_w - 16;
+                        let max_h = win_h - 16;
                         let scale = (max_w as f32 / img_w as f32).min(max_h as f32 / img_h as f32).min(1.0);
                         let draw_w = (img_w as f32 * scale).round() as i32;
                         let draw_h = (img_h as f32 * scale).round() as i32;
 
+                        // Center the image within the window
                         let img_x = (win_w - draw_w) / 2;
-                        let img_y = 12;
+                        let img_y = (win_h - draw_h) / 2;
 
                         draw_cached_bmp(mdc, img_x, img_y, draw_w, draw_h, hbitmap);
-
-                        SelectObject(mdc, s.font_c);
-                        SetTextColor(mdc, palette.clr_gray);
-                        let mut name: Vec<u16> = result.entry.control_name.encode_utf16().collect();
-                        let mut name_rect = RECT {
-                            left: 12,
-                            top: img_y + draw_h + 8,
-                            right: win_w - 12,
-                            bottom: win_h - 4,
-                        };
-                        let _ = DrawTextW(
-                            mdc,
-                            &mut name,
-                            &mut name_rect,
-                            DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX,
-                        );
                     }
                 }
             }
@@ -1163,14 +1154,28 @@ unsafe fn show_preview_window(hwnd_parent: HWND, s: &mut State) {
                 let draw_w = (img_w as f32 * scale).round() as i32;
                 let draw_h = (img_h as f32 * scale).round() as i32;
                 
-                p_w = (draw_w + 32).max(180);
-                p_h = draw_h + 64;
+                // Maximum space occupied by image (small 8px padding on all sides)
+                p_w = draw_w + 16;
+                p_h = draw_h + 16;
             }
         }
     }
     
     let p_x = parent_rect.right + 8;
-    let p_y = parent_rect.top;
+    
+    // Align vertically with the selected item
+    let visual_idx = s.selected as i32 - s.scroll_offset as i32;
+    let item_y = SEARCH_H + 1 + visual_idx * s.app_settings.item_height as i32;
+    let item_center = item_y + (s.app_settings.item_height as i32) / 2;
+    let mut p_y = parent_rect.top + item_center - (p_h / 2);
+
+    // Keep it within the screen/parent bounds
+    if p_y + p_h > parent_rect.bottom {
+        p_y = parent_rect.bottom - p_h;
+    }
+    if p_y < parent_rect.top {
+        p_y = parent_rect.top;
+    }
     
     if s.hwnd_preview.is_none() {
         let preview_class: Vec<u16> = "opensearch-os-preview\0".encode_utf16().collect();
@@ -3081,6 +3086,11 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             if !sp.is_null() {
                 let s = &mut *sp;
                 s.app_settings = crate::settings::AppSettings::load();
+                s.theme = match s.app_settings.theme_mode.as_str() {
+                    "Light" => Theme::Light,
+                    "NordDarker" => Theme::NordDarker,
+                    _ => Theme::Darker,
+                };
                 
                 // Parse theme manually if needed, or trigger redraw
                 unsafe {
@@ -5150,7 +5160,7 @@ unsafe fn paint_blocks(
             }
             MdBlock::Heading { level, runs } => {
                 let _ = SelectObject(hdc, s.font_h);
-                SetTextColor(hdc, CLR_WHITE);
+                SetTextColor(hdc, s.theme.palette().clr_white);
                 y += (*level as i32 - 1).max(0) * 4;
                 y += paint_run_lines(hdc, runs, s, x, y, width, None);
             }
@@ -5820,23 +5830,23 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         );
 
         // Draw magnifier border using fill lines
-        fill(mdc, draw_x - 2, draw_y - 2, zoom_w + 4, 2, CLR_WHITE);
-        fill(mdc, draw_x - 2, draw_y + zoom_h, zoom_w + 4, 2, CLR_WHITE);
-        fill(mdc, draw_x - 2, draw_y - 2, 2, zoom_h + 4, CLR_WHITE);
-        fill(mdc, draw_x + zoom_w, draw_y - 2, 2, zoom_h + 4, CLR_WHITE);
+        fill(mdc, draw_x - 2, draw_y - 2, zoom_w + 4, 2, s.theme.palette().clr_white);
+        fill(mdc, draw_x - 2, draw_y + zoom_h, zoom_w + 4, 2, s.theme.palette().clr_white);
+        fill(mdc, draw_x - 2, draw_y - 2, 2, zoom_h + 4, s.theme.palette().clr_white);
+        fill(mdc, draw_x + zoom_w, draw_y - 2, 2, zoom_h + 4, s.theme.palette().clr_white);
 
         // Draw central pixel highlight box (9x9)
         let cx_box = draw_x + 54;
         let cy_box = draw_y + 54;
-        fill(mdc, cx_box - 1, cy_box - 1, 9 + 2, 1, CLR_WHITE);
-        fill(mdc, cx_box - 1, cy_box + 9, 9 + 2, 1, CLR_WHITE);
-        fill(mdc, cx_box - 1, cy_box, 1, 9, CLR_WHITE);
-        fill(mdc, cx_box + 9, cy_box, 1, 9, CLR_WHITE);
+        fill(mdc, cx_box - 1, cy_box - 1, 9 + 2, 1, s.theme.palette().clr_white);
+        fill(mdc, cx_box - 1, cy_box + 9, 9 + 2, 1, s.theme.palette().clr_white);
+        fill(mdc, cx_box - 1, cy_box, 1, 9, s.theme.palette().clr_white);
+        fill(mdc, cx_box + 9, cy_box, 1, 9, s.theme.palette().clr_white);
 
         // Draw color info box below magnifier
         let info_y = draw_y + zoom_h + 6;
-        fill_rounded(mdc, draw_x - 1, info_y - 1, zoom_w + 2, 44 + 2, 6, CLR_DIV);
-        fill_rounded(mdc, draw_x, info_y, zoom_w, 44, 6, BG);
+        fill_rounded(mdc, draw_x - 1, info_y - 1, zoom_w + 2, 44 + 2, 6, s.theme.palette().clr_div);
+        fill_rounded(mdc, draw_x, info_y, zoom_w, 44, 6, s.theme.palette().bg);
 
         let r_comp = (pixel.0 & 0xFF) as u8;
         let g_comp = ((pixel.0 >> 8) & 0xFF) as u8;
@@ -5844,7 +5854,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         fill_rounded(mdc, draw_x + 8, info_y + 8, 28, 28, 14, pixel);
 
         SelectObject(mdc, s.font_b);
-        SetTextColor(mdc, CLR_WHITE);
+        SetTextColor(mdc, s.theme.palette().clr_white);
         SetBkMode(mdc, TRANSPARENT);
         let hex_str = format!("#{:02X}{:02X}{:02X}", r_comp, g_comp, b_comp);
         let mut hex_wide: Vec<u16> = hex_str.encode_utf16().collect();
@@ -5862,7 +5872,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         );
 
         SelectObject(mdc, s.font_c);
-        SetTextColor(mdc, CLR_GRAY);
+        SetTextColor(mdc, s.theme.palette().clr_gray);
         let rgb_str = format!("{},{},{}", r_comp, g_comp, b_comp);
         let mut rgb_wide: Vec<u16> = rgb_str.encode_utf16().collect();
         let mut rgb_rect = RECT {
@@ -6046,7 +6056,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             &mut hint_tr,
             DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
         );
-        SetTextColor(mdc, CLR_WHITE);
+        SetTextColor(mdc, s.theme.palette().clr_white);
         SelectObject(mdc, s.font_q);
     }
 
@@ -6070,13 +6080,13 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let _ = GetTextExtentPoint32W(mdc, &['A' as u16], &mut dummy_size);
         let text_h = dummy_size.cy;
         let cursor_top = tr.top + (tr.bottom - tr.top - text_h) / 2;
-        fill(mdc, cursor_x, cursor_top, 2, text_h, CLR_WHITE);
+        fill(mdc, cursor_x, cursor_top, 2, text_h, s.theme.palette().clr_white);
     }
     // ── Note editor panel (self-rendered) ──────────────────────────────────
     if s.note_editing {
         let pad = 24;
         let body_top = y + SEARCH_H + 1;
-        fill(mdc, x, y + SEARCH_H, w, 1, CLR_DIV);
+        fill(mdc, x, y + SEARCH_H, w, 1, s.theme.palette().clr_div);
 
         let title_str = s
             .note_path
@@ -6086,7 +6096,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             .unwrap_or("Note")
             .to_string();
         SelectObject(mdc, s.font_n);
-        SetTextColor(mdc, CLR_WHITE);
+        SetTextColor(mdc, s.theme.palette().clr_white);
         let mut title: Vec<u16> = title_str.encode_utf16().collect();
         let mut title_rc = RECT {
             left: x + pad,
@@ -6107,7 +6117,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
         // Body — append a caret block so the user sees the insertion point.
         SelectObject(mdc, s.font_c);
-        SetTextColor(mdc, CLR_WHITE);
+        SetTextColor(mdc, s.theme.palette().clr_white);
         let shown = if s.cursor_visible && s.note_editing {
             format!("{}\u{2588}", s.note_text)
         } else {
@@ -6143,10 +6153,10 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             DT_LEFT | DT_WORDBREAK | DT_NOPREFIX,
         );
 
-        fill(mdc, x, content_bottom, w, footer_h + 4, BG);
-        fill(mdc, x, content_bottom, w, 1, CLR_DIV);
+        fill(mdc, x, content_bottom, w, footer_h + 4, s.theme.palette().bg);
+        fill(mdc, x, content_bottom, w, 1, s.theme.palette().clr_div);
         SelectObject(mdc, s.font_b);
-        SetTextColor(mdc, CLR_GRAY);
+        SetTextColor(mdc, s.theme.palette().clr_gray);
         let mut hint: Vec<u16> = "Esc: save & close     ·     Ctrl+S: save     ·     ↑ ↓ scroll"
             .encode_utf16()
             .collect();
@@ -6169,11 +6179,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     if s.ai_pending || s.ai_answer.is_some() {
         let pad = 24;
         let body_top = y + SEARCH_H + 1;
-        fill(mdc, x, y + SEARCH_H, w, 1, CLR_DIV);
+        fill(mdc, x, y + SEARCH_H, w, 1, s.theme.palette().clr_div);
 
         // Title (the command label)
         SelectObject(mdc, s.font_n);
-        SetTextColor(mdc, CLR_WHITE);
+        SetTextColor(mdc, s.theme.palette().clr_white);
         let mut title: Vec<u16> = s.ai_title.encode_utf16().collect();
         let mut title_rc = RECT {
             left: x + pad,
@@ -6235,7 +6245,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         let has_answer = s.ai_answer.is_some();
         if s.ai_pending && !has_answer {
             SelectObject(mdc, s.font_q);
-            SetTextColor(mdc, CLR_GRAY);
+            SetTextColor(mdc, s.theme.palette().clr_gray);
             let mut th: Vec<u16> = "Thinking…".encode_utf16().collect();
             let mut th_rc = RECT {
                 left: x + pad,
@@ -6426,7 +6436,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         bottom: current_y + resp_h,
                     };
                     if is_thinking {
-                        SetTextColor(mdc, CLR_GRAY);
+                        SetTextColor(mdc, s.theme.palette().clr_gray);
                         let _ = DrawTextW(
                             mdc,
                             &mut r_wide,
@@ -6448,8 +6458,8 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         }
 
         // Footer / chat input (painted over any text overflow)
-        fill(mdc, x, content_bottom, w, footer_h + 4, BG);
-        fill(mdc, x, content_bottom, w, 1, CLR_DIV);
+        fill(mdc, x, content_bottom, w, footer_h + 4, s.theme.palette().bg);
+        fill(mdc, x, content_bottom, w, 1, s.theme.palette().clr_div);
 
         // ── Hermes approval banner + Approve/Deny/Always Approve buttons ───────────
         if let Some(ap) = &s.hermes_approval {
@@ -6481,7 +6491,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             // Summary line (if any) in muted text.
             if !ap.summary.is_empty() {
                 SelectObject(mdc, s.font_c);
-                SetTextColor(mdc, CLR_GRAY);
+                SetTextColor(mdc, s.theme.palette().clr_gray);
                 let mut sw: Vec<u16> = ap
                     .summary
                     .chars()
@@ -6594,7 +6604,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
             // Hint
             SelectObject(mdc, s.font_b);
-            SetTextColor(mdc, CLR_GRAY);
+            SetTextColor(mdc, s.theme.palette().clr_gray);
             let mut hw: Vec<u16> = "A approve · D deny · V always".encode_utf16().collect();
             let mut hrc = RECT {
                 left: always_x + always_w + 12,
@@ -6610,7 +6620,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             );
         } else if s.ai_pending {
             SelectObject(mdc, s.font_b);
-            SetTextColor(mdc, CLR_GRAY);
+            SetTextColor(mdc, s.theme.palette().clr_gray);
             let mut hint_w: Vec<u16> = "Esc: cancel".encode_utf16().collect();
             let mut hint_rc = RECT {
                 left: x + pad,
@@ -6637,10 +6647,10 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             );
             SelectObject(mdc, s.font_c);
             let input_text = if s.chat_input.trim().is_empty() {
-                SetTextColor(mdc, CLR_PH);
+                SetTextColor(mdc, s.theme.palette().clr_ph);
                 "Message this chat...".to_string()
             } else {
-                SetTextColor(mdc, CLR_WHITE);
+                SetTextColor(mdc, s.theme.palette().clr_white);
                 s.chat_input.clone()
             };
             let mut input_w: Vec<u16> = input_text.encode_utf16().collect();
@@ -6670,11 +6680,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 let _ = GetTextExtentPoint32W(mdc, &['A' as u16], &mut dummy_size);
                 let text_h = dummy_size.cy;
                 let cursor_top = input_rc.top + (input_rc.bottom - input_rc.top - text_h) / 2;
-                fill(mdc, cursor_x, cursor_top, 2, text_h, CLR_WHITE);
+                fill(mdc, cursor_x, cursor_top, 2, text_h, s.theme.palette().clr_white);
             }
 
             SelectObject(mdc, s.font_b);
-            SetTextColor(mdc, CLR_GRAY);
+            SetTextColor(mdc, s.theme.palette().clr_gray);
             let mut hint_w: Vec<u16> = "Enter send".encode_utf16().collect();
             let mut hint_rc = RECT {
                 left: x + w - pad - 104,
@@ -6707,7 +6717,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         };
         
         // Draw top separator
-        fill(mdc, x, y + SEARCH_H, list_w, 1, CLR_DIV);
+        fill(mdc, x, y + SEARCH_H, list_w, 1, s.theme.palette().clr_div);
         
         let mut list_y = y + SEARCH_H + 1;
         
@@ -6715,7 +6725,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             // Homepage empty state layout
             // Draw "Quick Search" and "8 sources" header
             SelectObject(mdc, s.font_c);
-            SetTextColor(mdc, CLR_GRAY);
+            SetTextColor(mdc, s.theme.palette().clr_gray);
             let mut qs_w: Vec<u16> = "Quick Search".encode_utf16().collect();
             let mut qs_rc = RECT { left: x + PAD_L, top: list_y + 10, right: x + w / 2, bottom: list_y + 26 };
             let _ = DrawTextW(mdc, &mut qs_w, &mut qs_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -6752,7 +6762,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 let fw = sz_lbl.cx + 16;
                 
                 if ftype == s.active_filter {
-                    fill_rounded(mdc, fx, list_y + 8, fw, 32, 16, CLR_ACCENT);
+                    fill_rounded(mdc, fx, list_y + 8, fw, 32, 16, s.theme.palette().clr_accent);
                     fill_rounded(mdc, fx + 1, list_y + 9, fw - 2, 30, 15, COLORREF(0x00_2D_1F_18)); // dark blue bg
                 } else if Some(ftype) == s.hovered_filter {
                     fill_rounded(mdc, fx, list_y + 8, fw, 32, 16, COLORREF(0x00_30_28_21));
@@ -6760,7 +6770,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     fill_rounded(mdc, fx, list_y + 8, fw, 32, 16, COLORREF(0x00_24_20_1d));
                 }
                 
-                SetTextColor(mdc, if ftype == s.active_filter { CLR_WHITE } else { CLR_GRAY });
+                SetTextColor(mdc, if ftype == s.active_filter { s.theme.palette().clr_white } else { s.theme.palette().clr_gray });
                 let mut l_rc = RECT { left: fx, top: list_y + 8, right: fx + fw, bottom: list_y + 40 };
                 let _ = DrawTextW(mdc, &mut lw, &mut l_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
                 
@@ -6771,7 +6781,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
             // Draw "Results" and "Best matches first" with chevron
             SelectObject(mdc, s.font_c);
-            SetTextColor(mdc, CLR_GRAY);
+            SetTextColor(mdc, s.theme.palette().clr_gray);
             let mut res_w: Vec<u16> = "Results".encode_utf16().collect();
             let mut res_rc = RECT { left: x + PAD_L, top: list_y + 8, right: x + w / 2, bottom: list_y + 24 };
             let _ = DrawTextW(mdc, &mut res_w, &mut res_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -6786,7 +6796,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             // Draw chevron next to Best matches first
             let chev_x = bm_x + sz_bm.cx + 6;
             let chev_y = list_y + 8 + sz_bm.cy / 2;
-            let pen = CreatePen(PS_SOLID, 1, CLR_GRAY);
+            let pen = CreatePen(PS_SOLID, 1, s.theme.palette().clr_gray);
             let old_pen = SelectObject(mdc, pen);
             let _ = MoveToEx(mdc, chev_x, chev_y - 2, None);
             let _ = LineTo(mdc, chev_x + 3, chev_y + 1);
@@ -7184,7 +7194,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         if s.image_preview_active {
             // Draw nothing in main window, handled by popup preview
         } else if s.submenu_active {
-            fill(mdc, x + list_w, y + SEARCH_H, 1, h - SEARCH_H, CLR_DIV);
+            fill(mdc, x + list_w, y + SEARCH_H, 1, h - SEARCH_H, s.theme.palette().clr_div);
             fill(mdc, x + list_w + 1, y + SEARCH_H + 1, 238, h - SEARCH_H - 1, COLORREF(0x00_23_1D_19));
             let actions = ["Run as Administrator", "Open File Location", "Copy Path"];
             let action_h = 44;
@@ -7192,18 +7202,18 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             for idx in 0..3 {
                 let ay = start_y + idx as i32 * (action_h + 8);
                 if s.submenu_selected == idx {
-                    fill_rounded(mdc, x + list_w + 8, ay, 224, action_h, 8, BG_SEL);
+                    fill_rounded(mdc, x + list_w + 8, ay, 224, action_h, 8, s.theme.palette().bg_sel);
                 }
 
                 SelectObject(mdc, s.font_n);
-                SetTextColor(mdc, if s.submenu_selected == idx { CLR_WHITE } else { CLR_GRAY });
+                SetTextColor(mdc, if s.submenu_selected == idx { s.theme.palette().clr_white } else { s.theme.palette().clr_gray });
                 let mut text_wide: Vec<u16> = actions[idx].encode_utf16().collect();
                 let mut r_action = RECT { left: x + list_w + 16, top: ay, right: x + w - 16, bottom: ay + action_h };
                 let _ = DrawTextW(mdc, &mut text_wide, &mut r_action, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
                 if s.submenu_selected == idx {
                     SelectObject(mdc, s.font_c);
-                    SetTextColor(mdc, CLR_GRAY);
+                    SetTextColor(mdc, s.theme.palette().clr_gray);
                     let mut hint_wide: Vec<u16> = "Enter".encode_utf16().collect();
                     let mut r_hint = RECT { left: x + w - 60, top: ay, right: x + w - 16, bottom: ay + action_h };
                     let _ = DrawTextW(mdc, &mut hint_wide, &mut r_hint, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -7216,12 +7226,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     if s.query.starts_with("clip:") || s.query.starts_with("clipboard:") {
         let footer_y = y + h - 24;
         fill(mdc, x, footer_y, w, 24, COLORREF(0x00_23_1D_19));
-        fill(mdc, x, footer_y, w, 1, CLR_DIV);
+        fill(mdc, x, footer_y, w, 1, s.theme.palette().clr_div);
 
         if s.delete_confirm {
             badge(mdc, s, "confirm", x + PAD_L, footer_y + 2);
             SelectObject(mdc, s.font_c);
-            SetTextColor(mdc, CLR_GRAY);
+            SetTextColor(mdc, s.theme.palette().clr_gray);
             let inst_text = format!(
                 " Press Delete again to delete {} selected items, Escape to cancel",
                 s.selected_clip_ids.len()
@@ -7241,7 +7251,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             );
         } else {
             SelectObject(mdc, s.font_c);
-            SetTextColor(mdc, CLR_GRAY);
+            SetTextColor(mdc, s.theme.palette().clr_gray);
             let inst_text = if s.editing_item.is_some() {
                 " 📝 Editing snippet: Press Enter to save to database & clipboard, Escape to cancel"
                     .to_string()
@@ -7273,10 +7283,10 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     if s.form_state != FormState::None {
         let footer_y = y + h - 24;
         fill(mdc, x, footer_y, w, 24, COLORREF(0x00_23_1D_19));
-        fill(mdc, x, footer_y, w, 1, CLR_DIV);
+        fill(mdc, x, footer_y, w, 1, s.theme.palette().clr_div);
 
         SelectObject(mdc, s.font_c);
-        SetTextColor(mdc, CLR_GRAY);
+        SetTextColor(mdc, s.theme.palette().clr_gray);
         let inst_text = " Enter: Next / Save  |  Escape: Cancel creation".to_string();
         let mut inst_wide: Vec<u16> = inst_text.encode_utf16().collect();
         let mut r_inst = RECT {
@@ -7301,7 +7311,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     {
         let footer_y = y + h - 28;
         fill(mdc, x, footer_y, w, 28, COLORREF(0x00_23_1D_19));
-        fill(mdc, x, footer_y, w, 1, CLR_DIV);
+        fill(mdc, x, footer_y, w, 1, s.theme.palette().clr_div);
         let mut hint_x = x + PAD_L;
         hint_x = key_hint(mdc, s, hint_x, footer_y + 6, "↑|↓", "Navigate");
         hint_x = key_hint(mdc, s, hint_x + 12, footer_y + 6, "Enter", "Open");
@@ -7321,7 +7331,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             right: x + w - PAD_L,
             bottom: footer_y + 22,
         };
-        SetTextColor(mdc, CLR_GRAY);
+        SetTextColor(mdc, s.theme.palette().clr_gray);
         let _ = DrawTextW(mdc, &mut st_wide, &mut st_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         // Draw green circle
@@ -7659,9 +7669,9 @@ fn source_section_label(source: &str) -> &'static str {
 
 unsafe fn key_hint(hdc: HDC, s: &State, x: i32, y: i32, key: &str, label: &str) -> i32 {
     let key_w = (key.chars().count() as i32 * 7 + 14).max(24);
-    fill_rounded(hdc, x, y, key_w, 16, 4, CLR_BDGBG);
+    fill_rounded(hdc, x, y, key_w, 16, 4, s.theme.palette().clr_bdgbg);
     SelectObject(hdc, s.font_b);
-    SetTextColor(hdc, CLR_BDGTX);
+    SetTextColor(hdc, s.theme.palette().clr_bdgtx);
     SetBkMode(hdc, TRANSPARENT);
     let mut key_text: Vec<u16> = key.encode_utf16().collect();
     let mut key_rect = RECT {
@@ -7678,7 +7688,7 @@ unsafe fn key_hint(hdc: HDC, s: &State, x: i32, y: i32, key: &str, label: &str) 
     );
 
     SelectObject(hdc, s.font_c);
-    SetTextColor(hdc, CLR_GRAY);
+    SetTextColor(hdc, s.theme.palette().clr_gray);
     let label_x = x + key_w + 5;
     let label_w = label.chars().count() as i32 * 7 + 4;
     let mut label_text: Vec<u16> = label.encode_utf16().collect();
