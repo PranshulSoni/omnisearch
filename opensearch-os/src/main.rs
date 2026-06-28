@@ -144,6 +144,8 @@ struct State {
     icon_web: HICON,
     icon_bookmark: HICON,
     icon_folder: HICON,
+    icon_file: HICON,
+    icon_app: HICON,
     icon_commit: HICON,
     icon_todo: HICON,
     icon_clipboard: HICON,
@@ -512,6 +514,8 @@ unsafe fn run() {
     let icon_web = load_icon_from_memory(WEB_ICO, 64);
     let icon_bookmark = load_icon_from_dll("shell32.dll", 43, 64);
     let icon_folder = load_icon_from_dll("shell32.dll", 3, 64);
+    let icon_file = load_icon_from_dll("shell32.dll", 0, 64);
+    let icon_app = load_icon_from_dll("shell32.dll", 2, 64);
     let icon_commit = load_icon_from_dll("shell32.dll", 22, 64);
     let icon_todo = load_icon_from_dll("shell32.dll", 270, 64);
     let icon_clipboard = load_icon_from_dll("shell32.dll", 260, 64);
@@ -571,6 +575,8 @@ unsafe fn run() {
         icon_web,
         icon_bookmark,
         icon_folder,
+        icon_file,
+        icon_app,
         icon_commit,
         icon_todo,
         icon_clipboard,
@@ -2649,6 +2655,12 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 }
                 if !s.icon_folder.0.is_null() {
                     let _ = DestroyIcon(s.icon_folder);
+                }
+                if !s.icon_file.0.is_null() {
+                    let _ = DestroyIcon(s.icon_file);
+                }
+                if !s.icon_app.0.is_null() {
+                    let _ = DestroyIcon(s.icon_app);
                 }
                 if !s.icon_commit.0.is_null() {
                     let _ = DestroyIcon(s.icon_commit);
@@ -5269,7 +5281,7 @@ fn icon_file_path(source: &str, key: &str) -> Option<String> {
         }
     } else if source == "ACTION" && key.starts_with("action:folder:") {
         return known_folder_icon_path(key);
-    } else if source == "RECENT" || source == "FILE" || source == "CODE" {
+    } else if is_file_result_source(source) {
         if std::path::Path::new(key).exists() {
             return Some(key.to_string());
         }
@@ -5281,6 +5293,13 @@ fn icon_file_path(source: &str, key: &str) -> Option<String> {
         return Some(key.to_string());
     }
     None
+}
+
+fn is_file_result_source(source: &str) -> bool {
+    matches!(
+        source,
+        "RECENT" | "FILE" | "FILE_CONTENT" | "CODE" | "CODE_CONTENT" | "OCR"
+    )
 }
 
 fn image_path_for_result(result: &SearchResult) -> Option<&str> {
@@ -6486,18 +6505,16 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     } else if res.entry.source == "WINDOW" {
                         s.app_icons.get(&res.entry.launch_command).copied().filter(|h| !h.0.is_null()).unwrap_or(s.icon_new_commands)
                     } else if res.entry.source == "app"
-                        || res.entry.source == "RECENT"
-                        || res.entry.source == "FILE"
-                        || res.entry.source == "CODE"
+                        || is_file_result_source(&res.entry.source)
                         || (res.entry.source == "ACTION" && res.entry.launch_command.starts_with("kill:"))
                     {
                         s.app_icons.get(&res.entry.launch_command).copied().filter(|h| !h.0.is_null()).unwrap_or_else(|| {
-                            if res.entry.source == "FILE" || res.entry.source == "RECENT" {
-                                s.icon_new_files
-                            } else if res.entry.source == "CODE" {
-                                s.icon_new_code
+                            if res.entry.source == "app" {
+                                s.icon_app
+                            } else if res.entry.source == "FOLDER" {
+                                s.icon_folder
                             } else {
-                                s.icon_new_commands
+                                s.icon_file
                             }
                         })
                     } else if res.entry.launch_command.starts_with("ms-settings:") {
@@ -6511,7 +6528,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     } else if res.entry.source == "BOOKMARK" {
                         s.icon_new_browser_bookmarks
                     } else if res.entry.source == "FOLDER" {
-                        s.icon_new_files
+                        s.icon_folder
                     } else if res.entry.source == "COMMIT" {
                         s.icon_new_git_commits
                     } else if res.entry.source == "TODO"
@@ -6604,21 +6621,28 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     }
                 }
 
-                let icon_to_draw = match res.entry.source.as_str() {
-                    "ACTION" | "SYSTEM" | "WINDOW" => s.icon_new_commands,
-                    "BOOKMARK" | "QUICKLINK" => s.icon_new_browser_bookmarks,
-                    "CODE" | "CODE_CONTENT" => s.icon_new_code,
-                    "CLIPBOARD" => s.icon_new_clipboard_history,
-                    "COMMIT" => s.icon_new_git_commits,
-                    "FOLDER" | "FILE" | "FILE_CONTENT" | "RECENT" => s.icon_new_files,
-                    "HISTORY" | "web" => s.icon_new_browser_history,
-                    "MEMORY" | "AI" => s.icon_new_agent_history,
-                    "PDF" => s.icon_new_content,
-                    "OCR" => s.icon_new_search_screenshots,
-                    "Settings" | "SETTINGS" => s.icon_new_settings,
-                    "SNIPPET" | "TODO" => s.icon_new_content,
-                    _ => s.icon_new_all,
-                };
+                let icon_to_draw = s
+                    .app_icons
+                    .get(&res.entry.launch_command)
+                    .copied()
+                    .filter(|icon| !icon.0.is_null())
+                    .unwrap_or_else(|| match res.entry.source.as_str() {
+                        "app" => s.icon_app,
+                        "FOLDER" => s.icon_folder,
+                        "FILE" | "FILE_CONTENT" | "RECENT" | "CODE" | "CODE_CONTENT" | "OCR" => {
+                            s.icon_file
+                        }
+                        "ACTION" | "SYSTEM" | "WINDOW" => s.icon_new_commands,
+                        "BOOKMARK" | "QUICKLINK" => s.icon_new_browser_bookmarks,
+                        "CLIPBOARD" => s.icon_new_clipboard_history,
+                        "COMMIT" => s.icon_new_git_commits,
+                        "HISTORY" | "web" => s.icon_new_browser_history,
+                        "MEMORY" | "AI" => s.icon_new_agent_history,
+                        "PDF" => s.icon_new_content,
+                        "Settings" | "SETTINGS" => s.icon_new_settings,
+                        "SNIPPET" | "TODO" => s.icon_new_content,
+                        _ => s.icon_app,
+                    });
 
                 if !drew_thumbnail && !icon_to_draw.0.is_null() {
                     let icon_y = ry + (RESULT_H - 32) / 2;
@@ -8420,6 +8444,14 @@ mod tests {
             Some("C:\\Pictures\\shot.jpg")
         );
         assert_eq!(image_path_for_result(&result("C:\\notes.txt")), None);
+    }
+
+    #[test]
+    fn native_shell_icons_cover_all_file_result_types() {
+        for source in ["RECENT", "FILE", "FILE_CONTENT", "CODE", "CODE_CONTENT", "OCR"] {
+            assert!(is_file_result_source(source));
+        }
+        assert!(!is_file_result_source("app"));
     }
 
     #[test]
