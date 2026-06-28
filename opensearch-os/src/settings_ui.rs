@@ -57,6 +57,15 @@ pub fn init_settings_window(hwnd: HWND) {
         ui.set_agent_model(SharedString::from(model));
         ui.set_agent_always_approve(always_approve);
 
+        // Load Database folders
+        let folders_vec: Vec<slint::SharedString> = settings
+            .scan_folders
+            .iter()
+            .map(|f| slint::SharedString::from(f.clone()))
+            .collect();
+        let folders_model = slint::ModelRc::new(slint::VecModel::from(folders_vec));
+        ui.set_db_folders(folders_model);
+
         // Close = hide window, then stop the inner run()
         let ui_weak_close = ui.as_weak();
         ui.window().on_close_requested(move || {
@@ -136,8 +145,108 @@ pub fn init_settings_window(hwnd: HWND) {
             );
         });
 
+        let ui_weak_add = ui.as_weak();
+        ui.on_add_folder(move || {
+            if let Some(path) = pick_folder() {
+                let path_str = path.to_string_lossy().to_string();
+                if let Some(ui) = ui_weak_add.upgrade() {
+                    let mut s = AppSettings::load();
+                    if s.scan_folders.is_empty() {
+                        let defaults: Vec<String> = crate::indexer::get_default_scan_folders()
+                            .iter()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .collect();
+                        s.scan_folders = defaults;
+                    }
+                    if !s.scan_folders.contains(&path_str) {
+                        s.scan_folders.push(path_str);
+                        s.save();
+                        let folders_vec: Vec<slint::SharedString> = s
+                            .scan_folders
+                            .iter()
+                            .map(|f| slint::SharedString::from(f.clone()))
+                            .collect();
+                        let folders_model = slint::ModelRc::new(slint::VecModel::from(folders_vec));
+                        ui.set_db_folders(folders_model);
+                    }
+                }
+            }
+        });
+
+        let ui_weak_remove = ui.as_weak();
+        ui.on_remove_folder(move |idx| {
+            if let Some(ui) = ui_weak_remove.upgrade() {
+                let mut s = AppSettings::load();
+                if s.scan_folders.is_empty() {
+                    let defaults: Vec<String> = crate::indexer::get_default_scan_folders()
+                        .iter()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect();
+                    s.scan_folders = defaults;
+                }
+                if idx >= 0 && (idx as usize) < s.scan_folders.len() {
+                    s.scan_folders.remove(idx as usize);
+                    s.save();
+                    let folders_vec: Vec<slint::SharedString> = s
+                        .scan_folders
+                        .iter()
+                        .map(|f| slint::SharedString::from(f.clone()))
+                        .collect();
+                    let folders_model = slint::ModelRc::new(slint::VecModel::from(folders_vec));
+                    ui.set_db_folders(folders_model);
+                }
+            }
+        });
+
+        ui.on_rebuild_index(move || {
+            let appdata = std::env::var("APPDATA").unwrap_or_default();
+            let db_path = std::path::PathBuf::from(appdata)
+                .join("opensearch-os")
+                .join("file_index.db");
+            std::thread::spawn(move || {
+                let folders = crate::indexer::get_scan_folders();
+                let _ = crate::indexer::run_indexer_folders(&db_path, folders);
+            });
+        });
+
+        let ui_weak_status = ui.as_weak();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                let ui_weak = ui_weak_status.clone();
+                if ui_weak.upgrade().is_none() {
+                    break;
+                }
+                let is_indexing = crate::indexer::IS_INDEXING.load(Ordering::Relaxed);
+                let progress = {
+                    if let Ok(g) = crate::indexer::INDEXING_PROGRESS.lock() {
+                        g.clone()
+                    } else {
+                        "Idle".to_string()
+                    }
+                };
+                let last_time = {
+                    if let Ok(g) = crate::indexer::LAST_INDEX_TIME.lock() {
+                        g.clone()
+                    } else {
+                        "Never".to_string()
+                    }
+                };
+                let count = get_indexed_files_count();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_db_is_indexing(is_indexing);
+                        ui.set_db_status(slint::SharedString::from(progress));
+                        ui.set_db_last_indexed(slint::SharedString::from(last_time));
+                        ui.set_db_file_count(count as i32);
+                    }
+                });
+            }
+        });
+
         // Show the window and run the event loop until it's closed
         ui.window().show().ok();
+
         ui.window().set_minimized(false);
         slint::run_event_loop().ok();
         // Window was closed — loop back and wait for next show request
@@ -222,6 +331,59 @@ fn save_ai_settings(api_key: &str, endpoint: &str, model: &str, always_approve: 
     }
 }
 
+
+fn get_indexed_files_count() -> u32 {
+    if let Some(conn) = get_db_conn() {
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS files (
+                path TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                extension TEXT NOT NULL,
+                modified INTEGER NOT NULL,
+                size INTEGER NOT NULL DEFAULT 0,
+                is_dir INTEGER NOT NULL DEFAULT 0
+            );",
+            [],
+        );
+        if let Ok(count) = conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, u32>(0)) {
+            return count;
+        }
+    }
+    0
+}
+
+fn pick_folder() -> Option<std::path::PathBuf> {
+    use windows::core::Interface;
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL, CoInitializeEx, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, FOS_PICKFOLDERS};
+    
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        
+        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL).ok()?;
+        
+        let mut options = dialog.GetOptions().ok()?;
+        let _ = dialog.SetOptions(options | FOS_PICKFOLDERS);
+        
+        if dialog.Show(None).is_err() {
+            return None;
+        }
+        
+        let result = match dialog.GetResult() {
+            Ok(r) => r,
+            Err(_) => return None,
+        };
+        let display_name = match result.GetDisplayName(windows::Win32::UI::Shell::SIGDN_FILESYSPATH) {
+            Ok(name) => name,
+            Err(_) => return None,
+        };
+        let path = match display_name.to_string() {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+        Some(std::path::PathBuf::from(path))
+    }
+}
 
 pub fn show_settings_window() {
     if !SETTINGS_READY.load(Ordering::SeqCst) {

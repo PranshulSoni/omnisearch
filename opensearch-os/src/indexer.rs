@@ -4,6 +4,13 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::WalkDir;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
+
+pub static IS_INDEXING: AtomicBool = AtomicBool::new(false);
+pub static INDEXING_PROGRESS: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("Idle".to_string()));
+pub static LAST_INDEX_TIME: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("Never".to_string()));
 
 const TEXT_EXTENSIONS: &[&str] = &[
     "txt", "md", "rs", "py", "js", "ts", "jsx", "tsx", "json", "html", "css", "c", "cpp", "h",
@@ -424,7 +431,31 @@ fn spawn_extractors(jobs: Vec<ExtractJob>) -> std::sync::mpsc::Receiver<PendingU
     res_rx
 }
 
-fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<()> {
+pub fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<()> {
+    IS_INDEXING.store(true, Ordering::SeqCst);
+    if let Ok(mut g) = INDEXING_PROGRESS.lock() {
+        *g = "Starting scan...".to_string();
+    }
+    let res = run_indexer_folders_inner(db_path, folders);
+    IS_INDEXING.store(false, Ordering::SeqCst);
+    if let Ok(mut g) = INDEXING_PROGRESS.lock() {
+        *g = "Idle".to_string();
+    }
+    if res.is_ok() {
+        if let Ok(mut g) = LAST_INDEX_TIME.lock() {
+            unsafe {
+                let st = windows::Win32::System::SystemInformation::GetLocalTime();
+                *g = format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                    st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond
+                );
+            }
+        }
+    }
+    res
+}
+
+fn run_indexer_folders_inner(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<()> {
     log_indexer(&format!(
         "run_indexer_folders started with folders: {:?}",
         folders
@@ -474,6 +505,9 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
             log_indexer(&format!("Folder does not exist, skipping: {:?}", folder));
             continue;
         }
+        if let Ok(mut g) = INDEXING_PROGRESS.lock() {
+            *g = format!("Scanning: {}", folder.to_string_lossy());
+        }
         log_indexer(&format!("Folder exists, starting WalkDir: {:?}", folder));
         let walker = WalkDir::new(&folder).into_iter().filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
@@ -495,67 +529,46 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
                 None => continue,
             };
 
-            let ext = if is_dir {
-                "folder".to_string()
-            } else {
-                path.extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_lowercase()
-            };
-
             let name = path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
 
-            let name = if name.is_empty() {
-                path_str.clone()
+            let file_size = if is_file {
+                entry.metadata().map(|m| m.len()).unwrap_or(0) as i64
             } else {
-                name
+                0
             };
 
-            if is_file && is_ignored_file(&name, &ext) {
-                continue;
-            }
-
-            // seen_paths.insert(path_str.clone()); // skipped for memory (#8)
-
-            let metadata = entry.metadata().ok();
-            let modified = metadata
-                .as_ref()
+            let modified = entry
+                .metadata()
+                .ok()
                 .and_then(|m| m.modified().ok())
-                .unwrap_or(SystemTime::UNIX_EPOCH)
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-            let file_size = metadata.as_ref().map(|m| m.len() as i64).unwrap_or(0);
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
 
-            let db_modified = {
-                let mut stmt = conn
-                    .prepare_cached("SELECT modified FROM files WHERE path = ?")
-                    .unwrap();
-                stmt.query_row([&path_str], |row| row.get::<_, i64>(0)).ok()
+            let should_fts = is_indexable_content(&ext);
+
+            // Fast path: query metadata DB to see if changed before doing FTS read
+            let db_modified: Option<i64> = {
+                let mut stmt = conn.prepare_cached("SELECT modified FROM files WHERE path = ?")?;
+                stmt.query_row([&path_str], |r| r.get(0)).ok()
             };
 
-            let is_text_or_doc = is_file
-                && (TEXT_EXTENSIONS.contains(&ext.as_str()) || ext == "pdf" || ext == "docx");
-            let is_image = is_file && IMAGE_EXTENSIONS.contains(&ext.as_str());
-            let should_fts = is_text_or_doc || is_image;
-            let needs_fts_check = should_fts && {
-                let mut stmt = conn
-                    .prepare_cached("SELECT 1 FROM files_fts WHERE path = ?")
-                    .unwrap();
-                !stmt.exists([&path_str]).unwrap_or(false)
+            // Also check FTS table if it should have content
+            let needs_fts_check = if should_fts && db_modified.is_some() {
+                let mut stmt_fts = conn.prepare_cached("SELECT rowid FROM files_fts WHERE path = ?")?;
+                stmt_fts.query_row([&path_str], |_| Ok(())).is_err()
+            } else {
+                false
             };
-
-            if is_image {
-                log_indexer(&format!(
-                    "Found image in WalkDir: {} (modified={}, db_mod={:?}, needs_fts={})",
-                    path_str, modified, db_modified, needs_fts_check
-                ));
-            }
 
             if db_modified.is_none() || db_modified.unwrap() != modified || needs_fts_check {
                 if is_file && should_fts {
@@ -585,8 +598,10 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
             }
 
             file_count += 1;
-            if file_count % 5000 == 0 {
-                log_indexer(&format!("Scanned {} entries...", file_count));
+            if file_count % 1000 == 0 {
+                if let Ok(mut g) = INDEXING_PROGRESS.lock() {
+                    *g = format!("Scanning: {} files processed...", file_count);
+                }
             }
         }
         log_indexer(&format!(
@@ -605,7 +620,15 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
             "Extracting content/OCR for {} files in parallel...",
             extract_jobs.len()
         ));
+        let total_jobs = extract_jobs.len();
+        let mut processed_jobs = 0;
         for update in spawn_extractors(extract_jobs) {
+            processed_jobs += 1;
+            if processed_jobs % 10 == 0 || processed_jobs == total_jobs {
+                if let Ok(mut g) = INDEXING_PROGRESS.lock() {
+                    *g = format!("Extracting: {}/{} files (OCR/Text)...", processed_jobs, total_jobs);
+                }
+            }
             pending_updates.push(update);
             if pending_updates.len() >= 500 {
                 flush_updates(&mut conn, &mut pending_updates)?;
@@ -621,6 +644,14 @@ fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<
 }
 
 pub fn get_scan_folders() -> Vec<PathBuf> {
+    let app_settings = crate::settings::AppSettings::load();
+    if !app_settings.scan_folders.is_empty() {
+        return app_settings.scan_folders.iter().map(PathBuf::from).collect();
+    }
+    get_default_scan_folders()
+}
+
+pub fn get_default_scan_folders() -> Vec<PathBuf> {
     let mut folders = Vec::new();
 
     let system_drive = std::env::var("SystemDrive")

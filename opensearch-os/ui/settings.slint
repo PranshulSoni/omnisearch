@@ -28,6 +28,19 @@ export component SettingsWindow inherits Window {
     in-out property <string> agent-model;
     in-out property <bool> agent-always-approve;
 
+    // Database settings properties
+    in-out property <string> db-last-indexed;
+    in-out property <int> db-file-count;
+    in-out property <string> db-status;
+    in-out property <bool> db-is-indexing;
+    in-out property <[string]> db-folders;
+
+    // Database callbacks
+    callback add-folder();
+    callback remove-folder(int);
+    callback rebuild-index();
+
+
     
     property <int> current-page: 0;
     property <bool> recording-hotkey: false;
@@ -278,13 +291,13 @@ export component SettingsWindow inherits Window {
 
                 Rectangle { height: 4px; }
 
-                // About
-                nav-about := Rectangle {
+                // Database
+                nav-database := Rectangle {
                     height: 42px;
                     border-radius: 8px;
                     x: 8px;
                     width: parent.width - 16px;
-                    background: root.current-page == 4 ? #3a3a4a : (ta-about.has-hover ? root.hover-bg : transparent);
+                    background: root.current-page == 4 ? #3a3a4a : (ta-database.has-hover ? root.hover-bg : transparent);
                     animate background { duration: 120ms; }
                     Rectangle {
                         x: 0px;
@@ -298,22 +311,62 @@ export component SettingsWindow inherits Window {
                         padding-left: 16px;
                         spacing: 10px;
                         Text {
-                            text: "ℹ";
+                            text: "🗄";
                             font-size: 15px;
                             color: root.current-page == 4 ? root.text-primary : root.text-muted;
                             vertical-alignment: center;
                             width: 18px;
                         }
                         Text {
-                            text: "About";
+                            text: "Database";
                             font-size: 14px;
                             font-weight: root.current-page == 4 ? 600 : 400;
                             color: root.current-page == 4 ? root.text-primary : root.text-secondary;
                             vertical-alignment: center;
                         }
                     }
-                    ta-about := TouchArea { clicked => { root.current-page = 4; } }
+                    ta-database := TouchArea { clicked => { root.current-page = 4; } }
                 }
+
+                Rectangle { height: 4px; }
+
+                // About
+                nav-about := Rectangle {
+                    height: 42px;
+                    border-radius: 8px;
+                    x: 8px;
+                    width: parent.width - 16px;
+                    background: root.current-page == 5 ? #3a3a4a : (ta-about.has-hover ? root.hover-bg : transparent);
+                    animate background { duration: 120ms; }
+                    Rectangle {
+                        x: 0px;
+                        y: 8px;
+                        width: 3px;
+                        height: parent.height - 16px;
+                        border-radius: 2px;
+                        background: root.current-page == 5 ? root.accent : transparent;
+                    }
+                    HorizontalBox {
+                        padding-left: 16px;
+                        spacing: 10px;
+                        Text {
+                            text: "ℹ";
+                            font-size: 15px;
+                            color: root.current-page == 5 ? root.text-primary : root.text-muted;
+                            vertical-alignment: center;
+                            width: 18px;
+                        }
+                        Text {
+                            text: "About";
+                            font-size: 14px;
+                            font-weight: root.current-page == 5 ? 600 : 400;
+                            color: root.current-page == 5 ? root.text-primary : root.text-secondary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    ta-about := TouchArea { clicked => { root.current-page = 5; } }
+                }
+
 
 
                 Rectangle { height: 16px; }
@@ -860,8 +913,164 @@ export component SettingsWindow inherits Window {
                         }
                     }
                     
-                    // About Page
+                    // Database Page
                     if root.current-page == 4: VerticalBox {
+                        alignment: start;
+                        spacing: 20px;
+
+                        // Page header
+                        VerticalBox {
+                            spacing: 4px;
+                            Text {
+                                text: "Database Settings";
+                                font-size: 22px;
+                                font-weight: 700;
+                                color: root.text-primary;
+                            }
+                            Text {
+                                text: "Manage local search index database and folders to scan";
+                                font-size: 13px;
+                                color: root.text-muted;
+                            }
+                        }
+
+                        // Section: Status
+                        VerticalBox {
+                            spacing: 12px;
+                            Text {
+                                text: "INDEX STATUS";
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: root.text-muted;
+                                letter-spacing: 1px;
+                            }
+                            
+                            Rectangle {
+                                background: root.card-bg;
+                                border-radius: 8px;
+                                border-color: root.border-color;
+                                border-width: 1px;
+                                padding: 20px;
+                                
+                                VerticalBox {
+                                    spacing: 12px;
+                                    
+                                    HorizontalBox {
+                                        padding: 0;
+                                        Text { text: "Total Files Indexed"; color: root.text-secondary; font-size: 13px; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        Text { text: root.db-file-count; color: root.text-primary; font-weight: 600; font-size: 13px; }
+                                    }
+                                    
+                                    Rectangle { height: 1px; background: root.border-color; }
+                                    
+                                    HorizontalBox {
+                                        padding: 0;
+                                        Text { text: "Last Crawled Time"; color: root.text-secondary; font-size: 13px; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        Text { text: root.db-last-indexed; color: root.text-primary; font-weight: 600; font-size: 13px; }
+                                    }
+                                    
+                                    Rectangle { height: 1px; background: root.border-color; }
+                                    
+                                    HorizontalBox {
+                                        padding: 0;
+                                        Text { text: "Indexer State"; color: root.text-secondary; font-size: 13px; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        HorizontalBox {
+                                            spacing: 6px;
+                                            if root.db-is-indexing: Rectangle {
+                                                width: 8px;
+                                                height: 8px;
+                                                border-radius: 4px;
+                                                background: #f59e0b; // Orange scanning indicator
+                                            }
+                                            Text {
+                                                text: root.db-status;
+                                                color: root.db-is-indexing ? #f59e0b : root.text-primary;
+                                                font-weight: 600;
+                                                font-size: 13px;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Section: Folders
+                        VerticalBox {
+                            spacing: 12px;
+                            Text {
+                                text: "INDEXED DIRECTORIES";
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: root.text-muted;
+                                letter-spacing: 1px;
+                            }
+                            
+                            // Add/Rebuild Actions
+                            HorizontalBox {
+                                padding: 0;
+                                spacing: 10px;
+                                Button {
+                                    text: "Add Directory...";
+                                    clicked => { root.add-folder(); }
+                                }
+                                Button {
+                                    text: "Rebuild Index Now";
+                                    enabled: !root.db-is-indexing;
+                                    clicked => { root.rebuild-index(); }
+                                }
+                            }
+                            
+                            // List of directories
+                            Rectangle {
+                                background: root.card-bg;
+                                border-radius: 8px;
+                                border-color: root.border-color;
+                                border-width: 1px;
+                                padding: 12px;
+                                
+                                VerticalBox {
+                                    spacing: 8px;
+                                    if root.db-folders.length == 0: Text {
+                                        text: "Default Directories (User Profile & Fixed Slices)";
+                                        color: root.text-muted;
+                                        font-size: 13px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        height: 40px;
+                                    }
+                                    for folder[idx] in root.db-folders: Rectangle {
+                                        background: root.hover-bg;
+                                        border-radius: 6px;
+                                        height: 38px;
+                                        HorizontalBox {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            Text {
+                                                text: folder;
+                                                color: root.text-primary;
+                                                font-size: 13px;
+                                                vertical-alignment: center;
+                                            }
+                                            Rectangle { horizontal-stretch: 1; }
+                                            Button {
+                                                text: "Remove";
+                                                width: 70px;
+                                                clicked => {
+                                                    root.remove-folder(idx);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // About Page
+                    if root.current-page == 5: VerticalBox {
                         alignment: start;
                         spacing: 24px;
                         Text { text: "About"; font-size: 26px; font-weight: 600; color: root.text-primary; }
@@ -879,6 +1088,7 @@ export component SettingsWindow inherits Window {
                             }
                         }
                     }
+
 
                 }
             }

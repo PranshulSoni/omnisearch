@@ -21,6 +21,9 @@ pub struct AppSettings {
 
     #[serde(default = "default_item_height")]
     pub item_height: u32,
+
+    #[serde(default = "default_scan_folders")]
+    pub scan_folders: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -32,6 +35,7 @@ impl Default for AppSettings {
             global_hotkey: default_global_hotkey(),
             window_width: default_window_width(),
             item_height: default_item_height(),
+            scan_folders: default_scan_folders(),
         }
     }
 }
@@ -51,6 +55,10 @@ fn default_window_width() -> u32 {
 fn default_item_height() -> u32 {
     76
 }
+fn default_scan_folders() -> Vec<String> {
+    Vec::new()
+}
+
 
 impl AppSettings {
     pub fn get_settings_path() -> PathBuf {
