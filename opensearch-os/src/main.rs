@@ -60,6 +60,42 @@ const WM_AI_RESULT: u32 = WM_USER + 6;
 const WM_HERMES_APPROVAL: u32 = WM_USER + 7;
 // Hermes Runs API: streaming output progress (lparam = boxed String).
 const WM_AI_PROGRESS: u32 = WM_USER + 8;
+const WM_TRAYICON: u32 = WM_USER + 9;
+
+unsafe fn setup_tray_icon(hwnd: windows::Win32::Foundation::HWND, hinst: windows::Win32::Foundation::HMODULE) {
+    use windows::Win32::UI::Shell::{Shell_NotifyIconW, NOTIFYICONDATAW, NIM_ADD, NIF_MESSAGE, NIF_ICON, NIF_TIP};
+    use windows::Win32::UI::WindowsAndMessaging::{LoadIconW, LoadCursorW, IDC_APPSTARTING, HICON};
+    use windows::Win32::Foundation::HINSTANCE;
+    use windows::core::PCWSTR;
+    
+    let mut nid = NOTIFYICONDATAW::default();
+    nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+    nid.hWnd = hwnd;
+    nid.uID = 1;
+    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    nid.uCallbackMessage = WM_TRAYICON;
+    let hicon = LoadIconW(hinst, PCWSTR(1 as _)).unwrap_or_default();
+    if hicon.0.is_null() {
+        let hcursor = LoadCursorW(HINSTANCE(std::ptr::null_mut()), IDC_APPSTARTING).unwrap();
+        nid.hIcon = HICON(hcursor.0);
+    } else {
+        nid.hIcon = hicon;
+    }
+    let tip = "OpenSearch OS".encode_utf16().collect::<Vec<u16>>();
+    for (i, &c) in tip.iter().enumerate().take(127) {
+        nid.szTip[i] = c;
+    }
+    Shell_NotifyIconW(NIM_ADD, &nid);
+}
+
+unsafe fn remove_tray_icon(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::Shell::{Shell_NotifyIconW, NOTIFYICONDATAW, NIM_DELETE};
+    let mut nid = NOTIFYICONDATAW::default();
+    nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+    nid.hWnd = hwnd;
+    nid.uID = 1;
+    Shell_NotifyIconW(NIM_DELETE, &nid);
+}
 
 // AI answer panel height (below the search bar) when showing an AI response.
 const AI_PANEL_H: i32 = 360;
@@ -643,6 +679,8 @@ unsafe fn run() {
         Some(Box::into_raw(state) as _),
     )
     .unwrap();
+
+    setup_tray_icon(hwnd, hinst);
 
     let hwnd_icon = SendHwnd(hwnd);
     std::thread::spawn(move || {
@@ -2623,7 +2661,20 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     }
                 }
             }
+            remove_tray_icon(hwnd);
             PostQuitMessage(0);
+            LRESULT(0)
+        }
+
+        WM_TRAYICON => {
+            let l_event = lp.0 as u32;
+            use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONUP, WM_RBUTTONUP};
+            if l_event == WM_LBUTTONUP || l_event == WM_RBUTTONUP {
+                if !sp.is_null() {
+                    let s = &mut *sp;
+                    do_show(hwnd, s);
+                }
+            }
             LRESULT(0)
         }
 
@@ -5401,7 +5452,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     let pill_h = SEARCH_H;
     let pill_r = 32;
 
-    let end_w = WIN_W;
+    let end_w = win_w;
     let end_h = s.win_h();
 
     let w = (pill_w as f32 + (end_w - pill_w) as f32 * t) as i32;
@@ -6267,8 +6318,8 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 }
                 
                 SetTextColor(mdc, if ftype == s.active_filter { CLR_WHITE } else { CLR_GRAY });
-                let mut l_rc = RECT { left: fx + 8, top: list_y + 8, right: fx + fw, bottom: list_y + 40 };
-                let _ = DrawTextW(mdc, &mut lw, &mut l_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                let mut l_rc = RECT { left: fx, top: list_y + 8, right: fx + fw, bottom: list_y + 40 };
+                let _ = DrawTextW(mdc, &mut lw, &mut l_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
                 
                 fx += fw + 8;
             }
@@ -6655,13 +6706,15 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     _ => badge_source,
                 };
                 
-                let mut t: Vec<u16> = label.encode_utf16().collect();
-                let mut sz = SIZE::default();
-                SelectObject(mdc, s.font_b);
-                let _ = GetTextExtentPoint32W(mdc, &t, &mut sz);
-                let badge_w = (sz.cx + 16).max(40);
-                let badge_x = x + list_w - PAD_L - badge_w;
-                badge_custom(mdc, s, label, badge_x, ry + (RESULT_H - BADGE_H) / 2, badge_w);
+                if badge_source != "WINDOW" {
+                    let mut t: Vec<u16> = label.encode_utf16().collect();
+                    let mut sz = SIZE::default();
+                    SelectObject(mdc, s.font_b);
+                    let _ = GetTextExtentPoint32W(mdc, &t, &mut sz);
+                    let badge_w = (sz.cx + 16).max(40);
+                    let badge_x = x + list_w - PAD_L - badge_w;
+                    badge_custom(mdc, s, label, badge_x, ry + (RESULT_H - BADGE_H) / 2, badge_w);
+                }
             }
         }
 
