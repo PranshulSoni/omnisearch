@@ -5281,6 +5281,8 @@ fn icon_file_path(source: &str, key: &str) -> Option<String> {
         }
     } else if source == "ACTION" && key.starts_with("action:folder:") {
         return known_folder_icon_path(key);
+    } else if source == "ACTION" && key.eq_ignore_ascii_case("taskmgr.exe") {
+        return task_manager_icon_path();
     } else if is_file_result_source(source) {
         if std::path::Path::new(key).exists() {
             return Some(key.to_string());
@@ -5293,6 +5295,13 @@ fn icon_file_path(source: &str, key: &str) -> Option<String> {
         return Some(key.to_string());
     }
     None
+}
+
+fn task_manager_icon_path() -> Option<String> {
+    let path = std::path::PathBuf::from(std::env::var("SystemRoot").ok()?)
+        .join("System32")
+        .join("taskmgr.exe");
+    path.exists().then(|| path.to_string_lossy().into_owned())
 }
 
 fn is_file_result_source(source: &str) -> bool {
@@ -8452,6 +8461,12 @@ mod tests {
             assert!(is_file_result_source(source));
         }
         assert!(!is_file_result_source("app"));
+    }
+
+    #[test]
+    fn task_manager_uses_its_system_executable_icon() {
+        let path = task_manager_icon_path().expect("taskmgr.exe should exist on Windows");
+        assert!(path.to_ascii_lowercase().ends_with("\\system32\\taskmgr.exe"));
     }
 
     #[test]
