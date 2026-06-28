@@ -141,8 +141,6 @@ struct State {
     font_code: HFONT, // monospace for inline code / code blocks
     font_h: HFONT,    // bold larger font for markdown headings
     icon_settings: HICON,
-    icon_control_panel: HICON,
-    icon_search: HICON,
     icon_web: HICON,
     icon_bookmark: HICON,
     icon_folder: HICON,
@@ -153,28 +151,8 @@ struct State {
     icon_clipboard: HICON,
     icon_memory: HICON,
     
-    // New icons from launcher_source_icons
-    icon_new_agent_history: HICON,
-    icon_new_all: HICON,
-    icon_new_browser_bookmarks: HICON,
-    icon_new_browser_history: HICON,
-    icon_new_clipboard_history: HICON,
-    icon_new_code: HICON,
-    icon_new_commands: HICON,
-    icon_new_content: HICON,
-    icon_new_enter: HICON,
-    icon_new_esc: HICON,
-    icon_new_files: HICON,
-    icon_new_git_commits: HICON,
-    icon_new_images: HICON,
-    icon_new_local_files: HICON,
     icon_new_mic: HICON,
-    icon_new_navigate: HICON,
-    icon_new_search_screenshots: HICON,
     icon_new_search: HICON,
-    icon_new_settings: HICON,
-    icon_new_source_code: HICON,
-    icon_new_tab: HICON,
     
     active_filter: FilterType,
     hovered_filter: Option<FilterType>,
@@ -506,15 +484,13 @@ unsafe fn run() {
         Err(_) => std::path::PathBuf::from("file_index.db"),
     };
 
-    const SETTINGS_ICO: &[u8] = include_bytes!("../../assets/logo/settings.ico");
-    const CONTROL_PANEL_ICO: &[u8] = include_bytes!("../../assets/logo/control_panel.ico");
-    const SEARCH_ICO: &[u8] = include_bytes!("../../assets/logo/search.ico");
-    const WEB_ICO: &[u8] = include_bytes!("../../assets/logo/web.ico");
-
-    let icon_settings = load_icon_from_memory(SETTINGS_ICO, 64);
-    let icon_control_panel = load_icon_from_memory(CONTROL_PANEL_ICO, 64);
-    let icon_search = load_icon_from_memory(SEARCH_ICO, 64);
-    let icon_web = load_icon_from_memory(WEB_ICO, 64);
+    let system_settings = std::path::PathBuf::from(
+        std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string()),
+    )
+    .join("ImmersiveControlPanel")
+    .join("SystemSettings.exe");
+    let icon_settings = get_file_icon(&system_settings.to_string_lossy());
+    let icon_web = load_icon_from_dll("shell32.dll", 14, 64);
     let icon_bookmark = load_icon_from_dll("shell32.dll", 43, 64);
     let icon_folder = load_icon_from_dll("shell32.dll", 3, 64);
     let icon_file = load_icon_from_dll("shell32.dll", 0, 64);
@@ -524,27 +500,8 @@ unsafe fn run() {
     let icon_clipboard = load_icon_from_dll("shell32.dll", 260, 64);
     let icon_memory = load_icon_from_dll("shell32.dll", 238, 64);
 
-    let icon_new_agent_history = load_png_to_hicon(include_bytes!("../../launcher_source_icons/agent-history.png"), 32);
-    let icon_new_all = load_png_to_hicon(include_bytes!("../../launcher_source_icons/all.png"), 32);
-    let icon_new_browser_bookmarks = load_png_to_hicon(include_bytes!("../../launcher_source_icons/browser-bookmarks.png"), 32);
-    let icon_new_browser_history = load_png_to_hicon(include_bytes!("../../launcher_source_icons/browser-history.png"), 32);
-    let icon_new_clipboard_history = load_png_to_hicon(include_bytes!("../../launcher_source_icons/clipboard-history.png"), 32);
-    let icon_new_code = load_png_to_hicon(include_bytes!("../../launcher_source_icons/code.png"), 32);
-    let icon_new_commands = load_png_to_hicon(include_bytes!("../../launcher_source_icons/commands.png"), 32);
-    let icon_new_content = load_png_to_hicon(include_bytes!("../../launcher_source_icons/content.png"), 32);
-    let icon_new_enter = load_png_to_hicon(include_bytes!("../../launcher_source_icons/enter.png"), 32);
-    let icon_new_esc = load_png_to_hicon(include_bytes!("../../launcher_source_icons/esc.png"), 32);
-    let icon_new_files = load_png_to_hicon(include_bytes!("../../launcher_source_icons/files.png"), 32);
-    let icon_new_git_commits = load_png_to_hicon(include_bytes!("../../launcher_source_icons/git-commits.png"), 32);
-    let icon_new_images = load_png_to_hicon(include_bytes!("../../launcher_source_icons/images.png"), 32);
-    let icon_new_local_files = load_png_to_hicon(include_bytes!("../../launcher_source_icons/local-files.png"), 32);
     let icon_new_mic = load_png_to_hicon(include_bytes!("../../launcher_source_icons/mic.png"), 36);
-    let icon_new_navigate = load_png_to_hicon(include_bytes!("../../launcher_source_icons/navigate.png"), 32);
-    let icon_new_search_screenshots = load_png_to_hicon(include_bytes!("../../launcher_source_icons/search-screenshots.png"), 32);
     let icon_new_search = load_png_to_hicon(include_bytes!("../../launcher_source_icons/search.png"), 36);
-    let icon_new_settings = load_png_to_hicon(include_bytes!("../../launcher_source_icons/settings.png"), 32);
-    let icon_new_source_code = load_png_to_hicon(include_bytes!("../../launcher_source_icons/source-code.png"), 32);
-    let icon_new_tab = load_png_to_hicon(include_bytes!("../../launcher_source_icons/tab.png"), 32);
 
 
     let (icon_tx, icon_rx) = std::sync::mpsc::channel::<IconRequest>();
@@ -574,8 +531,6 @@ unsafe fn run() {
         font_code,
         font_h,
         icon_settings,
-        icon_control_panel,
-        icon_search,
         icon_web,
         icon_bookmark,
         icon_folder,
@@ -585,27 +540,8 @@ unsafe fn run() {
         icon_todo,
         icon_clipboard,
         icon_memory,
-        icon_new_agent_history,
-        icon_new_all,
-        icon_new_browser_bookmarks,
-        icon_new_browser_history,
-        icon_new_clipboard_history,
-        icon_new_code,
-        icon_new_commands,
-        icon_new_content,
-        icon_new_enter,
-        icon_new_esc,
-        icon_new_files,
-        icon_new_git_commits,
-        icon_new_images,
-        icon_new_local_files,
         icon_new_mic,
-        icon_new_navigate,
-        icon_new_search_screenshots,
         icon_new_search,
-        icon_new_settings,
-        icon_new_source_code,
-        icon_new_tab,
         active_filter: FilterType::All,
         hovered_filter: None,
         filter_counts: [0; 7],
@@ -2636,6 +2572,12 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 if !s.icon_memory.0.is_null() {
                     let _ = DestroyIcon(s.icon_memory);
                 }
+                if !s.icon_new_search.0.is_null() {
+                    let _ = DestroyIcon(s.icon_new_search);
+                }
+                if !s.icon_new_mic.0.is_null() {
+                    let _ = DestroyIcon(s.icon_new_mic);
+                }
                 let _ = DeleteObject(s.font_q);
                 let _ = DeleteObject(s.font_n);
                 let _ = DeleteObject(s.font_c);
@@ -2645,12 +2587,6 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 let _ = DeleteObject(s.font_h);
                 if !s.icon_settings.0.is_null() {
                     let _ = DestroyIcon(s.icon_settings);
-                }
-                if !s.icon_control_panel.0.is_null() {
-                    let _ = DestroyIcon(s.icon_control_panel);
-                }
-                if !s.icon_search.0.is_null() {
-                    let _ = DestroyIcon(s.icon_search);
                 }
                 if !s.icon_web.0.is_null() {
                     let _ = DestroyIcon(s.icon_web);
@@ -6381,14 +6317,13 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 }
 
                 let icon_to_draw = match res.entry.source.as_str() {
-                    "HOMEPAGE_BROWSER" => if res.entry.id == "home_0" { s.icon_new_browser_bookmarks } else { s.icon_new_browser_history },
-                    "HOMEPAGE_GIT" => s.icon_new_git_commits,
-                    "HOMEPAGE_CLIPBOARD" => s.icon_new_clipboard_history,
-                    "HOMEPAGE_LOCAL" => s.icon_new_local_files,
-                    "HOMEPAGE_CODE" => s.icon_new_source_code,
-                    "HOMEPAGE_OCR" => s.icon_new_search_screenshots,
-                    "HOMEPAGE_AI" => s.icon_new_agent_history,
-                    _ => s.icon_new_all,
+                    "HOMEPAGE_BROWSER" => if res.entry.id == "home_0" { s.icon_bookmark } else { s.icon_web },
+                    "HOMEPAGE_GIT" => s.icon_commit,
+                    "HOMEPAGE_CLIPBOARD" => s.icon_clipboard,
+                    "HOMEPAGE_LOCAL" => s.icon_folder,
+                    "HOMEPAGE_CODE" | "HOMEPAGE_OCR" => s.icon_file,
+                    "HOMEPAGE_AI" => s.icon_app,
+                    _ => s.icon_app,
                 };
 
                 if !icon_to_draw.0.is_null() {
@@ -6523,7 +6458,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     let icon_to_draw = if let Some(hicon) = cached_icon {
                         hicon
                     } else if res.entry.source == "WINDOW" {
-                        s.app_icons.get(&res.entry.launch_command).copied().filter(|h| !h.0.is_null()).unwrap_or(s.icon_new_commands)
+                        s.app_icons.get(&res.entry.launch_command).copied().filter(|h| !h.0.is_null()).unwrap_or(s.icon_app)
                     } else if res.entry.source == "app"
                         || is_file_result_source(&res.entry.source)
                         || (res.entry.source == "ACTION" && res.entry.launch_command.starts_with("kill:"))
@@ -6538,42 +6473,42 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                             }
                         })
                     } else if res.entry.launch_command.starts_with("ms-settings:") {
-                        s.icon_new_settings
+                        s.icon_settings
                     } else if res.entry.source == "web"
                         || res.entry.source == "HISTORY"
                         || res.entry.source == "QUICKLINK"
                         || res.entry.launch_command.starts_with("https://")
                     {
-                        s.icon_new_browser_history
+                        s.icon_web
                     } else if res.entry.source == "BOOKMARK" {
-                        s.icon_new_browser_bookmarks
+                        s.icon_bookmark
                     } else if res.entry.source == "FOLDER" {
                         s.icon_folder
                     } else if res.entry.source == "COMMIT" {
-                        s.icon_new_git_commits
+                        s.icon_commit
                     } else if res.entry.source == "TODO"
                         || res.entry.source == "SNIPPET"
                         || res.entry.launch_command.starts_with("action:create_snippet")
                     {
-                        s.icon_new_content
+                        s.icon_file
                     } else if res.entry.source == "CLIPBOARD"
                         || res.entry.launch_command.starts_with("action:ask_clipboard")
                     {
-                        s.icon_new_clipboard_history
+                        s.icon_clipboard
                     } else if res.entry.source == "AI"
                         || res.entry.source == "MEMORY"
                         || res.entry.launch_command.starts_with("action:reload_script_commands")
                     {
-                        s.icon_new_agent_history
+                        s.icon_app
                     } else if res.entry.launch_command.starts_with("start_focus_session:")
                         || res.entry.launch_command.starts_with("action:toggle_focus_session")
                         || res.entry.launch_command.starts_with("action:create_focus_category")
                     {
-                        s.icon_new_agent_history
+                        s.icon_app
                     } else if res.entry.launch_command.starts_with("action:create_quicklink") {
-                        s.icon_new_browser_bookmarks
+                        s.icon_bookmark
                     } else {
-                        s.icon_new_all
+                        s.icon_app
                     };
 
                     if !icon_to_draw.0.is_null() {
@@ -6652,15 +6587,15 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         "FILE" | "FILE_CONTENT" | "RECENT" | "CODE" | "CODE_CONTENT" | "OCR" => {
                             s.icon_file
                         }
-                        "ACTION" | "SYSTEM" | "WINDOW" => s.icon_new_commands,
-                        "BOOKMARK" | "QUICKLINK" => s.icon_new_browser_bookmarks,
-                        "CLIPBOARD" => s.icon_new_clipboard_history,
-                        "COMMIT" => s.icon_new_git_commits,
-                        "HISTORY" | "web" => s.icon_new_browser_history,
-                        "MEMORY" | "AI" => s.icon_new_agent_history,
-                        "PDF" => s.icon_new_content,
-                        "Settings" | "SETTINGS" => s.icon_new_settings,
-                        "SNIPPET" | "TODO" => s.icon_new_content,
+                        "ACTION" | "SYSTEM" | "WINDOW" => s.icon_app,
+                        "BOOKMARK" | "QUICKLINK" => s.icon_bookmark,
+                        "CLIPBOARD" => s.icon_clipboard,
+                        "COMMIT" => s.icon_commit,
+                        "HISTORY" | "web" => s.icon_web,
+                        "MEMORY" | "AI" => s.icon_app,
+                        "PDF" => s.icon_file,
+                        "Settings" | "SETTINGS" => s.icon_settings,
+                        "SNIPPET" | "TODO" => s.icon_file,
                         _ => s.icon_app,
                     });
 
@@ -7400,61 +7335,6 @@ unsafe fn load_icon_from_dll(dll_name: &str, index: i32, size: i32) -> HICON {
     } else {
         HICON(std::ptr::null_mut())
     }
-}
-
-unsafe fn load_icon_from_memory(bytes: &[u8], size: i32) -> HICON {
-    if bytes.len() < 6 {
-        return HICON(null_mut());
-    }
-    let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
-    let mut best_idx = 0;
-    let mut best_diff = i32::MAX;
-
-    for i in 0..count {
-        let offset = 6 + i * 16;
-        if offset + 16 > bytes.len() {
-            break;
-        }
-        let mut w = bytes[offset] as i32;
-        let mut h = bytes[offset + 1] as i32;
-        if w == 0 {
-            w = 256;
-        }
-        if h == 0 {
-            h = 256;
-        }
-        let diff = (w - size).abs() + (h - size).abs();
-        if diff < best_diff {
-            best_diff = diff;
-            best_idx = i;
-        }
-    }
-
-    let entry_offset = 6 + best_idx * 16;
-    if entry_offset + 16 <= bytes.len() {
-        let img_size = u32::from_le_bytes([
-            bytes[entry_offset + 8],
-            bytes[entry_offset + 9],
-            bytes[entry_offset + 10],
-            bytes[entry_offset + 11],
-        ]) as usize;
-        let img_offset = u32::from_le_bytes([
-            bytes[entry_offset + 12],
-            bytes[entry_offset + 13],
-            bytes[entry_offset + 14],
-            bytes[entry_offset + 15],
-        ]) as usize;
-
-        if img_offset + img_size <= bytes.len() {
-            let img_bytes = &bytes[img_offset..img_offset + img_size];
-            let hicon =
-                CreateIconFromResourceEx(img_bytes, TRUE, 0x00030000, size, size, IMAGE_FLAGS(0));
-            if let Ok(h) = hicon {
-                return h;
-            }
-        }
-    }
-    HICON(null_mut())
 }
 
 unsafe fn load_png_to_hicon(bytes: &[u8], size: u32) -> HICON {
