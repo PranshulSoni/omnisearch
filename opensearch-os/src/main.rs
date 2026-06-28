@@ -34,12 +34,12 @@ extern "system" {
 }
 
 // ── Layout ────────────────────────────────────────────────────────────────────
-const WIN_W: i32 = 680;
-const SEARCH_H: i32 = 52;
-const RESULT_H: i32 = 54;
+const WIN_W: i32 = 840;
+const SEARCH_H: i32 = 68;
+const RESULT_H: i32 = 68;
 const MAX_RESULTS: usize = 30;
 const VISIBLE_RESULTS: usize = 8;
-const PAD_L: i32 = 16;
+const PAD_L: i32 = 24;
 const BADGE_W: i32 = 54;
 const BADGE_H: i32 = 18;
 const WM_MOUSELEAVE: u32 = 0x02A3;
@@ -689,10 +689,10 @@ unsafe fn run() {
         anim: Anim::Hidden,
         cx: sw / 2,
         cy: sh / 3,
-        font_q: mk_font(-22, 400),
-        font_n: mk_font(-15, 700),
-        font_c: mk_font(-12, 400),
-        font_b: mk_font(-11, 600),
+        font_q: mk_font(-28, 400),
+        font_n: mk_font(-18, 700),
+        font_c: mk_font(-14, 400),
+        font_b: mk_font(-13, 600),
         font_mic,
         font_code,
         font_h,
