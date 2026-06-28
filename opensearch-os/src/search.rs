@@ -5905,6 +5905,27 @@ struct QuickAction {
 
 static QUICK_ACTIONS: &[QuickAction] = &[
     QuickAction {
+        triggers: &["theme darker", "switch to darker", "darker theme", "dark mode"],
+        name: "Switch Theme: Darker",
+        breadcrumb: "Theme Switcher > Darker",
+        launch_command: "action:switch_theme:darker",
+        description: "Switch launcher theme to Darker.",
+    },
+    QuickAction {
+        triggers: &["theme nord", "switch to nord", "nord theme", "nord darker"],
+        name: "Switch Theme: Nord Darker",
+        breadcrumb: "Theme Switcher > Nord Darker",
+        launch_command: "action:switch_theme:nord",
+        description: "Switch launcher theme to Nord Darker.",
+    },
+    QuickAction {
+        triggers: &["theme light", "switch to light", "light theme", "light mode"],
+        name: "Switch Theme: Light",
+        breadcrumb: "Theme Switcher > Light",
+        launch_command: "action:switch_theme:light",
+        description: "Switch launcher theme to Light.",
+    },
+    QuickAction {
         triggers: &[
             "settings",
             "preferences",

@@ -29,15 +29,16 @@ extern "system" {
 }
 
 // ── Layout ────────────────────────────────────────────────────────────────────
-const WIN_W: i32 = 720;
-const SEARCH_H: i32 = 64;
-const RESULT_H: i32 = 76;
+const WIN_W: i32 = 680;
+const SEARCH_H: i32 = 52;
+const RESULT_H: i32 = 54;
 const MAX_RESULTS: usize = 30;
 const VISIBLE_RESULTS: usize = 8;
-const PAD_L: i32 = 24;
-const ICON_W: i32 = 36;
+const PAD_L: i32 = 16;
 const BADGE_W: i32 = 54;
 const BADGE_H: i32 = 18;
+const WM_MOUSELEAVE: u32 = 0x02A3;
+
 
 // ── Win32 IDs ─────────────────────────────────────────────────────────────────
 const HOTKEY_ID: i32 = 1;
@@ -134,8 +135,6 @@ const CLR_PH: COLORREF = COLORREF(0x00_8C_7D_74);
 const CLR_BDGBG: COLORREF = COLORREF(0x00_32_2A_25);
 const CLR_BDGTX: COLORREF = COLORREF(0x00_D8_CD_C6);
 const CLR_ACCENT: COLORREF = COLORREF(0x00_FF_A3_5E);
-const CLR_ROW: COLORREF = COLORREF(0x00_27_20_1C);
-const CLR_ROW_BORDER: COLORREF = COLORREF(0x00_41_36_30);
 const COLOR_KEY: COLORREF = COLORREF(0x00_12_34_56);
 
 #[derive(Debug, Clone, PartialEq)]
@@ -163,8 +162,79 @@ enum FilterType {
     Commands,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Theme {
+    Darker,
+    NordDarker,
+    Light,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ThemePalette {
+    bg: COLORREF,
+    bg_sel: COLORREF,
+    bg_hover: COLORREF,
+    clr_div: COLORREF,
+    clr_white: COLORREF,
+    clr_gray: COLORREF,
+    clr_gray_sel: COLORREF,
+    clr_ph: COLORREF,
+    clr_bdgbg: COLORREF,
+    clr_bdgtx: COLORREF,
+    clr_accent: COLORREF,
+}
+
+impl Theme {
+    fn palette(self) -> ThemePalette {
+        match self {
+            Theme::Darker => ThemePalette {
+                bg: COLORREF(0x00_2F_2F_2F),
+                bg_sel: COLORREF(0x00_4D_4D_4D),
+                bg_hover: COLORREF(0x00_38_38_38),
+                clr_div: COLORREF(0x00_3B_3B_3B),
+                clr_white: COLORREF(0x00_FF_FF_FF),
+                clr_gray: COLORREF(0x00_8F_8F_8F),
+                clr_gray_sel: COLORREF(0x00_8F_8F_8F),
+                clr_ph: COLORREF(0x00_8F_8F_8F),
+                clr_bdgbg: COLORREF(0x00_3B_3B_3B),
+                clr_bdgtx: COLORREF(0x00_FF_FF_FF),
+                clr_accent: COLORREF(0x00_E5_99_4C),
+            },
+            Theme::NordDarker => ThemePalette {
+                bg: COLORREF(0x00_40_34_2E), // 2e3440
+                bg_sel: COLORREF(0x00_6B_58_4E), // 4e586b
+                bg_hover: COLORREF(0x00_52_42_3B), // 3b4252
+                clr_div: COLORREF(0x00_6A_56_4C), // 4c566a
+                clr_white: COLORREF(0x00_F0_E9_E5), // e5e9f0
+                clr_gray: COLORREF(0x00_83_6C_60), // 606c83
+                clr_gray_sel: COLORREF(0x00_AB_91_83), // 8391ab
+                clr_ph: COLORREF(0x00_6B_58_4E),
+                clr_bdgbg: COLORREF(0x00_52_42_3B),
+                clr_bdgtx: COLORREF(0x00_F0_E9_E5),
+                clr_accent: COLORREF(0x00_AB_91_83),
+            },
+            Theme::Light => ThemePalette {
+                bg: COLORREF(0x00_FA_FA_FA),
+                bg_sel: COLORREF(0x00_E5_E5_E5),
+                bg_hover: COLORREF(0x00_F0_F0_F0),
+                clr_div: COLORREF(0x00_E5_E5_E5),
+                clr_white: COLORREF(0x00_1B_1B_1B),
+                clr_gray: COLORREF(0x00_81_81_81),
+                clr_gray_sel: COLORREF(0x00_72_76_7D),
+                clr_ph: COLORREF(0x00_81_81_81),
+                clr_bdgbg: COLORREF(0x00_E5_E5_E5),
+                clr_bdgtx: COLORREF(0x00_1B_1B_1B),
+                clr_accent: COLORREF(0x00_D7_78_00),
+            },
+        }
+    }
+}
+
 // ── App state ─────────────────────────────────────────────────────────────────
 struct State {
+    theme: Theme,
+    hovered_item: Option<usize>,
+    mouse_tracking: bool,
     search_tx: Option<std::sync::mpsc::Sender<SearchRequest>>,
     icon_tx: Option<std::sync::mpsc::Sender<IconRequest>>,
     current_query_id: usize,
@@ -556,6 +626,9 @@ unsafe fn run() {
     let (icon_tx, icon_rx) = std::sync::mpsc::channel::<IconRequest>();
 
     let state = Box::new(State {
+        theme: Theme::Darker,
+        hovered_item: None,
+        mouse_tracking: false,
         search_tx: None,
         icon_tx: Some(icon_tx),
         current_query_id: 0,
@@ -572,9 +645,9 @@ unsafe fn run() {
         anim: Anim::Hidden,
         cx: sw / 2,
         cy: sh / 3,
-        font_q: mk_font(-19, 400),
-        font_n: mk_font(-17, 600),
-        font_c: mk_font(-16, 400),
+        font_q: mk_font(-22, 400),
+        font_n: mk_font(-15, 700),
+        font_c: mk_font(-12, 400),
         font_b: mk_font(-11, 600),
         font_mic,
         font_code,
@@ -2703,6 +2776,17 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             }
             let s = &mut *sp;
 
+            if !s.mouse_tracking {
+                let mut tme = TRACKMOUSEEVENT {
+                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
+                let _ = unsafe { TrackMouseEvent(&mut tme) };
+                s.mouse_tracking = true;
+            }
+
             if s.color_picker_active {
                 let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
@@ -2745,20 +2829,32 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     }
                 }
 
-
+                let mut new_hover_item = None;
                 let n = (s.results.len().saturating_sub(s.scroll_offset)).min(VISIBLE_RESULTS);
                 for i in 0..n {
                     let r = s.result_rect(i);
                     if my >= r.top && my < r.bottom {
-                        let actual_idx = s.scroll_offset + i;
-                        if s.selected != actual_idx {
-                            s.selected = actual_idx;
-                            let _ = InvalidateRect(hwnd, None, FALSE);
-                        }
+                        new_hover_item = Some(s.scroll_offset + i);
                         break;
                     }
                 }
+                if s.hovered_item != new_hover_item {
+                    s.hovered_item = new_hover_item;
+                    let _ = InvalidateRect(hwnd, None, FALSE);
+                }
             }
+            LRESULT(0)
+        }
+
+        WM_MOUSELEAVE => {
+            if sp.is_null() {
+                return LRESULT(0);
+            }
+            let s = &mut *sp;
+            s.mouse_tracking = false;
+            s.hovered_item = None;
+            s.hovered_filter = None;
+            let _ = InvalidateRect(hwnd, None, FALSE);
             LRESULT(0)
         }
 
@@ -4319,6 +4415,19 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 trigger_search(hwnd, s);
                 let _ = InvalidateRect(hwnd, None, FALSE);
                 return;
+            } else if let Some(theme_name) = cmd.strip_prefix("action:switch_theme:") {
+                match theme_name {
+                    "darker" => s.theme = Theme::Darker,
+                    "nord" => s.theme = Theme::NordDarker,
+                    "light" => s.theme = Theme::Light,
+                    _ => {}
+                }
+                s.query = format!("Theme: {}", theme_name.to_uppercase());
+                s.cursor_pos = s.query.len();
+                s.reset_results();
+                s.selected = 0;
+                let _ = InvalidateRect(hwnd, None, FALSE);
+                return;
             } else if let Some(config_action) = cmd.strip_prefix("action:ai_config:") {
                 let db_path = s.db_path.clone();
                 if config_action == "reset" {
@@ -5551,6 +5660,7 @@ fn image_path_for_result(result: &SearchResult) -> Option<&str> {
 }
 
 unsafe fn paint(hwnd: HWND, s: &State) {
+    let palette = s.theme.palette();
     let mut ps = PAINTSTRUCT::default();
     let hdc = BeginPaint(hwnd, &mut ps);
 
@@ -5680,11 +5790,10 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     let h = (pill_h as f32 + (end_h - pill_h) as f32 * t) as i32;
     let x = (win_w - w) / 2;
     let y = s.cy - h / 2;
-    let r = (pill_r as f32 + (12 - pill_r) as f32 * t) as i32;
+    let r = (pill_r as f32 + (8 - pill_r) as f32 * t) as i32;
 
     // Fill background / Draw Glowing Border around the morphing rounded rect
-    let has_results = s.results.len().min(MAX_RESULTS) > 0;
-    draw_rounded_border_and_bg(mdc, x, y, w, h, r, has_results && s.anim != Anim::Hidden);
+    draw_rounded_border_and_bg(mdc, x, y, w, h, r, palette.bg, palette.clr_div);
 
     // Create rounded clipping region matching the inner background area of the morphing shape
     let clip_rgn = CreateRoundRectRgn(x + 1, y + 1, x + w - 1, y + h - 1, r - 1, r - 1);
@@ -5695,14 +5804,14 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
     // Draw Search Icon
     if !s.icon_new_search.0.is_null() {
-        let icon_y = y + (SEARCH_H - 36) / 2;
+        let icon_y = y + (SEARCH_H - 24) / 2;
         let _ = DrawIconEx(
             mdc,
             x + PAD_L,
             icon_y,
             s.icon_new_search,
-            36,
-            36,
+            24,
+            24,
             0,
             HBRUSH(null_mut()),
             DI_NORMAL,
@@ -5710,8 +5819,8 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     }
 
     // Text / placeholder
-    let tx = x + PAD_L + ICON_W + 8;
-    let tw = w - (PAD_L + ICON_W + 8) - PAD_L - 36;
+    let tx = x + PAD_L + 24 + 8;
+    let tw = w - (PAD_L + 24 + 8) - PAD_L - 24;
     let mut tr = RECT {
         left: tx,
         top: y,
@@ -5720,18 +5829,18 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     };
 
     SelectObject(mdc, s.font_q);
-    SetTextColor(mdc, CLR_WHITE);
+    SetTextColor(mdc, palette.clr_white);
 
     if s.voice_listening {
         let mut ph: Vec<u16> = "Listening...".encode_utf16().collect();
-        SetTextColor(mdc, CLR_PH);
+        SetTextColor(mdc, palette.clr_ph);
         let _ = DrawTextW(
             mdc,
             &mut ph,
             &mut tr,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
         );
-        SetTextColor(mdc, CLR_WHITE);
+        SetTextColor(mdc, palette.clr_white);
     } else if s.query.is_empty() {
         let ph_str = match &s.form_state {
             FormState::CreateSnippetName => "Create Snippet: Enter Name...",
@@ -5748,14 +5857,14 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             FormState::None => "Search files, code, PDFs, OCR...",
         };
         let mut ph: Vec<u16> = ph_str.encode_utf16().collect();
-        SetTextColor(mdc, CLR_PH);
+        SetTextColor(mdc, palette.clr_ph);
         let _ = DrawTextW(
             mdc,
             &mut ph,
             &mut tr,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
         );
-        SetTextColor(mdc, CLR_WHITE);
+        SetTextColor(mdc, palette.clr_white);
     } else {
         let cur = floor_char_boundary(&s.query, s.cursor_pos);
         let before = &s.query[..cur];
@@ -5785,14 +5894,14 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     // muted otherwise. Click toggles dictation (hit-test in WM_LBUTTONDOWN).
     if w >= WIN_W - 8 {
         if !s.icon_new_mic.0.is_null() {
-            let icon_y = y + (SEARCH_H - 36) / 2;
+            let icon_y = y + (SEARCH_H - 24) / 2;
             let _ = DrawIconEx(
                 mdc,
-                x + w - PAD_L - 36, // Align correctly for 36x36
+                x + w - PAD_L - 24, // Align correctly for 24x24
                 icon_y,
                 s.icon_new_mic,
-                36,
-                36,
+                24,
+                24,
                 0,
                 HBRUSH(null_mut()),
                 DI_NORMAL,
@@ -6583,12 +6692,15 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 // Homepage (Image 3) flat list items
                 let ry = list_y + i as i32 * RESULT_H;
                 let is_selected = res_idx == s.selected;
+                let is_hovered = Some(res_idx) == s.hovered_item;
                 if is_selected {
-                    let border_y = ry + 4;
-                    let border_h = RESULT_H - 8;
-                    fill_rounded(mdc, x + 12, border_y, list_w - 24, border_h, 6, CLR_ACCENT);
-                    fill_rounded(mdc, x + 13, border_y + 1, list_w - 26, border_h - 2, 5, BG_SEL);
-                    fill(mdc, x + 13, border_y + 4, 3, border_h - 8, CLR_ACCENT);
+                    let border_y = ry + 2;
+                    let border_h = RESULT_H - 4;
+                    fill_rounded(mdc, x + 8, border_y, list_w - 16, border_h, 4, palette.bg_sel);
+                } else if is_hovered {
+                    let border_y = ry + 2;
+                    let border_h = RESULT_H - 4;
+                    fill_rounded(mdc, x + 8, border_y, list_w - 16, border_h, 4, palette.bg_hover);
                 }
 
                 let icon_to_draw = match res.entry.source.as_str() {
@@ -6606,27 +6718,27 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     let _ = unsafe { DrawIconEx(mdc, x + PAD_L, icon_y, icon_to_draw, 32, 32, 0, HBRUSH(null_mut()), DI_NORMAL) };
                 }
 
-                let tx = x + PAD_L + 48;
+                let tx = x + PAD_L + 40;
                 SelectObject(mdc, s.font_n);
-                SetTextColor(mdc, CLR_WHITE);
+                SetTextColor(mdc, palette.clr_white);
                 let display_name = res.entry.control_name.clone();
                 let mut name: Vec<u16> = display_name.encode_utf16().collect();
                 let mut r = RECT {
                     left: tx,
-                    top: ry + 16,
+                    top: ry + 8,
                     right: x + list_w - PAD_L - 80,
-                    bottom: ry + 38,
+                    bottom: ry + 26,
                 };
                 let _ = DrawTextW(mdc, &mut name, &mut r, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
                 SelectObject(mdc, s.font_c);
-                SetTextColor(mdc, CLR_GRAY);
+                SetTextColor(mdc, if is_selected { palette.clr_gray_sel } else { palette.clr_gray });
                 let mut crumb: Vec<u16> = res.entry.breadcrumb_path.encode_utf16().collect();
                 let mut r2 = RECT {
                     left: tx,
-                    top: ry + 38,
+                    top: ry + 28,
                     right: x + list_w - PAD_L - 80,
-                    bottom: ry + 56,
+                    bottom: ry + 44,
                 };
                 let _ = DrawTextW(mdc, &mut crumb, &mut r2, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
@@ -6662,27 +6774,21 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     RESULT_H - 10
                 };
 
+                let is_selected = res_idx == s.selected;
+                let is_hovered = Some(res_idx) == s.hovered_item;
                 let is_checked = selected_clip_ids_contain(&s.selected_clip_ids, &res.entry.id);
-                let row_border = if res_idx == s.selected {
-                    CLR_ACCENT
+
+                if is_selected {
+                    fill_rounded(mdc, x + 8, row_card_y, list_w - 16, row_card_h, 4, palette.bg_sel);
+                } else if is_hovered {
+                    fill_rounded(mdc, x + 8, row_card_y, list_w - 16, row_card_h, 4, palette.bg_hover);
                 } else if is_checked {
-                    COLORREF(0x00_57_46_38)
-                } else {
-                    CLR_ROW_BORDER
-                };
-                let row_bg = if res_idx == s.selected {
-                    BG_SEL
-                } else if is_checked {
-                    COLORREF(0x00_30_28_21)
-                } else {
-                    CLR_ROW
-                };
-                fill_rounded(mdc, x + 12, row_card_y, list_w - 24, row_card_h, 7, row_border);
-                fill_rounded(mdc, x + 13, row_card_y + 1, list_w - 26, row_card_h - 2, 6, row_bg);
+                    fill_rounded(mdc, x + 8, row_card_y, list_w - 16, row_card_h, 4, palette.bg_hover);
+                }
                 
                 if starts_section {
                     SelectObject(mdc, s.font_b);
-                    SetTextColor(mdc, CLR_GRAY);
+                    SetTextColor(mdc, palette.clr_gray);
                     let section = source_section_label(&res.entry.source);
                     let section_total = s
                         .results
@@ -6720,10 +6826,10 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 if let Some(path) = image_path_for_result(res) {
                     let mut cache = s.clipboard_thumbnails.borrow_mut();
                     if let Some(&hbitmap) = cache.get(path) {
-                        draw_cached_bmp(mdc, x + PAD_L, icon_y - 2, 32, 32, hbitmap);
+                        draw_cached_bmp(mdc, x + PAD_L, icon_y - 2, 28, 28, hbitmap);
                         drew_thumbnail = true;
                     } else if let Some(hbitmap) = load_shell_thumbnail(path, 256) {
-                        draw_cached_bmp(mdc, x + PAD_L, icon_y - 2, 32, 32, hbitmap);
+                        draw_cached_bmp(mdc, x + PAD_L, icon_y - 2, 28, 28, hbitmap);
                         cache.insert(path.to_string(), hbitmap);
                         drew_thumbnail = true;
                     }
@@ -6791,9 +6897,9 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     }
                 }
 
-                let tx = x + PAD_L + 48;
+                let tx = x + PAD_L + 36;
                 SelectObject(mdc, s.font_n);
-                SetTextColor(mdc, CLR_WHITE);
+                SetTextColor(mdc, palette.clr_white);
                 let display_name = if selected_clip_ids_contain(&s.selected_clip_ids, &res.entry.id) {
                     format!("[✓] {}", res.entry.control_name)
                 } else {
@@ -6808,13 +6914,13 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 let reason_slot = if reason.is_some() { 96 } else { 0 };
 
                 SelectObject(mdc, s.font_c);
-                SetTextColor(mdc, CLR_GRAY);
+                SetTextColor(mdc, if is_selected { palette.clr_gray_sel } else { palette.clr_gray });
                 let mut crumb: Vec<u16> = res.entry.breadcrumb_path.encode_utf16().collect();
                 let mut r2 = RECT { left: tx, top: cy + 24, right: badge_left - 14 - reason_slot, bottom: cy + 40 };
                 let _ = DrawTextW(mdc, &mut crumb, &mut r2, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
                 if let Some(reason) = reason {
-                    SetTextColor(mdc, CLR_PH);
+                    SetTextColor(mdc, palette.clr_ph);
                     let mut rtxt: Vec<u16> = reason.encode_utf16().collect();
                     let mut rr = RECT { left: badge_left - 14 - reason_slot, top: cy + 24, right: badge_left - 14, bottom: cy + 40 };
                     let _ = DrawTextW(mdc, &mut rtxt, &mut rr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -6827,12 +6933,15 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 // ── Search Page (Image 4) flat list items ──────────────────────────
                 let ry = list_y + i as i32 * RESULT_H;
                 let is_selected = res_idx == s.selected;
+                let is_hovered = Some(res_idx) == s.hovered_item;
                 if is_selected {
-                    let border_y = ry + 4;
-                    let border_h = RESULT_H - 8;
-                    fill_rounded(mdc, x + 12, border_y, list_w - 24, border_h, 6, CLR_ACCENT);
-                    fill_rounded(mdc, x + 13, border_y + 1, list_w - 26, border_h - 2, 5, BG_SEL);
-                    fill(mdc, x + 13, border_y + 4, 3, border_h - 8, CLR_ACCENT);
+                    let border_y = ry + 2;
+                    let border_h = RESULT_H - 4;
+                    fill_rounded(mdc, x + 8, border_y, list_w - 16, border_h, 4, palette.bg_sel);
+                } else if is_hovered {
+                    let border_y = ry + 2;
+                    let border_h = RESULT_H - 4;
+                    fill_rounded(mdc, x + 8, border_y, list_w - 16, border_h, 4, palette.bg_hover);
                 }
 
                 let mut drew_thumbnail = false;
@@ -6879,40 +6988,43 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     let _ = unsafe { DrawIconEx(mdc, x + PAD_L, icon_y, icon_to_draw, 32, 32, 0, HBRUSH(null_mut()), DI_NORMAL) };
                 }
 
-                let tx = x + PAD_L + 48;
+                let tx = x + PAD_L + 40;
                 SelectObject(mdc, s.font_n);
-                SetTextColor(mdc, CLR_WHITE);
+                SetTextColor(mdc, palette.clr_white);
                 let display_name = res.entry.control_name.clone();
                 let mut name: Vec<u16> = display_name.encode_utf16().collect();
                 let mut r = RECT {
                     left: tx,
-                    top: ry + 10,
+                    top: ry + 8,
                     right: x + list_w - PAD_L - 100,
-                    bottom: ry + 30,
+                    bottom: ry + 26,
                 };
                 let _ = DrawTextW(mdc, &mut name, &mut r, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
-                draw_highlighted_text(
-                    mdc,
-                    &res.entry.description,
-                    &s.query,
-                    s.font_c,
-                    CLR_GRAY,
-                    CLR_ACCENT,
-                    tx,
-                    ry + 30,
-                );
-
-                SelectObject(mdc, s.font_c);
-                SetTextColor(mdc, CLR_PH);
-                let mut crumb: Vec<u16> = res.entry.breadcrumb_path.encode_utf16().collect();
-                let mut r2 = RECT {
-                    left: tx,
-                    top: ry + 50,
-                    right: x + list_w - PAD_L - 100,
-                    bottom: ry + 66,
-                };
-                let _ = DrawTextW(mdc, &mut crumb, &mut r2, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+                let default_gray = if is_selected { palette.clr_gray_sel } else { palette.clr_gray };
+                if !res.entry.description.is_empty() {
+                    draw_highlighted_text(
+                        mdc,
+                        &res.entry.description,
+                        &s.query,
+                        s.font_c,
+                        default_gray,
+                        palette.clr_accent,
+                        tx,
+                        ry + 28,
+                    );
+                } else {
+                    SelectObject(mdc, s.font_c);
+                    SetTextColor(mdc, default_gray);
+                    let mut crumb: Vec<u16> = res.entry.breadcrumb_path.encode_utf16().collect();
+                    let mut r2 = RECT {
+                        left: tx,
+                        top: ry + 28,
+                        right: x + list_w - PAD_L - 100,
+                        bottom: ry + 44,
+                    };
+                    let _ = DrawTextW(mdc, &mut crumb, &mut r2, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+                }
 
                 let badge_source = &res.entry.source;
                 let label = match badge_source.as_str() {
@@ -7246,8 +7358,9 @@ fn filter_pill_rects(s: &State, x_start: i32, list_y: i32) -> Vec<(FilterType, R
 }
 
 unsafe fn badge_custom(hdc: HDC, s: &State, label: &str, x: i32, y: i32, w: i32) {
-    let bg_color = CLR_BDGBG;
-    let tx_color = CLR_BDGTX;
+    let palette = s.theme.palette();
+    let bg_color = palette.clr_bdgbg;
+    let tx_color = palette.clr_bdgtx;
     fill_rounded(hdc, x, y, w, BADGE_H, 5, bg_color);
     SelectObject(hdc, s.font_b);
     SetTextColor(hdc, tx_color);
@@ -7384,12 +7497,12 @@ unsafe fn draw_rounded_border_and_bg(
     w: i32,
     h: i32,
     r: i32,
-    _gradient: bool,
+    bg: COLORREF,
+    border: COLORREF,
 ) {
-    let border = CLR_DIV; // Always use dark border
     fill_rounded(hdc, x + 2, y + 6, w - 4, h - 2, r, COLORREF(0x00_12_0F_0D));
     fill_rounded(hdc, x, y, w, h, r, border);
-    fill_rounded(hdc, x + 1, y + 1, w - 2, h - 2, r - 1, BG);
+    fill_rounded(hdc, x + 1, y + 1, w - 2, h - 2, r - 1, bg);
 }
 
 fn source_section_label(source: &str) -> &'static str {
@@ -7474,61 +7587,62 @@ unsafe fn key_hint(hdc: HDC, s: &State, x: i32, y: i32, key: &str, label: &str) 
 }
 
 unsafe fn badge(hdc: HDC, s: &State, source: &str, x: i32, y: i32) {
+    let palette = s.theme.palette();
     let src_lc = source.to_lowercase();
     let (label, bg_color, tx_color) = if src_lc == "window" {
-        ("WIN", CLR_BDGBG, CLR_BDGTX)
+        ("WIN", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "live" {
         ("LIVE", COLORREF(0x00_31_46_35), COLORREF(0x00_A8_DF_A0))
     } else if src_lc == "project" {
-        ("PROJ", CLR_BDGBG, CLR_BDGTX)
+        ("PROJ", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "action" {
-        ("ACT", CLR_BDGBG, CLR_BDGTX)
+        ("ACT", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "translated" {
-        ("OK", CLR_BDGBG, CLR_BDGTX)
+        ("OK", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "web" {
-        ("WEB", CLR_BDGBG, CLR_BDGTX)
+        ("WEB", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "app" {
-        ("APP", CLR_BDGBG, CLR_BDGTX)
+        ("APP", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "ai" {
         ("AI", COLORREF(0x00_46_37_3A), COLORREF(0x00_F0_D0_D6))
     } else if src_lc == "quicklink" {
-        ("LINK", CLR_BDGBG, CLR_BDGTX)
+        ("LINK", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "snippet" {
-        ("SNIP", CLR_BDGBG, CLR_BDGTX)
+        ("SNIP", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "calc" {
-        ("CALC", CLR_BDGBG, CLR_BDGTX)
+        ("CALC", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "recent" {
-        ("REC", CLR_BDGBG, CLR_BDGTX)
+        ("REC", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "file" {
-        ("FILE", CLR_BDGBG, CLR_BDGTX)
+        ("FILE", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "code" {
-        ("CODE", CLR_BDGBG, CLR_BDGTX)
+        ("CODE", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "clipboard" {
-        ("CLIP", CLR_BDGBG, CLR_BDGTX)
+        ("CLIP", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "pinned_clip" {
         ("PIN", COLORREF(0x00_46_43_31), COLORREF(0x00_F0_D6_AA))
     } else if src_lc == "confirm" {
         ("DEL", COLORREF(0x00_30_30_55), COLORREF(0x00_D6_D6_FF))
     } else if src_lc == "bookmark" {
-        ("MARK", CLR_BDGBG, CLR_BDGTX)
+        ("MARK", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "history" {
-        ("HIST", CLR_BDGBG, CLR_BDGTX)
+        ("HIST", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "folder" {
-        ("DIR", CLR_BDGBG, CLR_BDGTX)
+        ("DIR", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "commit" {
-        ("GIT", CLR_BDGBG, CLR_BDGTX)
+        ("GIT", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "todo" {
-        ("TODO", CLR_BDGBG, CLR_BDGTX)
+        ("TODO", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "memory" {
-        ("MEM", CLR_BDGBG, CLR_BDGTX)
+        ("MEM", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc == "browser" {
-        ("BROW", CLR_BDGBG, CLR_BDGTX)
+        ("BROW", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc.contains("legacy") {
-        ("OLD", CLR_BDGBG, CLR_BDGTX)
+        ("OLD", palette.clr_bdgbg, palette.clr_bdgtx)
     } else if src_lc.contains("native") {
-        ("SYS", CLR_BDGBG, CLR_BDGTX)
+        ("SYS", palette.clr_bdgbg, palette.clr_bdgtx)
     } else {
-        ("SET", CLR_BDGBG, CLR_BDGTX)
+        ("SET", palette.clr_bdgbg, palette.clr_bdgtx)
     };
     fill_rounded(hdc, x, y, BADGE_W, BADGE_H, 5, bg_color);
     SelectObject(hdc, s.font_b);
