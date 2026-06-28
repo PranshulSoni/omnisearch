@@ -3131,6 +3131,10 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     ));
                 }
 
+                if let Ok(cfg) = ai::get_config() {
+                    configure_hermes_llm(&cfg.endpoint, &cfg.model, &cfg.api_key);
+                }
+
                 // Parse theme manually if needed, or trigger redraw
                 unsafe {
                     let _ = windows::Win32::Graphics::Gdi::InvalidateRect(hwnd, None, true);

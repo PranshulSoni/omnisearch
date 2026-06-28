@@ -38,8 +38,10 @@ pub fn init_settings_window(hwnd: HWND) {
             Err(_) => continue,
         };
 
-        // Load and apply current settings
+        // Load current settings
         let settings = AppSettings::load();
+        let (api_key, endpoint, model, always_approve) = load_ai_settings();
+
         ui.set_run_on_startup(settings.run_on_startup);
         ui.set_hide_on_lose_focus(settings.hide_on_lose_focus);
         ui.set_theme_mode(SharedString::from(settings.normalized_theme_mode()));
@@ -48,6 +50,12 @@ pub fn init_settings_window(hwnd: HWND) {
         ui.set_hotkey_error(SharedString::from(""));
         ui.set_window_width(settings.window_width as i32);
         ui.set_item_height(settings.item_height as i32);
+
+        // Load Agent properties
+        ui.set_agent_api_key(SharedString::from(api_key));
+        ui.set_agent_endpoint(SharedString::from(endpoint));
+        ui.set_agent_model(SharedString::from(model));
+        ui.set_agent_always_approve(always_approve);
 
         // Close = hide window, then stop the inner run()
         let ui_weak_close = ui.as_weak();
@@ -82,6 +90,15 @@ pub fn init_settings_window(hwnd: HWND) {
                 s.save();
                 ui.set_hotkey_error(SharedString::from(""));
                 crate::settings_startup::set_run_on_startup(s.run_on_startup);
+
+                // Save Agent properties
+                save_ai_settings(
+                    ui.get_agent_api_key().as_str(),
+                    ui.get_agent_endpoint().as_str(),
+                    ui.get_agent_model().as_str(),
+                    ui.get_agent_always_approve(),
+                );
+
                 unsafe {
                     let _ = PostMessageW(
                         hwnd,
@@ -126,6 +143,85 @@ pub fn init_settings_window(hwnd: HWND) {
         // Window was closed — loop back and wait for next show request
     }
 }
+
+fn get_db_conn() -> Option<rusqlite::Connection> {
+    let appdata = std::env::var("APPDATA").ok()?;
+    let path = std::path::PathBuf::from(appdata)
+        .join("opensearch-os")
+        .join("file_index.db");
+    let conn = rusqlite::Connection::open(&path).ok()?;
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+    Some(conn)
+}
+
+fn load_ai_settings() -> (String, String, String, bool) {
+    let mut api_key = String::new();
+    let mut endpoint = String::new();
+    let mut model = String::new();
+    let mut always_approve = false;
+
+    if let Some(conn) = get_db_conn() {
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS ai_settings (key TEXT PRIMARY KEY, value TEXT);",
+            [],
+        );
+        if let Ok(val) = conn.query_row(
+            "SELECT value FROM ai_settings WHERE key = 'api_key'",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
+            api_key = val;
+        }
+        if let Ok(val) = conn.query_row(
+            "SELECT value FROM ai_settings WHERE key = 'endpoint'",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
+            endpoint = val;
+        }
+        if let Ok(val) = conn.query_row(
+            "SELECT value FROM ai_settings WHERE key = 'model'",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
+            model = val;
+        }
+        if let Ok(val) = conn.query_row(
+            "SELECT value FROM ai_settings WHERE key = 'always_approve'",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
+            always_approve = val.trim() == "1";
+        }
+    }
+    (api_key, endpoint, model, always_approve)
+}
+
+fn save_ai_settings(api_key: &str, endpoint: &str, model: &str, always_approve: bool) {
+    if let Some(conn) = get_db_conn() {
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS ai_settings (key TEXT PRIMARY KEY, value TEXT);",
+            [],
+        );
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('api_key', ?);",
+            [api_key],
+        );
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('endpoint', ?);",
+            [endpoint],
+        );
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('model', ?);",
+            [model],
+        );
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('always_approve', ?);",
+            [if always_approve { "1" } else { "0" }],
+        );
+    }
+}
+
 
 pub fn show_settings_window() {
     if !SETTINGS_READY.load(Ordering::SeqCst) {

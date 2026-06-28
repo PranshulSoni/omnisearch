@@ -22,9 +22,18 @@ export component SettingsWindow inherits Window {
     callback validate-hotkey(string) -> string;
     callback set-hotkey-recording(bool);
     
+    // Agent settings properties
+    in-out property <string> agent-api-key;
+    in-out property <string> agent-endpoint;
+    in-out property <string> agent-model;
+    in-out property <bool> agent-always-approve;
+
+    
     property <int> current-page: 0;
     property <bool> recording-hotkey: false;
     property <string> previous-hotkey: "";
+    property <bool> show-api-key: false;
+
     
     // Theme Tokens
     property <bool> is-light: false; // Locked to dark mode for settings app
@@ -230,13 +239,13 @@ export component SettingsWindow inherits Window {
                 Rectangle { height: 1px; background: root.border-color; }
                 Rectangle { height: 8px; }
 
-                // About
-                nav-about := Rectangle {
+                // Agent
+                nav-agent := Rectangle {
                     height: 42px;
                     border-radius: 8px;
                     x: 8px;
                     width: parent.width - 16px;
-                    background: root.current-page == 3 ? #3a3a4a : (ta-about.has-hover ? root.hover-bg : transparent);
+                    background: root.current-page == 3 ? #3a3a4a : (ta-agent.has-hover ? root.hover-bg : transparent);
                     animate background { duration: 120ms; }
                     Rectangle {
                         x: 0px;
@@ -250,22 +259,62 @@ export component SettingsWindow inherits Window {
                         padding-left: 16px;
                         spacing: 10px;
                         Text {
-                            text: "ℹ";
+                            text: "🤖";
                             font-size: 15px;
                             color: root.current-page == 3 ? root.text-primary : root.text-muted;
                             vertical-alignment: center;
                             width: 18px;
                         }
                         Text {
-                            text: "About";
+                            text: "Agent";
                             font-size: 14px;
                             font-weight: root.current-page == 3 ? 600 : 400;
                             color: root.current-page == 3 ? root.text-primary : root.text-secondary;
                             vertical-alignment: center;
                         }
                     }
-                    ta-about := TouchArea { clicked => { root.current-page = 3; } }
+                    ta-agent := TouchArea { clicked => { root.current-page = 3; } }
                 }
+
+                Rectangle { height: 4px; }
+
+                // About
+                nav-about := Rectangle {
+                    height: 42px;
+                    border-radius: 8px;
+                    x: 8px;
+                    width: parent.width - 16px;
+                    background: root.current-page == 4 ? #3a3a4a : (ta-about.has-hover ? root.hover-bg : transparent);
+                    animate background { duration: 120ms; }
+                    Rectangle {
+                        x: 0px;
+                        y: 8px;
+                        width: 3px;
+                        height: parent.height - 16px;
+                        border-radius: 2px;
+                        background: root.current-page == 4 ? root.accent : transparent;
+                    }
+                    HorizontalBox {
+                        padding-left: 16px;
+                        spacing: 10px;
+                        Text {
+                            text: "ℹ";
+                            font-size: 15px;
+                            color: root.current-page == 4 ? root.text-primary : root.text-muted;
+                            vertical-alignment: center;
+                            width: 18px;
+                        }
+                        Text {
+                            text: "About";
+                            font-size: 14px;
+                            font-weight: root.current-page == 4 ? 600 : 400;
+                            color: root.current-page == 4 ? root.text-primary : root.text-secondary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    ta-about := TouchArea { clicked => { root.current-page = 4; } }
+                }
+
 
                 Rectangle { height: 16px; }
             }
@@ -658,8 +707,161 @@ export component SettingsWindow inherits Window {
                         }
                     }
                     
-                    // About Page
+                    // Agent Page
                     if root.current-page == 3: VerticalBox {
+                        alignment: start;
+                        spacing: 20px;
+
+                        // Page header
+                        VerticalBox {
+                            spacing: 4px;
+                            Text {
+                                text: "Agent Settings";
+                                font-size: 22px;
+                                font-weight: 700;
+                                color: root.text-primary;
+                            }
+                            Text {
+                                text: "Configure settings for autonomous agent and AI helper features";
+                                font-size: 13px;
+                                color: root.text-muted;
+                            }
+                        }
+
+                        // Section: API Settings
+                        VerticalBox {
+                            spacing: 12px;
+                            Text {
+                                text: "AI & ENDPOINT CONFIGURATION";
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: root.text-muted;
+                                letter-spacing: 1px;
+                            }
+                            
+                            Rectangle {
+                                background: root.card-bg;
+                                border-radius: 8px;
+                                border-color: root.border-color;
+                                border-width: 1px;
+                                padding: 20px;
+                                
+                                VerticalBox {
+                                    spacing: 16px;
+                                    
+                                    // API Key Row
+                                    VerticalBox {
+                                        spacing: 6px;
+                                        Text { text: "API Key"; color: root.text-primary; font-size: 14px; font-weight: 600; }
+                                        Text { text: "OpenCode Zen or DeepSeek API Key"; color: root.text-muted; font-size: 12px; }
+                                        HorizontalBox {
+                                            padding: 0;
+                                            spacing: 8px;
+                                            LineEdit {
+                                                text: root.agent-api-key;
+                                                placeholder-text: "sk-...";
+                                                input-type: root.show-api-key ? InputType.text : InputType.password;
+                                                edited(t) => {
+                                                    root.agent-api-key = t;
+                                                    root.save-settings();
+                                                }
+                                            }
+                                            Button {
+                                                text: root.show-api-key ? "Hide" : "Show";
+                                                width: 60px;
+                                                clicked => { root.show-api-key = !root.show-api-key; }
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Endpoint Row
+                                    VerticalBox {
+                                        spacing: 6px;
+                                        Text { text: "API Endpoint"; color: root.text-primary; font-size: 14px; font-weight: 600; }
+                                        Text { text: "Target endpoint URL for OpenAI-compatible chat completions"; color: root.text-muted; font-size: 12px; }
+                                        LineEdit {
+                                            text: root.agent-endpoint;
+                                            placeholder-text: "https://api.deepseek.com/chat/completions";
+                                            edited(t) => {
+                                                root.agent-endpoint = t;
+                                                root.save-settings();
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Model Row
+                                    VerticalBox {
+                                        spacing: 6px;
+                                        Text { text: "Model Name"; color: root.text-primary; font-size: 14px; font-weight: 600; }
+                                        Text { text: "The name of the model to request"; color: root.text-muted; font-size: 12px; }
+                                        LineEdit {
+                                            text: root.agent-model;
+                                            placeholder-text: "deepseek-chat";
+                                            edited(t) => {
+                                                root.agent-model = t;
+                                                root.save-settings();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Section: Safety
+                        VerticalBox {
+                            spacing: 12px;
+                            Text {
+                                text: "SAFETY & CONFIRMATIONS";
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: root.text-muted;
+                                letter-spacing: 1px;
+                            }
+                            
+                            Rectangle {
+                                background: root.card-bg;
+                                border-radius: 8px;
+                                border-color: root.border-color;
+                                border-width: 1px;
+                                height: 64px;
+                                HorizontalBox {
+                                    padding-left: 20px;
+                                    padding-right: 20px;
+                                    spacing: 16px;
+                                    Rectangle {
+                                        width: 36px;
+                                        height: 36px;
+                                        border-radius: 9px;
+                                        background: #3b2a22;
+                                        Text {
+                                            text: "⚠";
+                                            color: #f97316;
+                                            font-size: 16px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    VerticalBox {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text { text: "Always approve agent actions"; color: root.text-primary; font-size: 14px; font-weight: 600; }
+                                        Text { text: "Execute command line actions automatically without confirmation prompts"; color: root.text-muted; font-size: 12px; }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    CheckBox {
+                                        checked: root.agent-always-approve;
+                                        toggled => {
+                                            root.agent-always-approve = self.checked;
+                                            root.save-settings();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // About Page
+                    if root.current-page == 4: VerticalBox {
                         alignment: start;
                         spacing: 24px;
                         Text { text: "About"; font-size: 26px; font-weight: 600; color: root.text-primary; }
@@ -677,6 +879,7 @@ export component SettingsWindow inherits Window {
                             }
                         }
                     }
+
                 }
             }
         }
