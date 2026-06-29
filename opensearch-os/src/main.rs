@@ -7983,21 +7983,31 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         .get(&res.entry.launch_command)
                         .copied()
                         .filter(|icon| !icon.0.is_null())
-                        .unwrap_or_else(|| match res.entry.source.as_str() {
-                            "app" => s.icon_app,
-                            "FOLDER" => s.icon_folder,
-                            "FILE" | "FILE_CONTENT" | "RECENT" | "CODE" | "CODE_CONTENT"
-                            | "OCR" => s.icon_file,
-                            "ACTION" | "SYSTEM" | "WINDOW" => s.icon_app,
-                            "BOOKMARK" | "QUICKLINK" => s.icon_bookmark,
-                            "CLIPBOARD" => s.icon_clipboard,
-                            "COMMIT" => s.icon_commit,
-                            "HISTORY" | "web" => s.icon_web,
-                            "MEMORY" | "AI" => s.icon_app,
-                            "PDF" => s.icon_file,
-                            "Settings" | "SETTINGS" => s.icon_settings,
-                            "SNIPPET" | "TODO" => s.icon_file,
-                            _ => s.icon_app,
+                        .unwrap_or_else(|| {
+                            if res.entry.launch_command.starts_with("ms-settings:")
+                                || res.entry.launch_command.starts_with("control")
+                                || res.entry.launch_command.contains(".cpl")
+                                || res.entry.launch_command.ends_with(".msc")
+                            {
+                                s.icon_settings
+                            } else {
+                                match res.entry.source.as_str() {
+                                    "app" => s.icon_app,
+                                    "FOLDER" => s.icon_folder,
+                                    "FILE" | "FILE_CONTENT" | "RECENT" | "CODE" | "CODE_CONTENT"
+                                    | "OCR" => s.icon_file,
+                                    "ACTION" | "SYSTEM" | "WINDOW" => s.icon_app,
+                                    "BOOKMARK" | "QUICKLINK" => s.icon_bookmark,
+                                    "CLIPBOARD" => s.icon_clipboard,
+                                    "COMMIT" => s.icon_commit,
+                                    "HISTORY" | "web" => s.icon_web,
+                                    "MEMORY" | "AI" => s.icon_app,
+                                    "PDF" => s.icon_file,
+                                    "Settings" | "SETTINGS" => s.icon_settings,
+                                    "SNIPPET" | "TODO" => s.icon_file,
+                                    _ => s.icon_app,
+                                }
+                            }
                         });
 
                 if !drew_thumbnail && !icon_to_draw.0.is_null() {
