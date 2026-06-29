@@ -1764,7 +1764,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     trigger_search(hwnd, s);
                 }
                 TIMER_CURSOR_BLINK => {
-                    if blinking_text_caret_active(s) {
+                    if text_caret_active(s) {
                         s.cursor_visible = !s.cursor_visible;
                         let _ = InvalidateRect(hwnd, None, FALSE);
                     } else {
@@ -1818,7 +1818,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         s.query.insert(s.cursor_pos, c);
                         s.cursor_pos += c.len_utf8();
                         reset_cursor_blink(hwnd, s);
-                        invalidate_search_input(hwnd, s);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
                     }
                 }
                 return LRESULT(0);
@@ -1870,7 +1870,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     s.results.clear();
                     kick_debounce(hwnd, s);
                     reset_cursor_blink(hwnd, s);
-                    invalidate_search_input(hwnd, s);
+                    let _ = InvalidateRect(hwnd, None, FALSE);
                 }
             }
             LRESULT(0)
@@ -2153,7 +2153,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                             kick_debounce(hwnd, s);
                         }
                         reset_cursor_blink(hwnd, s);
-                        invalidate_search_input(hwnd, s);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
                         return LRESULT(0);
                     }
                     VK_LEFT => {
@@ -2191,7 +2191,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                                     // Ctrl + A
                                     if !s.query.is_empty() {
                                         s.text_selected = true;
-                                        invalidate_search_input(hwnd, s);
+                                        let _ = InvalidateRect(hwnd, None, FALSE);
                                     }
                                     return LRESULT(0);
                                 }
@@ -2238,7 +2238,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         // Ctrl + A (Select All)
                         if !s.query.is_empty() {
                             s.text_selected = true;
-                            invalidate_search_input(hwnd, s);
+                            let _ = InvalidateRect(hwnd, None, FALSE);
                         }
                         return LRESULT(0);
                     }
@@ -2406,7 +2406,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         s.cursor_pos = p;
                     }
                     reset_cursor_blink(hwnd, s);
-                    invalidate_search_input(hwnd, s);
+                    let _ = InvalidateRect(hwnd, None, FALSE);
                 }
                 VK_RIGHT => {
                     if s.submenu_active {
@@ -2428,7 +2428,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         }
                     }
                     reset_cursor_blink(hwnd, s);
-                    invalidate_search_input(hwnd, s);
+                    let _ = InvalidateRect(hwnd, None, FALSE);
                 }
                 VK_BACK => {
                     if ctrl_down {
@@ -2460,7 +2460,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     s.scroll_offset = 0;
                     kick_debounce(hwnd, s);
                     reset_cursor_blink(hwnd, s);
-                    invalidate_search_input(hwnd, s);
+                    let _ = InvalidateRect(hwnd, None, FALSE);
                 }
                 VK_TAB => {
                     let is_clip_view =
@@ -3651,30 +3651,12 @@ unsafe fn force_foreground(hwnd: HWND) {
 
 unsafe fn reset_cursor_blink(hwnd: HWND, s: &mut State) {
     let _ = KillTimer(hwnd, TIMER_CURSOR_BLINK);
-    if blinking_text_caret_active(s) {
+    if text_caret_active(s) {
         s.cursor_visible = true;
         let _ = SetTimer(hwnd, TIMER_CURSOR_BLINK, CURSOR_BLINK_MS, None);
-    } else if text_caret_active(s) {
-        // ponytail: all custom text carets are steady. Timer-driven blink repaints a layered
-        // window and can make the real Windows cursor flicker over the launcher surface.
-        s.cursor_visible = true;
     } else {
         s.cursor_visible = false;
     }
-}
-
-unsafe fn invalidate_search_input(hwnd: HWND, s: &State) {
-    let mut rc_client = RECT::default();
-    let _ = GetClientRect(hwnd, &mut rc_client);
-    let x = ((rc_client.right - rc_client.left) - WIN_W) / 2;
-    let y = s.cy - s.win_h() / 2;
-    let rect = RECT {
-        left: x,
-        top: y,
-        right: x + WIN_W,
-        bottom: y + s.search_h() + 1,
-    };
-    let _ = InvalidateRect(hwnd, Some(&rect), FALSE);
 }
 
 unsafe fn do_show(hwnd: HWND, s: &mut State) {
@@ -5905,15 +5887,6 @@ fn search_input_caret_active_flags(
 
 fn text_caret_active(s: &State) -> bool {
     s.note_editing || s.chat_input_active || search_input_caret_active(s)
-}
-
-fn blinking_text_caret_active(s: &State) -> bool {
-    blinking_text_caret_active_flags(s.note_editing, s.chat_input_active)
-}
-
-fn blinking_text_caret_active_flags(note_editing: bool, chat_input_active: bool) -> bool {
-    let _ = (note_editing, chat_input_active);
-    false
 }
 
 fn delete_word_before(s: &mut State) {
@@ -8302,9 +8275,6 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     let _ = SelectClipRgn(mdc, HRGN(null_mut()));
     let _ = DeleteObject(clip_rgn);
 
-    // Blit only the invalidated region. Full-window invalidations (results, hover, animation)
-    // still copy everything; a caret-blink invalidation copies just the caret sliver, so the
-    // layered-window blit no longer hides/shows the hardware cursor on every blink.
     let bx = ps.rcPaint.left;
     let by = ps.rcPaint.top;
     let bw = (ps.rcPaint.right - ps.rcPaint.left).max(0);
@@ -10088,14 +10058,6 @@ mod tests {
         assert!(!search_input_caret_active_flags(true, true, false, true));
         assert!(!search_input_caret_active_flags(true, false, true, true));
         assert!(!search_input_caret_active_flags(true, false, false, false));
-    }
-
-    #[test]
-    fn custom_text_carets_do_not_use_blink_timer() {
-        assert!(search_input_caret_active_flags(true, false, false, true));
-        assert!(!blinking_text_caret_active_flags(false, false));
-        assert!(!blinking_text_caret_active_flags(true, false));
-        assert!(!blinking_text_caret_active_flags(false, true));
     }
 }
 
