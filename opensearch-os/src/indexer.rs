@@ -1,5 +1,6 @@
 use once_cell::sync::Lazy;
 use rusqlite::{params, Connection};
+use notify::Watcher;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
