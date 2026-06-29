@@ -747,7 +747,31 @@ unsafe fn run() {
         Err(_) => std::path::PathBuf::from("file_index.db"),
     };
 
-    let icon_settings = load_icon_from_dll("shell32.dll", 274, 64);
+    // Load the Windows Settings icon from the real Settings UWP app.
+    // SHGetFileInfoW with the shell:AppsFolder path returns the actual gear logo.
+    let icon_settings = {
+        let settings_path = "shell:AppsFolder\\windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel";
+        let wide: Vec<u16> = settings_path.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut shfi = windows::Win32::UI::Shell::SHFILEINFOW::default();
+        let flags = windows::Win32::UI::Shell::SHGFI_ICON
+            | windows::Win32::UI::Shell::SHGFI_LARGEICON
+            | windows::Win32::UI::Shell::SHGFI_USEFILEATTRIBUTES;
+        let res = unsafe {
+            windows::Win32::UI::Shell::SHGetFileInfoW(
+                windows::core::PCWSTR(wide.as_ptr()),
+                windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(0),
+                Some(&mut shfi),
+                std::mem::size_of::<windows::Win32::UI::Shell::SHFILEINFOW>() as u32,
+                flags,
+            )
+        };
+        if res != 0 && !shfi.hIcon.0.is_null() {
+            shfi.hIcon
+        } else {
+            // Fallback: classic gear icon from shell32
+            unsafe { load_icon_from_dll("shell32.dll", 274, 64) }
+        }
+    };
     let icon_web = load_icon_from_dll("shell32.dll", 14, 64);
     let icon_bookmark = load_icon_from_dll("shell32.dll", 43, 64);
     let icon_folder = load_icon_from_dll("shell32.dll", 3, 64);

@@ -1205,66 +1205,75 @@ export component SettingsWindow inherits Window {
                     // Hotkeys Page
                     if root.current-page == 2: VerticalBox {
                         alignment: start;
-                        spacing: 14px;
-                        Text { text: "Hotkeys"; font-size: 26px; font-weight: 600; color: root.text-primary; }
-                        Text { text: "Keyboard shortcuts used by the launcher"; font-size: 13px; color: root.text-muted; }
+                        spacing: 24px;
 
+                        // Header
+                        VerticalBox {
+                            spacing: 4px;
+                            Text { text: "Hotkeys"; font-size: 26px; font-weight: 700; color: root.text-primary; }
+                            Text { text: "Keyboard shortcuts used by the launcher"; font-size: 13px; color: root.text-muted; }
+                        }
+
+                        // Hotkey rows card
                         Rectangle {
                             background: root.card-bg;
-                            border-radius: 8px;
+                            border-radius: 10px;
                             border-color: root.border-color;
                             border-width: 1px;
-                            VerticalBox {
-                                spacing: 0px;
 
+                            VerticalLayout {
+                                // ── Open Launcher row ──────────────────────────────────
                                 Rectangle {
-                                    height: 78px;
+                                    height: 68px;
                                     background: ta-launcher-row.has-hover ? root.hover-bg : transparent;
-                                    animate background { duration: 120ms; }
+                                    animate background { duration: 100ms; }
 
-                                    HorizontalBox {
-                                        padding-left: 20px;
-                                        padding-right: 20px;
-                                        spacing: 14px;
+                                    HorizontalLayout {
+                                        padding-left: 24px;
+                                        padding-right: 24px;
+                                        padding-top: 0px;
+                                        padding-bottom: 0px;
+                                        spacing: 0px;
 
-                                        Rectangle {
-                                            width: 34px;
-                                            height: 34px;
-                                            border-radius: 7px;
-                                            background: #1f6feb;
+                                        // Label block
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 3px;
+                                            horizontal-stretch: 1;
                                             Text {
-                                                text: "K";
-                                                color: #ffffff;
-                                                font-size: 16px;
-                                                font-weight: 700;
-                                                horizontal-alignment: center;
-                                                vertical-alignment: center;
+                                                text: "Open launcher";
+                                                color: root.text-primary;
+                                                font-size: 14px;
+                                                font-weight: 600;
+                                            }
+                                            Text {
+                                                text: "Toggles the search window";
+                                                color: root.text-muted;
+                                                font-size: 12px;
                                             }
                                         }
 
-                                        VerticalBox {
-                                            alignment: center;
-                                            spacing: 2px;
-                                            Text { text: "Open launcher"; color: root.text-primary; font-size: 15px; font-weight: 600; }
-                                            Text { text: "Toggles the search window"; color: root.text-muted; font-size: 12px; }
-                                        }
-
-                                        Rectangle { horizontal-stretch: 1; }
-
+                                        // Hotkey pill (clickable to record)
                                         Rectangle {
-                                            width: 186px;
+                                            width: 180px;
                                             height: 36px;
-                                            border-radius: 6px;
+                                            border-radius: 7px;
                                             border-width: root.recording-hotkey ? 2px : 1px;
                                             border-color: root.recording-hotkey ? #3b82f6 : root.border-color;
                                             background: root.recording-hotkey ? #13243d : root.bg-color;
+                                            y: (parent.height - self.height) / 2;
+
+                                            animate border-color { duration: 120ms; }
+                                            animate background { duration: 120ms; }
+
                                             Text {
-                                                text: root.recording-hotkey ? "Press shortcut..." : root.global-hotkey;
+                                                text: root.recording-hotkey ? "Press shortcut…" : root.global-hotkey;
                                                 color: root.recording-hotkey ? #93c5fd : root.text-primary;
                                                 font-size: 13px;
                                                 font-weight: 600;
                                                 horizontal-alignment: center;
                                                 vertical-alignment: center;
+                                                overflow: elide;
                                             }
                                         }
                                     }
@@ -1280,46 +1289,49 @@ export component SettingsWindow inherits Window {
                                     }
                                 }
 
+                                // Divider
                                 Rectangle { height: 1px; background: root.border-color; }
 
+                                // ── Voice Dictation row ────────────────────────────────
                                 Rectangle {
-                                    height: 72px;
-                                    HorizontalBox {
-                                        padding-left: 20px;
-                                        padding-right: 20px;
-                                        spacing: 14px;
+                                    height: 68px;
+                                    background: transparent;
 
-                                        Rectangle {
-                                            width: 34px;
-                                            height: 34px;
-                                            border-radius: 7px;
-                                            background: #303030;
+                                    HorizontalLayout {
+                                        padding-left: 24px;
+                                        padding-right: 24px;
+                                        padding-top: 0px;
+                                        padding-bottom: 0px;
+                                        spacing: 0px;
+
+                                        // Label block
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 3px;
+                                            horizontal-stretch: 1;
                                             Text {
-                                                text: "M";
-                                                color: root.text-secondary;
-                                                font-size: 16px;
-                                                font-weight: 700;
-                                                horizontal-alignment: center;
-                                                vertical-alignment: center;
+                                                text: "Voice dictation";
+                                                color: root.text-primary;
+                                                font-size: 14px;
+                                                font-weight: 600;
+                                            }
+                                            Text {
+                                                text: "Fixed shortcut · managed by the launcher";
+                                                color: root.text-muted;
+                                                font-size: 12px;
                                             }
                                         }
 
-                                        VerticalBox {
-                                            alignment: center;
-                                            spacing: 2px;
-                                            Text { text: "Voice dictation"; color: root.text-primary; font-size: 15px; font-weight: 600; }
-                                            Text { text: "Reserved by the launcher backend"; color: root.text-muted; font-size: 12px; }
-                                        }
-
-                                        Rectangle { horizontal-stretch: 1; }
-
+                                        // Hotkey pill (read-only)
                                         Rectangle {
-                                            width: 186px;
-                                            height: 34px;
-                                            border-radius: 6px;
+                                            width: 180px;
+                                            height: 36px;
+                                            border-radius: 7px;
                                             border-width: 1px;
                                             border-color: root.border-color;
                                             background: root.bg-color;
+                                            y: (parent.height - self.height) / 2;
+
                                             Text {
                                                 text: root.voice-hotkey;
                                                 color: root.text-muted;
@@ -1334,15 +1346,16 @@ export component SettingsWindow inherits Window {
                             }
                         }
 
+                        // Error banner — only shown when there's an error
                         if root.hotkey-error != "": Rectangle {
                             height: 42px;
                             border-radius: 8px;
                             background: #3a1d1d;
                             border-color: #7f1d1d;
                             border-width: 1px;
-                            HorizontalBox {
-                                padding-left: 14px;
-                                padding-right: 14px;
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
                                 Text {
                                     text: root.hotkey-error;
                                     color: #fecaca;
@@ -1352,25 +1365,19 @@ export component SettingsWindow inherits Window {
                             }
                         }
 
-                        Rectangle {
-                            background: root.card-bg;
-                            border-radius: 8px;
-                            border-color: root.border-color;
-                            border-width: 1px;
-                            height: 66px;
-                            HorizontalBox {
-                                padding-left: 20px;
-                                padding-right: 20px;
-                                Text { text: "Invalid shortcuts are rejected before saving."; vertical-alignment: center; color: root.text-muted; font-size: 13px; }
-                                Rectangle { horizontal-stretch: 1; }
-                                HorizontalBox {
-                                    spacing: 8px;
-                                    Text { text: "Editable"; color: root.text-muted; font-size: 12px; vertical-alignment: center; }
-                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: #22c55e; }
-                                }
+                        // Tip text
+                        HorizontalLayout {
+                            spacing: 6px;
+                            padding-left: 4px;
+                            Text {
+                                text: "Click the shortcut pill to record a new hotkey. Press Escape to cancel.";
+                                color: root.text-muted;
+                                font-size: 12px;
+                                vertical-alignment: center;
                             }
                         }
                     }
+
                     
                     // Agent Page
                     if root.current-page == 3: VerticalBox {

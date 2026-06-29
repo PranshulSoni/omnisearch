@@ -381,9 +381,7 @@ fn handle_action(action: &str) {
         }
         "open_settings" => {
             if let Ok(exe) = std::env::current_exe() {
-                let _ = Command::new(exe)
-                    .arg("--settings")
-                    .spawn();
+                let _ = Command::new(exe).arg("--settings").spawn();
             }
         }
         "reveal_logs" => {
