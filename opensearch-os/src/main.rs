@@ -5264,6 +5264,82 @@ unsafe fn trigger_search(_hwnd: HWND, s: &mut State) {
         let _ = InvalidateRect(_hwnd, None, FALSE);
         return;
     }
+
+    // ── Bare-word scope aliases ─────────────────────────────────────────────
+    // If the user types an exact command word (no colon needed), jump straight
+    // into that scope.  The table maps lowercase alias → scope prefix string.
+    const SCOPE_ALIASES: &[(&str, &str)] = &[
+        // Clipboard
+        ("clipboard", "clip:"),
+        ("clip", "clip:"),
+        // Files / code
+        ("files", "file:"),
+        ("file", "file:"),
+        ("code", "code:"),
+        // Browser
+        ("bookmarks", "bookmarks:"),
+        ("bookmark", "bookmarks:"),
+        ("history", "history:"),
+        ("browser history", "history:"),
+        // Git
+        ("commits", "commits:"),
+        ("commit", "commits:"),
+        ("git", "commits:"),
+        ("todos", "todos:"),
+        ("todo", "todos:"),
+        // AI chats
+        ("chats", "chats:"),
+        ("chat", "chats:"),
+        ("ai chats", "chats:"),
+        // Images / screenshots
+        ("images", "img:"),
+        ("image", "img:"),
+        ("screenshots", "img:"),
+        ("screenshot", "img:"),
+        // Agents
+        ("agents", "agents:"),
+        ("agent", "agents:"),
+        ("agent chats", "agentchats:"),
+        ("agentchats", "agentchats:"),
+        // Notes
+        ("notes", "notes:"),
+        ("note", "notes:"),
+        // Memory / timeline
+        ("memory", "memory:"),
+        ("timeline", "memory:"),
+        // Window switcher
+        ("windows", "switch:"),
+        ("switch", "switch:"),
+        ("window", "window:"),
+        // Quick links / snippets
+        ("quicklinks", "ql:"),
+        ("snippets", "snip:"),
+    ];
+    let q_lower = s.query.trim().to_lowercase();
+    for (alias, prefix) in SCOPE_ALIASES {
+        if q_lower == *alias {
+            s.query = prefix.to_string();
+            s.cursor_pos = s.query.len();
+            s.selected = 0;
+            s.scroll_offset = 0;
+            s.text_selected = false;
+            reset_cursor_blink(_hwnd, s);
+            // Re-enter trigger_search with the rewritten query.
+            s.results_stale = true;
+            s.current_query_id += 1;
+            let req = SearchRequest {
+                query: s.query.clone(),
+                query_id: s.current_query_id,
+            };
+            if let Some(ref tx) = s.search_tx {
+                let _ = tx.send(req);
+            }
+            let _ = InvalidateRect(_hwnd, None, FALSE);
+            return;
+        }
+    }
+    // ── End bare-word aliases ───────────────────────────────────────────────
+
     s.results_stale = true;
     s.current_query_id += 1;
     let req = SearchRequest {
