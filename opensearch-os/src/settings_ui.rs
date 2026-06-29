@@ -338,6 +338,18 @@ pub fn run_settings_window() {
                         .collect();
                     let folders_model = slint::ModelRc::new(slint::VecModel::from(folders_vec));
                     ui.set_db_folders(folders_model);
+
+                    // Notify launcher to reload settings and update watches
+                    if let Some(hwnd) = find_launcher_hwnd() {
+                        unsafe {
+                            let _ = PostMessageW(
+                                hwnd,
+                                windows::Win32::UI::WindowsAndMessaging::WM_USER + 10,
+                                windows::Win32::Foundation::WPARAM(0),
+                                windows::Win32::Foundation::LPARAM(0),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -364,6 +376,18 @@ pub fn run_settings_window() {
                     .collect();
                 let folders_model = slint::ModelRc::new(slint::VecModel::from(folders_vec));
                 ui.set_db_folders(folders_model);
+
+                // Notify launcher to reload settings and update watches
+                if let Some(hwnd) = find_launcher_hwnd() {
+                    unsafe {
+                        let _ = PostMessageW(
+                            hwnd,
+                            windows::Win32::UI::WindowsAndMessaging::WM_USER + 10,
+                            windows::Win32::Foundation::WPARAM(0),
+                            windows::Win32::Foundation::LPARAM(0),
+                        );
+                    }
+                }
             }
         }
     });
