@@ -182,19 +182,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .to_lowercase();
                         if ext == "docx" {
                             println!("  Testing DOCX extraction on {:?}", path);
-                            match docx_lite::extract_text(path) {
-                                Ok(t) => {
-                                    println!("  DOCX extraction succeeded! Length: {}", t.len())
-                                }
-                                Err(err) => println!("  DOCX extraction failed: {:?}", err),
+                            let path_buf = path.to_path_buf();
+                            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                                docx_lite::extract_text(&path_buf)
+                            }));
+                            match res {
+                                Ok(Ok(t)) => println!("  DOCX extraction succeeded! Length: {}", t.len()),
+                                Ok(Err(err)) => println!("  DOCX extraction failed: {:?}", err),
+                                Err(_) => println!("  DOCX extraction PANICKED!"),
                             }
                         } else if ext == "pdf" {
                             println!("  Testing PDF extraction on {:?}", path);
-                            match pdf_extract::extract_text(path) {
-                                Ok(t) => {
-                                    println!("  PDF extraction succeeded! Length: {}", t.len())
-                                }
-                                Err(err) => println!("  PDF extraction failed: {:?}", err),
+                            let path_buf = path.to_path_buf();
+                            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                                pdf_extract::extract_text(&path_buf)
+                            }));
+                            match res {
+                                Ok(Ok(t)) => println!("  PDF extraction succeeded! Length: {}", t.len()),
+                                Ok(Err(err)) => println!("  PDF extraction failed: {:?}", err),
+                                Err(_) => println!("  PDF extraction PANICKED!"),
                             }
                         } else if ["png", "jpg", "jpeg", "bmp", "gif"].contains(&ext.as_str()) {
                             println!("  Testing image OCR on {:?}", path);
