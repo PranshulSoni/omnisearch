@@ -413,54 +413,81 @@ pub fn run_settings_window() {
     });
 
     let ui_weak_status = ui.as_weak();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        let ui_weak = ui_weak_status.clone();
-        if ui_weak.upgrade().is_none() {
-            break;
-        }
-
-        let mut is_indexing = false;
-        let mut progress = "Idle".to_string();
-        let mut last_time = "Never".to_string();
-        let mut count = 0;
-
-        if let Some(conn) = get_db_conn() {
-            is_indexing = get_indexer_state_from_db(&conn, "is_indexing", "0") == "1";
-            progress = get_indexer_state_from_db(&conn, "progress", "Idle");
-            last_time = get_indexer_state_from_db(&conn, "last_index_time", "Never");
-            
-            // Re-create check to prevent errors
-            let _ = conn.execute(
-                "CREATE TABLE IF NOT EXISTS files (
-                    path TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    extension TEXT NOT NULL,
-                    modified INTEGER NOT NULL,
-                    size INTEGER NOT NULL DEFAULT 0,
-                    is_dir INTEGER NOT NULL DEFAULT 0
-                );",
-                [],
-            );
-            if let Ok(c) = conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0)) {
-                count = c as i32;
+    std::thread::spawn(move || {
+        log_settings_ui("Settings status thread started");
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let ui_weak = ui_weak_status.clone();
+            if ui_weak.upgrade().is_none() {
+                log_settings_ui("Settings status thread UI upgrade is None, exiting");
+                break;
             }
-        }
 
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = ui_weak.upgrade() {
-                ui.set_db_is_indexing(is_indexing);
-                ui.set_db_status(slint::SharedString::from(progress));
-                ui.set_db_last_indexed(slint::SharedString::from(last_time));
-                ui.set_db_file_count(count);
+            let mut is_indexing = false;
+            let mut progress = "Idle".to_string();
+            let mut last_time = "Never".to_string();
+            let mut count = 0;
+
+            match get_db_conn() {
+                Some(conn) => {
+                    is_indexing = get_indexer_state_from_db(&conn, "is_indexing", "0") == "1";
+                    progress = get_indexer_state_from_db(&conn, "progress", "Idle");
+                    last_time = get_indexer_state_from_db(&conn, "last_index_time", "Never");
+                    
+                    // Re-create check to prevent errors
+                    let _ = conn.execute(
+                        "CREATE TABLE IF NOT EXISTS files (
+                            path TEXT PRIMARY KEY,
+                            name TEXT NOT NULL,
+                            extension TEXT NOT NULL,
+                            modified INTEGER NOT NULL,
+                            size INTEGER NOT NULL DEFAULT 0,
+                            is_dir INTEGER NOT NULL DEFAULT 0
+                        );",
+                        [],
+                    );
+                    match conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0)) {
+                        Ok(c) => count = c as i32,
+                        Err(e) => log_settings_ui(&format!("Failed to query count: {:?}", e)),
+                    }
+                }
+                None => {
+                    log_settings_ui("get_db_conn() returned None");
+                }
             }
-        });
+
+            let progress_clone = progress.clone();
+            let last_time_clone = last_time.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_db_is_indexing(is_indexing);
+                    ui.set_db_status(slint::SharedString::from(progress_clone));
+                    ui.set_db_last_indexed(slint::SharedString::from(last_time_clone));
+                    ui.set_db_file_count(count);
+                }
+            });
+        }
     });
 
     // Show the window and run the event loop until it's closed.
     ui.window().show().ok();
     ui.window().set_minimized(false);
     slint::run_event_loop().ok();
+}
+
+fn log_settings_ui(msg: &str) {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::path::PathBuf;
+    let log_dir = match std::env::var("APPDATA") {
+        Ok(d) => PathBuf::from(d).join("opensearch-os"),
+        Err(_) => PathBuf::from("."),
+    };
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join("settings_ui.log");
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
+        let _ = writeln!(file, "{}", msg);
+    }
 }
 
 fn get_indexer_state_from_db(conn: &rusqlite::Connection, key: &str, default: &str) -> String {
@@ -480,13 +507,26 @@ fn get_indexer_state_from_db(conn: &rusqlite::Connection, key: &str, default: &s
 }
 
 fn get_db_conn() -> Option<rusqlite::Connection> {
-    let appdata = std::env::var("APPDATA").ok()?;
+    let appdata = match std::env::var("APPDATA") {
+        Ok(val) => val,
+        Err(e) => {
+            log_settings_ui(&format!("APPDATA env var read failed: {:?}", e));
+            return None;
+        }
+    };
     let path = std::path::PathBuf::from(appdata)
         .join("opensearch-os")
         .join("file_index.db");
-    let conn = rusqlite::Connection::open(&path).ok()?;
-    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
-    Some(conn)
+    match rusqlite::Connection::open(&path) {
+        Ok(conn) => {
+            let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+            Some(conn)
+        }
+        Err(e) => {
+            log_settings_ui(&format!("Failed to open DB at {:?}: {:?}", path, e));
+            None
+        }
+    }
 }
 
 fn load_ai_settings() -> (String, String, String, bool) {
