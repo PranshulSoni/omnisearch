@@ -448,7 +448,7 @@ impl State {
                     headers_count += 1;
                 }
             }
-            self.search_h() + 1 + n * self.item_h() + headers_count * 24 + 8
+            self.search_h() + 49 + n * self.item_h() + headers_count * 24 + 8
         } else {
             let offset = 80;
             let footer = 8;
@@ -479,7 +479,7 @@ impl State {
                     headers_count += 1;
                 }
             }
-            return cur_y + headers_count * 24 + i as i32 * self.item_h();
+            return cur_y + 48 + headers_count * 24 + i as i32 * self.item_h();
         }
 
         cur_y += 80; // "Best matches first" label
@@ -2766,7 +2766,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 let _ = KillTimer(hwnd, TIMER_VOICE_ANIM);
                 let _ = InvalidateRect(hwnd, None, FALSE);
             }
-            if !s.query.is_empty() && !s.has_prefix() {
+            if !s.query.is_empty() {
                 let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
                 let _ = ScreenToClient(hwnd, &mut pt);
@@ -2990,9 +2990,24 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 let rects = filter_pill_rects(s, x_start, list_y);
                 for (ftype, r) in rects {
                     if mx >= r.left && mx < r.right && my >= r.top && my < r.bottom {
-                        if s.active_filter != ftype {
-                            s.active_filter = ftype;
-                            trigger_search(hwnd, s);
+                        let current_active = if s.has_prefix() {
+                            filter_type_from_prefix(&s.query)
+                        } else {
+                            s.active_filter
+                        };
+                        if current_active != ftype {
+                            if s.has_prefix() {
+                                let new_query = update_query_for_filter(&s.query, ftype);
+                                s.query = new_query;
+                                s.cursor_pos = s.query.len();
+                                s.selected = 0;
+                                s.scroll_offset = 0;
+                                s.results.clear();
+                                trigger_search(hwnd, s);
+                            } else {
+                                s.active_filter = ftype;
+                                trigger_search(hwnd, s);
+                            }
                             let _ = InvalidateRect(hwnd, None, FALSE);
                         }
                         return LRESULT(0);
@@ -7272,8 +7287,6 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             );
 
             list_y += 36;
-        } else if s.has_prefix() {
-            // Prefix search layout - no filter pills, just list_y stays as-is (offset 0)
         } else {
             // Search state layout: Filter Row
             let filters = [
@@ -7285,6 +7298,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 ("Settings", FilterType::Settings),
                 ("Commands", FilterType::Commands),
             ];
+
+            let active_filter = if s.has_prefix() {
+                filter_type_from_prefix(&s.query)
+            } else {
+                s.active_filter
+            };
 
             let mut fx = x + PAD_L - s.filter_scroll_x;
             for &(label, ftype) in filters.iter() {
@@ -7298,7 +7317,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
                 let fw = sz_lbl.cx + 16;
 
-                if ftype == s.active_filter {
+                if ftype == active_filter {
                     fill_rounded(
                         mdc,
                         fx,
@@ -7325,7 +7344,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
                 SetTextColor(
                     mdc,
-                    if ftype == s.active_filter {
+                    if ftype == active_filter {
                         s.theme.palette().clr_white
                     } else {
                         s.theme.palette().clr_gray
@@ -7349,52 +7368,54 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
             list_y += 48;
 
-            // Draw "Results" and "Best matches first" with chevron
-            SelectObject(mdc, s.font_c);
-            SetTextColor(mdc, s.theme.palette().clr_gray);
-            let mut res_w: Vec<u16> = "Results".encode_utf16().collect();
-            let mut res_rc = RECT {
-                left: x + PAD_L,
-                top: list_y + 8,
-                right: x + w / 2,
-                bottom: list_y + 24,
-            };
-            let _ = DrawTextW(
-                mdc,
-                &mut res_w,
-                &mut res_rc,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
-            );
+            if !s.has_prefix() {
+                // Draw "Results" and "Best matches first" with chevron
+                SelectObject(mdc, s.font_c);
+                SetTextColor(mdc, s.theme.palette().clr_gray);
+                let mut res_w: Vec<u16> = "Results".encode_utf16().collect();
+                let mut res_rc = RECT {
+                    left: x + PAD_L,
+                    top: list_y + 8,
+                    right: x + w / 2,
+                    bottom: list_y + 24,
+                };
+                let _ = DrawTextW(
+                    mdc,
+                    &mut res_w,
+                    &mut res_rc,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+                );
 
-            let mut bm_text: Vec<u16> = "Best matches first".encode_utf16().collect();
-            let mut sz_bm = SIZE::default();
-            let _ = GetTextExtentPoint32W(mdc, &bm_text, &mut sz_bm);
-            let bm_x = x + list_w - PAD_L - sz_bm.cx - 16;
-            let mut bm_rc = RECT {
-                left: bm_x,
-                top: list_y + 8,
-                right: bm_x + sz_bm.cx + 2,
-                bottom: list_y + 24,
-            };
-            let _ = DrawTextW(
-                mdc,
-                &mut bm_text,
-                &mut bm_rc,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
-            );
+                let mut bm_text: Vec<u16> = "Best matches first".encode_utf16().collect();
+                let mut sz_bm = SIZE::default();
+                let _ = GetTextExtentPoint32W(mdc, &bm_text, &mut sz_bm);
+                let bm_x = x + list_w - PAD_L - sz_bm.cx - 16;
+                let mut bm_rc = RECT {
+                    left: bm_x,
+                    top: list_y + 8,
+                    right: bm_x + sz_bm.cx + 2,
+                    bottom: list_y + 24,
+                };
+                let _ = DrawTextW(
+                    mdc,
+                    &mut bm_text,
+                    &mut bm_rc,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+                );
 
-            // Draw chevron next to Best matches first
-            let chev_x = bm_x + sz_bm.cx + 6;
-            let chev_y = list_y + 8 + sz_bm.cy / 2;
-            let pen = CreatePen(PS_SOLID, 1, s.theme.palette().clr_gray);
-            let old_pen = SelectObject(mdc, pen);
-            let _ = MoveToEx(mdc, chev_x, chev_y - 2, None);
-            let _ = LineTo(mdc, chev_x + 3, chev_y + 1);
-            let _ = LineTo(mdc, chev_x + 6, chev_y - 2);
-            SelectObject(mdc, old_pen);
-            let _ = DeleteObject(pen);
+                // Draw chevron next to Best matches first
+                let chev_x = bm_x + sz_bm.cx + 6;
+                let chev_y = list_y + 8 + sz_bm.cy / 2;
+                let pen = CreatePen(PS_SOLID, 1, s.theme.palette().clr_gray);
+                let old_pen = SelectObject(mdc, pen);
+                let _ = MoveToEx(mdc, chev_x, chev_y - 2, None);
+                let _ = LineTo(mdc, chev_x + 3, chev_y + 1);
+                let _ = LineTo(mdc, chev_x + 6, chev_y - 2);
+                SelectObject(mdc, old_pen);
+                let _ = DeleteObject(pen);
 
-            list_y += 32;
+                list_y += 32;
+            }
         }
 
         for i in 0..n {
@@ -8358,6 +8379,42 @@ fn default_homepage_results() -> Vec<crate::search::SearchResult> {
             },
         })
         .collect()
+}
+
+fn filter_type_from_prefix(query: &str) -> FilterType {
+    let q = query.to_lowercase();
+    if q.starts_with("file:") {
+        FilterType::Files
+    } else if q.starts_with("code:") || q.starts_with("commits:") || q.starts_with("todos:") {
+        FilterType::Code
+    } else if q.starts_with("img:") || q.starts_with("image:") || q.starts_with("screenshots:") {
+        FilterType::Images
+    } else {
+        FilterType::All
+    }
+}
+
+fn update_query_for_filter(query: &str, ftype: FilterType) -> String {
+    let prefixes = [
+        "bookmarks:", "history:", "commits:", "todos:", "clip:", "clipboard:",
+        "file:", "code:", "img:", "image:", "screenshots:", "agentchats:"
+    ];
+    let mut clean_query = query.to_string();
+    let q_lower = query.to_lowercase();
+    for p in &prefixes {
+        if q_lower.starts_with(p) {
+            clean_query = query[p.len()..].trim().to_string();
+            break;
+        }
+    }
+
+    match ftype {
+        FilterType::All => clean_query,
+        FilterType::Files => format!("file: {}", clean_query),
+        FilterType::Code => format!("code: {}", clean_query),
+        FilterType::Images => format!("img: {}", clean_query),
+        _ => clean_query,
+    }
 }
 
 fn filter_index(ftype: FilterType) -> usize {
