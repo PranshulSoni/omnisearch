@@ -81,6 +81,12 @@ fn main() {
     // Terminate any active application and gateway processes first
     kill_processes();
 
+    // Clean up startup registry key if it exists
+    let _ = Command::new("reg")
+        .args(["delete", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "opensearch-os", "/f"])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .output();
+
     // Resolve paths
     let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let appdata = std::env::var("APPDATA").unwrap_or_default();
