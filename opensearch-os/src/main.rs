@@ -8110,6 +8110,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
     // Draw footer instructions if showing clipboard
     if s.query.starts_with("clip:") || s.query.starts_with("clipboard:") {
+        let footer_y = y + h - 24;
         fill(mdc, x, footer_y, w, 24, palette.bg_footer);
         fill(mdc, x, footer_y, w, 1, s.theme.palette().clr_div);
 
@@ -8194,6 +8195,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         && !s.query.starts_with("clipboard:")
         && s.shows_guidance_footer()
     {
+        let footer_y = y + h - 28;
         fill(mdc, x, footer_y, w, 28, palette.bg_footer);
         fill(mdc, x, footer_y, w, 1, s.theme.palette().clr_div);
         let mut hint_x = x + PAD_L;
