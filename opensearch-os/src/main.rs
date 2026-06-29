@@ -6140,8 +6140,13 @@ unsafe fn trigger_icon_loading(_hwnd: HWND, s: &mut State) {
             continue;
         }
         let is_kill_action = source == "ACTION" && key.starts_with("kill:");
+        let is_settings = key.starts_with("ms-settings:")
+            || key.starts_with("control")
+            || key.contains(".cpl")
+            || key.ends_with(".msc");
         let needs_icon =
             (source == "app" || icon_file_path(source, &key).is_some() || is_kill_action)
+                && !is_settings
                 && !s.app_icons.contains_key(&key);
         if needs_icon {
             // Placeholder so we don't spawn multiple threads for same path
@@ -7695,7 +7700,13 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         .get(&res.entry.launch_command)
                         .copied()
                         .filter(|h| !h.0.is_null());
-                    let icon_to_draw = if let Some(hicon) = cached_icon {
+                    let icon_to_draw = if res.entry.launch_command.starts_with("ms-settings:")
+                        || res.entry.launch_command.starts_with("control")
+                        || res.entry.launch_command.contains(".cpl")
+                        || res.entry.launch_command.ends_with(".msc")
+                    {
+                        s.icon_settings
+                    } else if let Some(hicon) = cached_icon {
                         hicon
                     } else if res.entry.source == "WINDOW" {
                         s.app_icons
