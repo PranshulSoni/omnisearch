@@ -515,21 +515,6 @@ fn log_settings_ui(msg: &str) {
     }
 }
 
-fn get_indexer_state_from_db(conn: &rusqlite::Connection, key: &str, default: &str) -> String {
-    let _ = conn.execute(
-        "CREATE TABLE IF NOT EXISTS indexer_state (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        );",
-        [],
-    );
-    conn.query_row(
-        "SELECT value FROM indexer_state WHERE key = ?",
-        [key],
-        |row| row.get::<_, String>(0),
-    )
-    .unwrap_or_else(|_| default.to_string())
-}
 
 fn get_db_conn() -> Option<rusqlite::Connection> {
     let appdata = match std::env::var("APPDATA") {
