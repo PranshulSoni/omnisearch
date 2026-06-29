@@ -6400,9 +6400,6 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         }
     }
 
-    // muted otherwise. Click toggles dictation (hit-test in WM_LBUTTONDOWN).
-    if w >= WIN_W - 8 {
-
 
     // Draw cursor
     if s.cursor_visible && search_input_caret_active(s) {
