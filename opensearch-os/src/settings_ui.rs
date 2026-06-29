@@ -209,15 +209,17 @@ pub fn run_settings_window() {
             s.save();
             ui.set_hotkey_error(SharedString::from(""));
             ui.set_voice_hotkey_error(SharedString::from(""));
-            crate::settings_startup::set_run_on_startup(s.run_on_startup);
 
-            // Save Agent properties
-            save_ai_settings(
-                ui.get_agent_api_key().as_str(),
-                ui.get_agent_endpoint().as_str(),
-                ui.get_agent_model().as_str(),
-                ui.get_agent_always_approve(),
-            );
+            let run_on_startup = s.run_on_startup;
+            let api_key = ui.get_agent_api_key().to_string();
+            let endpoint = ui.get_agent_endpoint().to_string();
+            let model = ui.get_agent_model().to_string();
+            let always_approve = ui.get_agent_always_approve();
+
+            std::thread::spawn(move || {
+                crate::settings_startup::set_run_on_startup(run_on_startup);
+                save_ai_settings(&api_key, &endpoint, &model, always_approve);
+            });
 
             if let Some(hwnd) = find_launcher_hwnd() {
                 unsafe {
@@ -583,27 +585,31 @@ fn load_ai_settings() -> (String, String, String, bool) {
 }
 
 fn save_ai_settings(api_key: &str, endpoint: &str, model: &str, always_approve: bool) {
-    if let Some(conn) = get_db_conn() {
-        let _ = conn.execute(
-            "CREATE TABLE IF NOT EXISTS ai_settings (key TEXT PRIMARY KEY, value TEXT);",
-            [],
-        );
-        let _ = conn.execute(
-            "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('api_key', ?);",
-            [api_key],
-        );
-        let _ = conn.execute(
-            "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('endpoint', ?);",
-            [endpoint],
-        );
-        let _ = conn.execute(
-            "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('model', ?);",
-            [model],
-        );
-        let _ = conn.execute(
-            "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('always_approve', ?);",
-            [if always_approve { "1" } else { "0" }],
-        );
+    if let Some(mut conn) = get_db_conn() {
+        let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+        if let Ok(tx) = conn.transaction() {
+            let _ = tx.execute(
+                "CREATE TABLE IF NOT EXISTS ai_settings (key TEXT PRIMARY KEY, value TEXT);",
+                [],
+            );
+            let _ = tx.execute(
+                "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('api_key', ?);",
+                [api_key],
+            );
+            let _ = tx.execute(
+                "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('endpoint', ?);",
+                [endpoint],
+            );
+            let _ = tx.execute(
+                "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('model', ?);",
+                [model],
+            );
+            let _ = tx.execute(
+                "INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('always_approve', ?);",
+                [if always_approve { "1" } else { "0" }],
+            );
+            let _ = tx.commit();
+        }
     }
 }
 
