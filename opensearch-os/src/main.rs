@@ -3362,6 +3362,17 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
         let win_x = work_left + (work_w - WIN_W) / 2;
         let win_y = work_top;
 
+        voice::log(&format!(
+            "animate_window: location_mode='{}' last_x={} last_y={} resolved_x={} resolved_y={} work_w={} work_h={}",
+            s.app_settings.window_location,
+            s.app_settings.last_win_x,
+            s.app_settings.last_win_y,
+            win_x,
+            win_y,
+            work_w,
+            work_h
+        ));
+
         // Position and size the physical window to cover the entire work area vertically
         let _ = SetWindowPos(
             hwnd,

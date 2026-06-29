@@ -36,8 +36,10 @@ export component ToggleSwitch inherits Rectangle {
 
 export component SettingsWindow inherits Window {
     title: "Settings";
-    width: 800px;
-    height: 600px;
+    min-width: 800px;
+    min-height: 600px;
+    preferred-width: 800px;
+    preferred-height: 600px;
     
     // Properties to bind to Rust
     in-out property <bool> run-on-startup;
