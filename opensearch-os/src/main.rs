@@ -767,6 +767,10 @@ unsafe fn run() {
 
     let app_settings = crate::settings::AppSettings::load();
     let theme = theme_from_setting(&app_settings.theme_mode);
+    let font_q = create_gdi_font(&app_settings.query_font_family, app_settings.query_font_size as i32, &app_settings.query_font_weight);
+    let font_n = create_gdi_font(&app_settings.result_title_font_family, app_settings.result_title_font_size as i32, &app_settings.result_title_font_weight);
+    let font_c = create_gdi_font(&app_settings.result_subtitle_font_family, app_settings.result_subtitle_font_size as i32, &app_settings.result_subtitle_font_weight);
+
     let state = Box::new(State {
         app_settings,
         theme,
@@ -788,9 +792,9 @@ unsafe fn run() {
         anim: Anim::Hidden,
         cx: sw / 2,
         cy: sh / 3,
-        font_q: create_gdi_font(&app_settings.query_font_family, app_settings.query_font_size as i32, &app_settings.query_font_weight),
-        font_n: create_gdi_font(&app_settings.result_title_font_family, app_settings.result_title_font_size as i32, &app_settings.result_title_font_weight),
-        font_c: create_gdi_font(&app_settings.result_subtitle_font_family, app_settings.result_subtitle_font_size as i32, &app_settings.result_subtitle_font_weight),
+        font_q,
+        font_n,
+        font_c,
         font_b: mk_font(-13, 600),
         font_mic,
         font_code,
