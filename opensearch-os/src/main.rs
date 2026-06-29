@@ -2432,6 +2432,27 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     let _ = InvalidateRect(hwnd, None, FALSE);
                 }
                 VK_BACK => {
+                    // If the query is exactly a bare scope prefix (e.g. "clip:",
+                    // "agents:") with nothing after it, backspace exits the scope
+                    // by clearing to empty — like pressing Escape from a folder.
+                    let is_bare_scope_prefix = {
+                        let q = &s.query;
+                        q.ends_with(':') && !q.is_empty()
+                            && s.cursor_pos == q.len()
+                            && !s.text_selected
+                            && !ctrl_down
+                    };
+                    if is_bare_scope_prefix {
+                        s.query.clear();
+                        s.cursor_pos = 0;
+                        s.text_selected = false;
+                        s.selected = s.homepage_sel;
+                        s.scroll_offset = 0;
+                        s.reset_results();
+                        reset_cursor_blink(hwnd, s);
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                        return LRESULT(0);
+                    }
                     if ctrl_down {
                         if s.text_selected {
                             s.query.clear();
@@ -5316,8 +5337,12 @@ unsafe fn trigger_search(_hwnd: HWND, s: &mut State) {
         ("snippets", "snip:"),
     ];
     let q_lower = s.query.trim().to_lowercase();
+    // Skip alias resolution if the query already contains ':' — that means
+    // the user is either already in a scope or is backspacing out of one.
+    // Without this guard, 'clip:' → backspace → 'clip' would loop back.
+    let query_has_colon = s.query.contains(':');
     for (alias, prefix) in SCOPE_ALIASES {
-        if q_lower == *alias {
+        if !query_has_colon && q_lower == *alias {
             s.query = prefix.to_string();
             s.cursor_pos = s.query.len();
             s.selected = 0;
