@@ -62,7 +62,6 @@ const TIMER_VOICE_AUTOEXEC: usize = 3;
 const TIMER_VOICE_ANIM: usize = 4;
 const TIMER_AI_ANIM: usize = 5;
 const TIMER_ICON_BATCH: usize = 6;
-const TIMER_ANIM: usize = 7;  // show/hide fade animation (16ms ≈ 60fps)
 const CURSOR_BLINK_MS: u32 = 530;
 const WM_ICON_LOADED: u32 = WM_USER + 1;
 const WM_ENGINE_READY: u32 = WM_USER + 2;
@@ -1732,44 +1731,6 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     s.ai_tick = (s.ai_tick + 1) % 60;
                     let _ = InvalidateRect(hwnd, None, FALSE);
                 }
-                TIMER_ANIM => {
-                    // Advance the show/hide fade animation one tick (~60fps).
-                    let elapsed = match s.anim {
-                        Anim::Appearing { start_time, .. } | Anim::Hiding { start_time, .. } => {
-                            start_time.elapsed().as_secs_f32()
-                        }
-                        _ => {
-                            let _ = KillTimer(hwnd, TIMER_ANIM);
-                            return LRESULT(0);
-                        }
-                    };
-                    let (appearing, start_p) = match s.anim {
-                        Anim::Appearing { start_p, .. } => (true, start_p),
-                        Anim::Hiding { start_p, .. } => (false, start_p),
-                        _ => unreachable!(),
-                    };
-                    let duration = ANIM_DURATION_SEC;
-                    let p = if appearing {
-                        (start_p + elapsed / duration).min(1.0)
-                    } else {
-                        (start_p - elapsed / duration).max(0.0)
-                    };
-                    let t = ease_out(p);
-                    let alpha = (t * 255.0) as u8;
-                    let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, alpha, LWA_COLORKEY | LWA_ALPHA);
-                    let _ = InvalidateRect(hwnd, None, FALSE);
-                    let is_finished = if appearing { p >= 1.0 } else { p <= 0.0 };
-                    if is_finished {
-                        let _ = KillTimer(hwnd, TIMER_ANIM);
-                        if appearing {
-                            s.anim = Anim::Visible;
-                            force_foreground(hwnd);
-                        } else {
-                            s.anim = Anim::Hidden;
-                            let _ = ShowWindow(hwnd, SW_HIDE);
-                        }
-                    }
-                }
                 TIMER_ICON_BATCH => {
                     let _ = KillTimer(hwnd, TIMER_ICON_BATCH);
                     let _ = InvalidateRect(hwnd, None, FALSE);
@@ -3355,7 +3316,15 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
     }
     let s = &mut *sp;
 
+    // Guard against re-entrant animation calls (e.g. hotkey pressed mid-animation).
+    static mut IN_ANIMATION: bool = false;
+    if IN_ANIMATION {
+        return;
+    }
+    IN_ANIMATION = true;
+
     let start_time = std::time::Instant::now();
+    let duration = ANIM_DURATION_SEC;
     let start_p = if appearing { 0.0f32 } else { 1.0f32 };
 
     if appearing {
@@ -3483,10 +3452,77 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
         s.anim = Anim::Hiding { start_time, start_p };
     }
 
-    // Kick the 60fps animation timer — each tick advances the alpha one step.
-    // This is non-blocking: the message loop continues to run normally.
-    let _ = KillTimer(hwnd, TIMER_ANIM);
-    let _ = SetTimer(hwnd, TIMER_ANIM, 16, None); // ~60fps
+    // Animation loop: DwmFlush() syncs to the monitor vblank for butter-smooth frames.
+    // PeekMessage inside the loop keeps the system responsive — other apps' messages
+    // (keyboard, mouse, etc.) are still processed during the 115ms animation window.
+    use windows::Win32::UI::WindowsAndMessaging::{
+        PeekMessageW, TranslateMessage, DispatchMessageW, PM_REMOVE,
+    };
+    loop {
+        match s.anim {
+            Anim::Appearing { .. } if appearing => {}
+            Anim::Hiding { .. } if !appearing => {}
+            _ => break,
+        }
+
+        let elapsed = start_time.elapsed().as_secs_f32();
+        let p = if appearing {
+            (start_p + elapsed / duration).min(1.0)
+        } else {
+            (start_p - elapsed / duration).max(0.0)
+        };
+        let t = ease_out(p);
+        let alpha = (t * 255.0) as u8;
+        let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, alpha, LWA_COLORKEY | LWA_ALPHA);
+        let _ = InvalidateRect(hwnd, None, FALSE);
+        let _ = UpdateWindow(hwnd);
+
+        let is_finished = if appearing { p >= 1.0 } else { p <= 0.0 };
+        if is_finished {
+            if appearing {
+                s.anim = Anim::Visible;
+                force_foreground(hwnd);
+            } else {
+                s.anim = Anim::Hidden;
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+            break;
+        }
+
+        // Drain any queued messages (icon loads, search results, clipboard events, etc.)
+        // so the system stays responsive during the animation. Skip WM_PAINT — the
+        // UpdateWindow above already handled it synchronously for this frame.
+        let mut msg = std::mem::zeroed::<windows::Win32::UI::WindowsAndMessaging::MSG>();
+        while PeekMessageW(
+            &mut msg,
+            None,
+            0,
+            windows::Win32::UI::WindowsAndMessaging::WM_PAINT - 1,
+            PM_REMOVE,
+        )
+        .as_bool()
+        {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        // Also drain messages after WM_PAINT
+        while PeekMessageW(
+            &mut msg,
+            None,
+            windows::Win32::UI::WindowsAndMessaging::WM_PAINT + 1,
+            0,
+            PM_REMOVE,
+        )
+        .as_bool()
+        {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+
+        let _ = DwmFlush(); // Block until next vblank for frame-perfect timing
+    }
+
+    IN_ANIMATION = false;
 }
 
 // AttachThreadInput trick: allows SetForegroundWindow to succeed even from background context.
