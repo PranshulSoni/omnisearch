@@ -203,6 +203,9 @@ struct ThemePalette {
     clr_bdgbg: COLORREF,
     clr_bdgtx: COLORREF,
     clr_accent: COLORREF,
+    bg_footer: COLORREF,
+    scrollbar_track: COLORREF,
+    scrollbar_thumb: COLORREF,
 }
 
 impl Theme {
@@ -220,6 +223,9 @@ impl Theme {
                 clr_bdgbg: COLORREF(0x00_3B_3B_3B),
                 clr_bdgtx: COLORREF(0x00_FF_FF_FF),
                 clr_accent: COLORREF(0x00_E5_99_4C),
+                bg_footer: COLORREF(0x00_23_1D_19),
+                scrollbar_track: COLORREF(0x00_28_28_28),
+                scrollbar_thumb: COLORREF(0x00_4D_4D_4D),
             },
             Theme::NordDarker => ThemePalette {
                 bg: COLORREF(0x00_40_34_2E),           // 2e3440
@@ -233,6 +239,9 @@ impl Theme {
                 clr_bdgbg: COLORREF(0x00_52_42_3B),
                 clr_bdgtx: COLORREF(0x00_F0_E9_E5),
                 clr_accent: COLORREF(0x00_AB_91_83),
+                bg_footer: COLORREF(0x00_33_29_24),    // nord darker footer shade (#242933)
+                scrollbar_track: COLORREF(0x00_2D_26_22), // original Nord scrollbar track (#22262d)
+                scrollbar_thumb: COLORREF(0x00_70_62_58), // original Nord scrollbar thumb (#586270)
             },
             Theme::Light => ThemePalette {
                 bg: COLORREF(0x00_FA_FA_FA),
@@ -246,6 +255,9 @@ impl Theme {
                 clr_bdgbg: COLORREF(0x00_E5_E5_E5),
                 clr_bdgtx: COLORREF(0x00_1B_1B_1B),
                 clr_accent: COLORREF(0x00_D7_78_00),
+                bg_footer: COLORREF(0x00_F2_F2_F2),
+                scrollbar_track: COLORREF(0x00_F0_F0_F0),
+                scrollbar_thumb: COLORREF(0x00_C0_C0_C0),
             },
         }
     }
@@ -8012,8 +8024,8 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
             let sb_x = x + list_w - 10;
             let sb_w = 4;
-            fill(mdc, sb_x, track_top, sb_w, track_h, COLORREF(0x00_2D_26_22));
-            fill(mdc, sb_x, thumb_y, sb_w, thumb_h, COLORREF(0x00_70_62_58));
+            fill(mdc, sb_x, track_top, sb_w, track_h, palette.scrollbar_track);
+            fill(mdc, sb_x, thumb_y, sb_w, thumb_h, palette.scrollbar_thumb);
         }
 
         if s.image_preview_active {
@@ -8033,7 +8045,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 y + SEARCH_H + 1,
                 238,
                 h - SEARCH_H - 1,
-                COLORREF(0x00_23_1D_19),
+                palette.bg_footer,
             );
             let actions = ["Run as Administrator", "Open File Location", "Copy Path"];
             let action_h = 44;
@@ -8098,8 +8110,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
     // Draw footer instructions if showing clipboard
     if s.query.starts_with("clip:") || s.query.starts_with("clipboard:") {
-        let footer_y = y + h - 24;
-        fill(mdc, x, footer_y, w, 24, COLORREF(0x00_23_1D_19));
+        fill(mdc, x, footer_y, w, 24, palette.bg_footer);
         fill(mdc, x, footer_y, w, 1, s.theme.palette().clr_div);
 
         if s.delete_confirm {
@@ -8156,7 +8167,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     // Draw footer instructions if showing snippet/quicklink creation form
     if s.form_state != FormState::None {
         let footer_y = y + h - 24;
-        fill(mdc, x, footer_y, w, 24, COLORREF(0x00_23_1D_19));
+        fill(mdc, x, footer_y, w, 24, palette.bg_footer);
         fill(mdc, x, footer_y, w, 1, s.theme.palette().clr_div);
 
         SelectObject(mdc, s.font_c);
@@ -8183,8 +8194,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         && !s.query.starts_with("clipboard:")
         && s.shows_guidance_footer()
     {
-        let footer_y = y + h - 28;
-        fill(mdc, x, footer_y, w, 28, COLORREF(0x00_23_1D_19));
+        fill(mdc, x, footer_y, w, 28, palette.bg_footer);
         fill(mdc, x, footer_y, w, 1, s.theme.palette().clr_div);
         let mut hint_x = x + PAD_L;
         hint_x = key_hint(mdc, s, hint_x, footer_y + 6, "↑|↓", "Navigate");
@@ -8664,7 +8674,6 @@ unsafe fn draw_rounded_border_and_bg(
     bg: COLORREF,
     border: COLORREF,
 ) {
-    fill_rounded(hdc, x + 2, y + 6, w - 4, h - 2, r, COLORREF(0x00_12_0F_0D));
     fill_rounded(hdc, x, y, w, h, r, border);
     fill_rounded(hdc, x + 1, y + 1, w - 2, h - 2, r - 1, bg);
 }
