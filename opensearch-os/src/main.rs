@@ -816,22 +816,50 @@ unsafe fn run() {
     );
 
     let icon_chrome = {
-        let h = unsafe { get_app_icon("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe") };
-        if h.0.is_null() {
-            unsafe { get_app_icon("C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe") }
-        } else {
-            h
+        let mut h = HICON(std::ptr::null_mut());
+        if let Some(path) = get_registered_app_path("chrome.exe") {
+            h = unsafe { get_app_icon(&path) };
         }
+        if h.0.is_null() {
+            h = unsafe { get_app_icon("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe") };
+        }
+        if h.0.is_null() {
+            h = unsafe { get_app_icon("C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe") };
+        }
+        h
     };
-    let icon_firefox = unsafe { get_app_icon("C:\\Program Files\\Mozilla Firefox\\firefox.exe") };
-    let icon_edge = unsafe { get_app_icon("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") };
-    let icon_brave = {
-        let h = unsafe { get_app_icon("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") };
-        if h.0.is_null() {
-            unsafe { get_app_icon("C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") }
-        } else {
-            h
+    let icon_firefox = {
+        let mut h = HICON(std::ptr::null_mut());
+        if let Some(path) = get_registered_app_path("firefox.exe") {
+            h = unsafe { get_app_icon(&path) };
         }
+        if h.0.is_null() {
+            h = unsafe { get_app_icon("C:\\Program Files\\Mozilla Firefox\\firefox.exe") };
+        }
+        h
+    };
+    let icon_edge = {
+        let mut h = HICON(std::ptr::null_mut());
+        if let Some(path) = get_registered_app_path("msedge.exe") {
+            h = unsafe { get_app_icon(&path) };
+        }
+        if h.0.is_null() {
+            h = unsafe { get_app_icon("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") };
+        }
+        h
+    };
+    let icon_brave = {
+        let mut h = HICON(std::ptr::null_mut());
+        if let Some(path) = get_registered_app_path("brave.exe") {
+            h = unsafe { get_app_icon(&path) };
+        }
+        if h.0.is_null() {
+            h = unsafe { get_app_icon("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") };
+        }
+        if h.0.is_null() {
+            h = unsafe { get_app_icon("C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") };
+        }
+        h
     };
 
     let (icon_tx, icon_rx) = std::sync::mpsc::channel::<IconRequest>();
@@ -5884,6 +5912,52 @@ unsafe fn resolve_lnk(path: &str) -> Option<String> {
     } else {
         Some(trimmed)
     }
+}
+
+fn get_registered_app_path(exe_name: &str) -> Option<String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::{
+        RegOpenKeyExW, RegQueryValueExW, RegCloseKey, HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER, KEY_READ, REG_SZ
+    };
+
+    let subkey_str = format!("Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{}\0", exe_name);
+    let subkey_wide: Vec<u16> = subkey_str.encode_utf16().collect();
+
+    for root in &[HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        let mut hkey = windows::Win32::System::Registry::HKEY::default();
+        unsafe {
+            if RegOpenKeyExW(*root, PCWSTR(subkey_wide.as_ptr()), 0, KEY_READ, &mut hkey).is_ok() {
+                let mut val_type = windows::Win32::System::Registry::REG_VALUE_TYPE::default();
+                let mut buf_size = 512u32;
+                let mut buf = vec![0u16; 256];
+                if RegQueryValueExW(
+                    hkey,
+                    PCWSTR(std::ptr::null()),
+                    None,
+                    Some(&mut val_type),
+                    Some(buf.as_mut_ptr() as *mut u8),
+                    Some(&mut buf_size),
+                ).is_ok() {
+                    let _ = RegCloseKey(hkey);
+                    if val_type == REG_SZ {
+                        let len = (buf_size / 2) as usize;
+                        let mut end = len;
+                        while end > 0 && (buf[end - 1] == 0 || buf[end - 1] == 32) {
+                            end -= 1;
+                        }
+                        let path = String::from_utf16_lossy(&buf[..end]);
+                        let path_clean = path.trim_matches('"').to_string();
+                        if std::path::Path::new(&path_clean).exists() {
+                            return Some(path_clean);
+                        }
+                    }
+                } else {
+                    let _ = RegCloseKey(hkey);
+                }
+            }
+        }
+    }
+    None
 }
 
 unsafe fn get_app_icon(path: &str) -> HICON {
