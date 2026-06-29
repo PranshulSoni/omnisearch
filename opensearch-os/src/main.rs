@@ -177,6 +177,7 @@ enum FilterType {
     Files,
     Content,
     Images,
+    OCR,
     Code,
     Settings,
     Commands,
@@ -304,7 +305,7 @@ struct State {
 
     active_filter: FilterType,
     hovered_filter: Option<FilterType>,
-    filter_counts: [usize; 7],
+    filter_counts: [usize; 8],
     filter_scroll_x: i32,
     text_selected: bool,
     cursor_visible: bool,
@@ -866,7 +867,7 @@ unsafe fn run() {
         icon_new_search,
         active_filter: FilterType::All,
         hovered_filter: None,
-        filter_counts: [0; 7],
+        filter_counts: [0; 8],
         filter_scroll_x: 0,
         text_selected: false,
         cursor_visible: true,
@@ -7294,6 +7295,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 ("Files", FilterType::Files),
                 ("Content", FilterType::Content),
                 ("Images", FilterType::Images),
+                ("OCR", FilterType::OCR),
                 ("Code", FilterType::Code),
                 ("Settings", FilterType::Settings),
                 ("Commands", FilterType::Commands),
@@ -8388,7 +8390,7 @@ fn filter_type_from_prefix(query: &str) -> FilterType {
     } else if q.starts_with("code:") || q.starts_with("commits:") || q.starts_with("todos:") {
         FilterType::Code
     } else if q.starts_with("img:") || q.starts_with("image:") || q.starts_with("screenshots:") {
-        FilterType::Images
+        FilterType::OCR
     } else {
         FilterType::All
     }
@@ -8413,6 +8415,7 @@ fn update_query_for_filter(query: &str, ftype: FilterType) -> String {
         FilterType::Files => format!("file: {}", clean_query),
         FilterType::Code => format!("code: {}", clean_query),
         FilterType::Images => format!("img: {}", clean_query),
+        FilterType::OCR => format!("img: {}", clean_query),
         _ => clean_query,
     }
 }
@@ -8423,9 +8426,10 @@ fn filter_index(ftype: FilterType) -> usize {
         FilterType::Files => 1,
         FilterType::Content => 2,
         FilterType::Images => 3,
-        FilterType::Code => 4,
-        FilterType::Settings => 5,
-        FilterType::Commands => 6,
+        FilterType::OCR => 4,
+        FilterType::Code => 5,
+        FilterType::Settings => 6,
+        FilterType::Commands => 7,
     }
 }
 
@@ -8445,9 +8449,9 @@ fn result_matches_filter(r: &SearchResult, ftype: FilterType) -> bool {
                 || src == "CODE_CONTENT"
                 || src == "PDF"
                 || src == "DOCX"
-                || src == "OCR"
         }
-        FilterType::Images => src == "IMAGE" || src == "OCR" || cmd.starts_with("copy_image:"),
+        FilterType::Images => src == "IMAGE" || cmd.starts_with("copy_image:"),
+        FilterType::OCR => src == "OCR",
         FilterType::Code => {
             src == "CODE"
                 || src == "CODE_CONTENT"
@@ -8472,14 +8476,15 @@ fn result_matches_filter(r: &SearchResult, ftype: FilterType) -> bool {
     }
 }
 
-fn filter_counts_for_results(results: &[SearchResult]) -> [usize; 7] {
-    let mut counts = [0; 7];
+fn filter_counts_for_results(results: &[SearchResult]) -> [usize; 8] {
+    let mut counts = [0; 8];
     counts[0] = results.len();
     for r in results {
         for ftype in [
             FilterType::Files,
             FilterType::Content,
             FilterType::Images,
+            FilterType::OCR,
             FilterType::Code,
             FilterType::Settings,
             FilterType::Commands,
@@ -8498,6 +8503,7 @@ fn filter_pill_rects(s: &State, x_start: i32, list_y: i32) -> Vec<(FilterType, R
         ("Files", FilterType::Files),
         ("Content", FilterType::Content),
         ("Images", FilterType::Images),
+        ("OCR", FilterType::OCR),
         ("Code", FilterType::Code),
         ("Settings", FilterType::Settings),
         ("Commands", FilterType::Commands),
@@ -9869,8 +9875,9 @@ mod tests {
         assert_eq!(counts[filter_index(FilterType::Files)], 1);
         assert_eq!(counts[filter_index(FilterType::Code)], 1);
         assert_eq!(counts[filter_index(FilterType::Settings)], 1);
-        assert_eq!(counts[filter_index(FilterType::Images)], 1);
-        assert_eq!(counts[filter_index(FilterType::Content)], 1);
+        assert_eq!(counts[filter_index(FilterType::Images)], 0);
+        assert_eq!(counts[filter_index(FilterType::Content)], 0);
+        assert_eq!(counts[filter_index(FilterType::OCR)], 1);
     }
 
     #[test]
