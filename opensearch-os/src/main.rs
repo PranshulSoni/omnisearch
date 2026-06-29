@@ -818,46 +818,58 @@ unsafe fn run() {
     let icon_chrome = {
         let mut h = HICON(std::ptr::null_mut());
         if let Some(path) = get_registered_app_path("chrome.exe") {
-            h = unsafe { get_app_icon(&path) };
+            h = unsafe { get_file_icon(&path) };
+            if h.0.is_null() {
+                h = unsafe { get_app_icon(&path) };
+            }
         }
         if h.0.is_null() {
-            h = unsafe { get_app_icon("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe") };
+            h = unsafe { get_file_icon("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe") };
         }
         if h.0.is_null() {
-            h = unsafe { get_app_icon("C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe") };
+            h = unsafe { get_file_icon("C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe") };
         }
         h
     };
     let icon_firefox = {
         let mut h = HICON(std::ptr::null_mut());
         if let Some(path) = get_registered_app_path("firefox.exe") {
-            h = unsafe { get_app_icon(&path) };
+            h = unsafe { get_file_icon(&path) };
+            if h.0.is_null() {
+                h = unsafe { get_app_icon(&path) };
+            }
         }
         if h.0.is_null() {
-            h = unsafe { get_app_icon("C:\\Program Files\\Mozilla Firefox\\firefox.exe") };
+            h = unsafe { get_file_icon("C:\\Program Files\\Mozilla Firefox\\firefox.exe") };
         }
         h
     };
     let icon_edge = {
         let mut h = HICON(std::ptr::null_mut());
         if let Some(path) = get_registered_app_path("msedge.exe") {
-            h = unsafe { get_app_icon(&path) };
+            h = unsafe { get_file_icon(&path) };
+            if h.0.is_null() {
+                h = unsafe { get_app_icon(&path) };
+            }
         }
         if h.0.is_null() {
-            h = unsafe { get_app_icon("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") };
+            h = unsafe { get_file_icon("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") };
         }
         h
     };
     let icon_brave = {
         let mut h = HICON(std::ptr::null_mut());
         if let Some(path) = get_registered_app_path("brave.exe") {
-            h = unsafe { get_app_icon(&path) };
+            h = unsafe { get_file_icon(&path) };
+            if h.0.is_null() {
+                h = unsafe { get_app_icon(&path) };
+            }
         }
         if h.0.is_null() {
-            h = unsafe { get_app_icon("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") };
+            h = unsafe { get_file_icon("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") };
         }
         if h.0.is_null() {
-            h = unsafe { get_app_icon("C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") };
+            h = unsafe { get_file_icon("C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") };
         }
         h
     };
@@ -9917,6 +9929,37 @@ unsafe fn draw_cached_bmp(hdc: HDC, x: i32, y: i32, w: i32, h: i32, hbitmap: HBI
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_registered_app_paths() {
+        let chrome = get_registered_app_path("chrome.exe");
+        let firefox = get_registered_app_path("firefox.exe");
+        let edge = get_registered_app_path("msedge.exe");
+        let brave = get_registered_app_path("brave.exe");
+
+        println!("Chrome path: {:?}", chrome);
+        println!("Firefox path: {:?}", firefox);
+        println!("Edge path: {:?}", edge);
+        println!("Brave path: {:?}", brave);
+
+        unsafe {
+            if let Some(p) = &chrome {
+                let h1 = get_app_icon(p);
+                let h2 = get_file_icon(p);
+                println!("Chrome HICON: get_app_icon={:?}, get_file_icon={:?}", h1.0, h2.0);
+            }
+            if let Some(p) = &firefox {
+                let h1 = get_app_icon(p);
+                let h2 = get_file_icon(p);
+                println!("Firefox HICON: get_app_icon={:?}, get_file_icon={:?}", h1.0, h2.0);
+            }
+            if let Some(p) = &brave {
+                let h1 = get_app_icon(p);
+                let h2 = get_file_icon(p);
+                println!("Brave HICON: get_app_icon={:?}, get_file_icon={:?}", h1.0, h2.0);
+            }
+        }
+    }
 
     #[test]
     fn test_relative_time() {
