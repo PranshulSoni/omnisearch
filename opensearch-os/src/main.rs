@@ -3007,7 +3007,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             let win_w = rc_client.right - rc_client.left;
             let x_start = (win_w - WIN_W) / 2;
 
-            if !s.query.is_empty() {
+            if !s.query.is_empty() && !s.has_prefix() {
                 let list_y = by + SEARCH_H + 1;
                 let rects = filter_pill_rects(s, x_start, list_y);
                 for (ftype, r) in rects {
@@ -3113,7 +3113,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 let x_start = (win_w - WIN_W) / 2;
                 let by = s.cy - s.win_h() / 2;
 
-                if !s.query.is_empty() {
+                if !s.query.is_empty() && !s.has_prefix() {
                     let list_y = by + SEARCH_H + 1;
                     let mut new_hover = None;
                     let rects = filter_pill_rects(s, x_start, list_y);
@@ -7394,8 +7394,8 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             );
 
             list_y += 36;
-        } else {
-            // Search state layout: Filter Row
+        } else if !s.has_prefix() {
+            // Search state layout: Filter Row (hidden when inside a scope like clip:, agents:)
             let filters = [
                 ("All", FilterType::All),
                 ("Files", FilterType::Files),
@@ -7475,6 +7475,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             }
 
             list_y += 48;
+
 
             if !s.has_prefix() {
                 // Draw "Results" and "Best matches first" with chevron
