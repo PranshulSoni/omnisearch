@@ -1,12 +1,12 @@
+use once_cell::sync::Lazy;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::WalkDir;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
-use once_cell::sync::Lazy;
 
 pub static IS_INDEXING: AtomicBool = AtomicBool::new(false);
 pub static INDEXING_PROGRESS: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("Idle".to_string()));
@@ -568,7 +568,8 @@ fn run_indexer_folders_inner(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::R
 
             // Also check FTS table if it should have content
             let needs_fts_check = if should_fts && db_modified.is_some() {
-                let mut stmt_fts = conn.prepare_cached("SELECT rowid FROM files_fts WHERE path = ?")?;
+                let mut stmt_fts =
+                    conn.prepare_cached("SELECT rowid FROM files_fts WHERE path = ?")?;
                 stmt_fts.query_row([&path_str], |_| Ok(())).is_err()
             } else {
                 false
@@ -630,7 +631,10 @@ fn run_indexer_folders_inner(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::R
             processed_jobs += 1;
             if processed_jobs % 10 == 0 || processed_jobs == total_jobs {
                 if let Ok(mut g) = INDEXING_PROGRESS.lock() {
-                    *g = format!("Extracting: {}/{} files (OCR/Text)...", processed_jobs, total_jobs);
+                    *g = format!(
+                        "Extracting: {}/{} files (OCR/Text)...",
+                        processed_jobs, total_jobs
+                    );
                 }
             }
             pending_updates.push(update);
@@ -650,7 +654,11 @@ fn run_indexer_folders_inner(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::R
 pub fn get_scan_folders() -> Vec<PathBuf> {
     let app_settings = crate::settings::AppSettings::load();
     if !app_settings.scan_folders.is_empty() {
-        return app_settings.scan_folders.iter().map(PathBuf::from).collect();
+        return app_settings
+            .scan_folders
+            .iter()
+            .map(PathBuf::from)
+            .collect();
     }
     get_default_scan_folders()
 }

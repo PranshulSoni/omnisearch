@@ -43,7 +43,7 @@ const VISIBLE_RESULTS: usize = 8;
 const PAD_L: i32 = 24;
 const BADGE_W: i32 = 54;
 const BADGE_H: i32 = 18;
-const SEARCH_ICON_SIZE: i32 = 32;
+const SEARCH_ICON_SIZE: i32 = 44;
 const RESULT_ICON_SIZE: i32 = 32;
 const RESULT_TEXT_BLOCK_H: i32 = 40;
 const RESULT_TEXT_GAP: i32 = 12;
@@ -308,6 +308,12 @@ struct State {
     filter_scroll_x: i32,
     text_selected: bool,
     cursor_visible: bool,
+    // Homepage highlight to restore when returning to the homepage (Escape / cleared query),
+    // so we land back on the item the user last visited instead of a fixed default.
+    homepage_sel: usize,
+    // Rect of the search caret as last painted — lets the blink timer repaint just the caret
+    // instead of the whole window (a full blit on the layered surface flickers the cursor).
+    caret_rect: std::cell::Cell<RECT>,
     scroll_offset: usize,
     last_mouse_x: i32,
     last_mouse_y: i32,
@@ -403,7 +409,7 @@ impl State {
         if self.query.is_empty() {
             self.results = default_homepage_results();
             self.results_stale = false;
-            self.selected = 2; // "Git Commits"
+            self.selected = self.homepage_sel.min(self.results.len().saturating_sub(1));
             self.scroll_offset = 0;
         } else {
             self.results.clear();
@@ -511,15 +517,17 @@ impl State {
 }
 
 fn enforce_single_instance() -> Option<windows::Win32::Foundation::HANDLE> {
-    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, WM_COMMAND};
-    use windows::Win32::Foundation::WPARAM;
-    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::core::PCWSTR;
     use windows::Win32::Foundation::GetLastError;
     use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
-    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::WPARAM;
+    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, WM_COMMAND};
 
     unsafe {
-        let name: Vec<u16> = "Local\\OpenSearchOSInstanceMutex\0".encode_utf16().collect();
+        let name: Vec<u16> = "Local\\OpenSearchOSInstanceMutex\0"
+            .encode_utf16()
+            .collect();
         let handle = CreateMutexW(None, true, PCWSTR(name.as_ptr()));
         if let Ok(h) = handle {
             if GetLastError() == ERROR_ALREADY_EXISTS {
@@ -751,7 +759,10 @@ unsafe fn run() {
     // SHGetFileInfoW with the shell:AppsFolder path returns the actual gear logo.
     let icon_settings = {
         let settings_path = "shell:AppsFolder\\windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel";
-        let wide: Vec<u16> = settings_path.encode_utf16().chain(std::iter::once(0)).collect();
+        let wide: Vec<u16> = settings_path
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let mut shfi = windows::Win32::UI::Shell::SHFILEINFOW::default();
         let flags = windows::Win32::UI::Shell::SHGFI_ICON
             | windows::Win32::UI::Shell::SHGFI_LARGEICON
@@ -782,17 +793,36 @@ unsafe fn run() {
     let icon_clipboard = load_icon_from_dll("shell32.dll", 260, 64);
     let icon_memory = load_icon_from_dll("shell32.dll", 238, 64);
 
-    let icon_new_mic = load_png_to_hicon(include_bytes!("../../launcher_source_icons/mic.png"), 36);
-    let icon_new_search =
-        load_png_to_hicon(include_bytes!("../../launcher_source_icons/search.png"), 36);
+    // Load at exactly the draw size (from 256² sources via Lanczos) so DrawIconEx never rescales
+    // the HICON at paint time — a 36→32 GDI rescale is what made these look soft/low-res.
+    let icon_new_mic = load_png_to_hicon(
+        include_bytes!("../../launcher_source_icons/mic.png"),
+        SEARCH_ICON_SIZE as u32,
+    );
+    let icon_new_search = load_png_to_hicon(
+        include_bytes!("../../launcher_source_icons/search.png"),
+        SEARCH_ICON_SIZE as u32,
+    );
 
     let (icon_tx, icon_rx) = std::sync::mpsc::channel::<IconRequest>();
 
     let app_settings = crate::settings::AppSettings::load();
     let theme = theme_from_setting(&app_settings.theme_mode);
-    let font_q = create_gdi_font(&app_settings.query_font_family, app_settings.query_font_size as i32, &app_settings.query_font_weight);
-    let font_n = create_gdi_font(&app_settings.result_title_font_family, app_settings.result_title_font_size as i32, &app_settings.result_title_font_weight);
-    let font_c = create_gdi_font(&app_settings.result_subtitle_font_family, app_settings.result_subtitle_font_size as i32, &app_settings.result_subtitle_font_weight);
+    let font_q = create_gdi_font(
+        &app_settings.query_font_family,
+        app_settings.query_font_size as i32,
+        &app_settings.query_font_weight,
+    );
+    let font_n = create_gdi_font(
+        &app_settings.result_title_font_family,
+        app_settings.result_title_font_size as i32,
+        &app_settings.result_title_font_weight,
+    );
+    let font_c = create_gdi_font(
+        &app_settings.result_subtitle_font_family,
+        app_settings.result_subtitle_font_size as i32,
+        &app_settings.result_subtitle_font_weight,
+    );
 
     let state = Box::new(State {
         app_settings,
@@ -840,6 +870,8 @@ unsafe fn run() {
         filter_scroll_x: 0,
         text_selected: false,
         cursor_visible: true,
+        homepage_sel: 2,
+        caret_rect: std::cell::Cell::new(RECT::default()),
         scroll_offset: 0,
         last_mouse_x: -1,
         last_mouse_y: -1,
@@ -1032,8 +1064,6 @@ unsafe fn run() {
         browser_indexer::start_browser_indexer(db_path.clone());
         git_indexer::start_git_indexer(db_path.clone());
 
-
-
         let db_path_for_timeline = db_path.clone();
         let hwnd_for_timeline = SendHwnd(HWND(hwnd_usize as *mut std::ffi::c_void));
         std::thread::spawn(move || {
@@ -1118,19 +1148,18 @@ unsafe fn run() {
             settings.global_hotkey
         ));
     }
-    // Ctrl+Shift+Space starts voice dictation. (Ctrl+Alt is AltGr on many layouts and
-    // gets eaten, so it's deliberately avoided.) Non-fatal: the launcher works without it.
-    if RegisterHotKey(
-        hwnd,
-        HOTKEY_VOICE_ID,
-        MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
-        VK_SPACE.0 as u32,
-    )
-    .is_err()
-    {
-        voice::log("voice hotkey Ctrl+Shift+Space registration FAILED (already in use?)");
+    // Voice dictation hotkey (configurable in Settings; defaults to Ctrl+Shift+Space).
+    // Non-fatal: the launcher works without it.
+    if !crate::hotkey::register_hotkey(hwnd, HOTKEY_VOICE_ID, &settings.voice_hotkey) {
+        voice::log(&format!(
+            "voice hotkey {} registration FAILED (already in use?)",
+            settings.voice_hotkey
+        ));
     } else {
-        voice::log("voice hotkey Ctrl+Shift+Space registered");
+        voice::log(&format!(
+            "voice hotkey {} registered",
+            settings.voice_hotkey
+        ));
     }
 
     let mut msg = MSG::default();
@@ -1369,17 +1398,12 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
         WM_SETCURSOR => {
             unsafe {
                 use windows::Win32::Foundation::HINSTANCE;
-                use windows::Win32::UI::WindowsAndMessaging::{
-                    LoadCursorW, SetCursor, IDC_ARROW, IDC_CROSS,
-                };
-                let idc = if !sp.is_null() && (*sp).color_picker_active {
-                    IDC_CROSS
-                } else {
-                    IDC_ARROW
-                };
-                if let Ok(cursor) = LoadCursorW(HINSTANCE(std::ptr::null_mut()), idc) {
-                    SetCursor(cursor);
-                    return LRESULT(1);
+                use windows::Win32::UI::WindowsAndMessaging::{LoadCursorW, SetCursor, IDC_CROSS};
+                if !sp.is_null() && (*sp).color_picker_active {
+                    if let Ok(cursor) = LoadCursorW(HINSTANCE(std::ptr::null_mut()), IDC_CROSS) {
+                        SetCursor(cursor);
+                        return LRESULT(1);
+                    }
                 }
             }
             DefWindowProcW(hwnd, msg, wp, lp)
@@ -1604,7 +1628,8 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         s.scroll_offset = 0;
                     } else {
                         if s.query.is_empty() {
-                            s.selected = 2; // "Git Commits" by default on homepage
+                            // Restore the homepage item the user last visited (not a fixed default).
+                            s.selected = s.homepage_sel.min(s.results.len() - 1);
                         } else {
                             s.selected = s.selected.min(s.results.len() - 1);
                         }
@@ -1739,7 +1764,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     trigger_search(hwnd, s);
                 }
                 TIMER_CURSOR_BLINK => {
-                    if text_caret_active(s) {
+                    if blinking_text_caret_active(s) {
                         s.cursor_visible = !s.cursor_visible;
                         let _ = InvalidateRect(hwnd, None, FALSE);
                     } else {
@@ -1793,7 +1818,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         s.query.insert(s.cursor_pos, c);
                         s.cursor_pos += c.len_utf8();
                         reset_cursor_blink(hwnd, s);
-                        let _ = InvalidateRect(hwnd, None, FALSE);
+                        invalidate_search_input(hwnd, s);
                     }
                 }
                 return LRESULT(0);
@@ -1845,7 +1870,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     s.results.clear();
                     kick_debounce(hwnd, s);
                     reset_cursor_blink(hwnd, s);
-                    let _ = InvalidateRect(hwnd, None, FALSE);
+                    invalidate_search_input(hwnd, s);
                 }
             }
             LRESULT(0)
@@ -2087,7 +2112,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         s.query.clear();
                         s.cursor_pos = 0;
                         s.reset_results();
-                        s.selected = 2;
+                        s.selected = s.homepage_sel;
                         s.scroll_offset = 0;
                         reset_cursor_blink(hwnd, s);
                         trigger_search(hwnd, s);
@@ -2120,7 +2145,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                             s.cursor_pos = p;
                         }
                         if s.query.is_empty() {
-                            s.selected = 2;
+                            s.selected = s.homepage_sel;
                             s.reset_results();
                         } else {
                             s.selected = 0;
@@ -2128,7 +2153,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                             kick_debounce(hwnd, s);
                         }
                         reset_cursor_blink(hwnd, s);
-                        let _ = InvalidateRect(hwnd, None, FALSE);
+                        invalidate_search_input(hwnd, s);
                         return LRESULT(0);
                     }
                     VK_LEFT => {
@@ -2166,7 +2191,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                                     // Ctrl + A
                                     if !s.query.is_empty() {
                                         s.text_selected = true;
-                                        let _ = InvalidateRect(hwnd, None, FALSE);
+                                        invalidate_search_input(hwnd, s);
                                     }
                                     return LRESULT(0);
                                 }
@@ -2213,7 +2238,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         // Ctrl + A (Select All)
                         if !s.query.is_empty() {
                             s.text_selected = true;
-                            let _ = InvalidateRect(hwnd, None, FALSE);
+                            invalidate_search_input(hwnd, s);
                         }
                         return LRESULT(0);
                     }
@@ -2357,7 +2382,6 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         s.query.clear();
                         s.cursor_pos = 0;
                         s.reset_results();
-                        s.selected = 0;
                         s.scroll_offset = 0;
                         trigger_search(hwnd, s);
                         let _ = InvalidateRect(hwnd, None, FALSE);
@@ -2382,7 +2406,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         s.cursor_pos = p;
                     }
                     reset_cursor_blink(hwnd, s);
-                    let _ = InvalidateRect(hwnd, None, FALSE);
+                    invalidate_search_input(hwnd, s);
                 }
                 VK_RIGHT => {
                     if s.submenu_active {
@@ -2404,7 +2428,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         }
                     }
                     reset_cursor_blink(hwnd, s);
-                    let _ = InvalidateRect(hwnd, None, FALSE);
+                    invalidate_search_input(hwnd, s);
                 }
                 VK_BACK => {
                     if ctrl_down {
@@ -2428,15 +2452,15 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         s.cursor_pos = p;
                     }
                     if s.query.is_empty() {
-                        s.selected = 2;
+                        s.selected = s.homepage_sel;
                         s.reset_results();
                     } else {
                         s.selected = 0;
                     }
                     s.scroll_offset = 0;
-                            kick_debounce(hwnd, s);
+                    kick_debounce(hwnd, s);
                     reset_cursor_blink(hwnd, s);
-                    let _ = InvalidateRect(hwnd, None, FALSE);
+                    invalidate_search_input(hwnd, s);
                 }
                 VK_TAB => {
                     let is_clip_view =
@@ -2683,6 +2707,9 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         if s.selected >= s.scroll_offset + VISIBLE_RESULTS {
                             s.scroll_offset = s.selected - (VISIBLE_RESULTS - 1);
                         }
+                        if s.query.is_empty() {
+                            s.homepage_sel = s.selected;
+                        }
                         reset_cursor_blink(hwnd, s);
                         let _ = InvalidateRect(hwnd, None, FALSE);
                     }
@@ -2695,6 +2722,9 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         s.selected -= 1;
                         if s.selected < s.scroll_offset {
                             s.scroll_offset = s.selected;
+                        }
+                        if s.query.is_empty() {
+                            s.homepage_sel = s.selected;
                         }
                         reset_cursor_blink(hwnd, s);
                         let _ = InvalidateRect(hwnd, None, FALSE);
@@ -3217,6 +3247,21 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         do_show(hwnd, s);
                     }
                 } else if selection.0 == 2 {
+                    // Kill every other instance of this exe (settings windows are separate processes).
+                    unsafe {
+                        use std::os::windows::process::CommandExt;
+                        use windows::Win32::System::Threading::GetCurrentProcessId;
+                        if let Some(exe) = std::env::current_exe()
+                            .ok()
+                            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                        {
+                            let _ = std::process::Command::new("taskkill")
+                                .args(["/F", "/IM", &exe, "/FI",
+                                       &format!("PID ne {}", GetCurrentProcessId())])
+                                .creation_flags(0x0800_0000)
+                                .spawn();
+                        }
+                    }
                     let _ = unsafe { PostMessageW(hwnd, windows::Win32::UI::WindowsAndMessaging::WM_CLOSE, WPARAM(0), LPARAM(0)) };
                 } else if selection.0 == 3 {
                     if let Ok(exe) = std::env::current_exe() {
@@ -3257,6 +3302,13 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     ));
                 }
 
+                if !crate::hotkey::register_hotkey(hwnd, HOTKEY_VOICE_ID, &s.app_settings.voice_hotkey) {
+                    voice::log(&format!(
+                        "voice hotkey {} registration FAILED (already in use?)",
+                        s.app_settings.voice_hotkey
+                    ));
+                }
+
                 if let Ok(cfg) = ai::get_config() {
                     configure_hermes_llm(&cfg.endpoint, &cfg.model, &cfg.api_key);
                 }
@@ -3293,7 +3345,29 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     do_show(hwnd, s);
                 }
             } else if cmd == 2 {
-                // Exit App
+                // Exit App — close every instance (this launcher + any open settings windows, which
+                // run as separate `--settings` processes of the same exe), not just this one.
+                unsafe {
+                    use std::os::windows::process::CommandExt;
+                    use windows::Win32::System::Threading::GetCurrentProcessId;
+                    if let Some(exe) = std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    {
+                        // Kill the other instances; this process then exits cleanly below so its
+                        // tray icon is removed properly.
+                        let _ = std::process::Command::new("taskkill")
+                            .args([
+                                "/F",
+                                "/IM",
+                                &exe,
+                                "/FI",
+                                &format!("PID ne {}", GetCurrentProcessId()),
+                            ])
+                            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                            .spawn();
+                    }
+                }
                 let _ = unsafe { PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)) };
             }
             LRESULT(0)
@@ -3358,7 +3432,6 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
             s.query.clear();
             s.cursor_pos = 0;
             s.reset_results();
-            s.selected = 0;
             s.scroll_offset = 0;
             s.ai_pending = false;
             s.ai_answer = None;
@@ -3381,7 +3454,10 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
         let hmonitor = match s.app_settings.window_location.as_str() {
             "Remember Last Position" => {
                 if s.app_settings.last_win_x != 0 || s.app_settings.last_win_y != 0 {
-                    let last_pt = POINT { x: s.app_settings.last_win_x, y: s.app_settings.last_win_y };
+                    let last_pt = POINT {
+                        x: s.app_settings.last_win_x,
+                        y: s.app_settings.last_win_y,
+                    };
                     MonitorFromPoint(last_pt, MONITOR_DEFAULTTONEAREST)
                 } else {
                     MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
@@ -3391,18 +3467,18 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
                 let fore = GetForegroundWindow();
                 if !fore.0.is_null() {
                     use windows::Win32::Graphics::Gdi::MonitorFromWindow;
-                    MonitorFromWindow(fore, windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST)
+                    MonitorFromWindow(
+                        fore,
+                        windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST,
+                    )
                 } else {
                     MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
                 }
             }
-            "Primary Monitor" => {
-                MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY)
-            }
-            "Custom Monitor" => {
-                get_custom_monitor()
-            }
-            _ => { // "Monitor with Mouse Cursor" (default)
+            "Primary Monitor" => MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY),
+            "Custom Monitor" => get_custom_monitor(),
+            _ => {
+                // "Monitor with Mouse Cursor" (default)
                 MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
             }
         };
@@ -3467,20 +3543,26 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
         s.last_mouse_x = pt.x;
         s.last_mouse_y = pt.y;
 
-        s.anim = Anim::Appearing { start_time, start_p };
+        s.anim = Anim::Appearing {
+            start_time,
+            start_p,
+        };
         let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, 0, LWA_COLORKEY | LWA_ALPHA);
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         force_foreground(hwnd);
     } else {
         let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
-        s.anim = Anim::Hiding { start_time, start_p };
+        s.anim = Anim::Hiding {
+            start_time,
+            start_p,
+        };
     }
 
     // Animation loop: DwmFlush() syncs to the monitor vblank for butter-smooth frames.
     // PeekMessage inside the loop keeps the system responsive — other apps' messages
     // (keyboard, mouse, etc.) are still processed during the 115ms animation window.
     use windows::Win32::UI::WindowsAndMessaging::{
-        PeekMessageW, TranslateMessage, DispatchMessageW, PM_REMOVE,
+        DispatchMessageW, PeekMessageW, TranslateMessage, PM_REMOVE,
     };
     loop {
         match s.anim {
@@ -3568,18 +3650,40 @@ unsafe fn force_foreground(hwnd: HWND) {
 }
 
 unsafe fn reset_cursor_blink(hwnd: HWND, s: &mut State) {
-    s.cursor_visible = true;
     let _ = KillTimer(hwnd, TIMER_CURSOR_BLINK);
-    let _ = SetTimer(hwnd, TIMER_CURSOR_BLINK, CURSOR_BLINK_MS, None);
+    if blinking_text_caret_active(s) {
+        s.cursor_visible = true;
+        let _ = SetTimer(hwnd, TIMER_CURSOR_BLINK, CURSOR_BLINK_MS, None);
+    } else if text_caret_active(s) {
+        // ponytail: all custom text carets are steady. Timer-driven blink repaints a layered
+        // window and can make the real Windows cursor flicker over the launcher surface.
+        s.cursor_visible = true;
+    } else {
+        s.cursor_visible = false;
+    }
+}
+
+unsafe fn invalidate_search_input(hwnd: HWND, s: &State) {
+    let mut rc_client = RECT::default();
+    let _ = GetClientRect(hwnd, &mut rc_client);
+    let x = ((rc_client.right - rc_client.left) - WIN_W) / 2;
+    let y = s.cy - s.win_h() / 2;
+    let rect = RECT {
+        left: x,
+        top: y,
+        right: x + WIN_W,
+        bottom: y + s.search_h() + 1,
+    };
+    let _ = InvalidateRect(hwnd, Some(&rect), FALSE);
 }
 
 unsafe fn do_show(hwnd: HWND, s: &mut State) {
     reset_cursor_blink(hwnd, s);
     if s.app_settings.show_taskbar && !s.taskbar_shown_by_app {
-        use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW};
-        use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
-        use windows::Win32::Foundation::{WPARAM, LPARAM};
         use windows::core::PCWSTR;
+        use windows::Win32::Foundation::{LPARAM, WPARAM};
+        use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW};
         let class_name: Vec<u16> = "Shell_TrayWnd\0".encode_utf16().collect();
         if let Ok(h) = FindWindowW(PCWSTR(class_name.as_ptr()), None) {
             if !h.0.is_null() {
@@ -3690,7 +3794,6 @@ unsafe fn reset_visible_chat_view(hwnd: HWND, s: &mut State) {
     s.chat_cursor_pos = 0;
     s.chat_input_active = false;
     s.reset_results();
-    s.selected = 0;
     s.scroll_offset = 0;
     s.text_selected = false;
 }
@@ -3800,12 +3903,15 @@ unsafe fn do_hide(hwnd: HWND, s: &mut State) {
     s.voice_exec_deadline = None;
     s.form_state = FormState::None;
     s.image_preview_active = false;
+    s.cursor_visible = false;
+    s.search_input_active = false;
+    s.chat_input_active = false;
     hide_preview_window(s);
 
     if s.taskbar_shown_by_app {
-        use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW};
-        use windows::Win32::Foundation::{WPARAM, LPARAM};
         use windows::core::PCWSTR;
+        use windows::Win32::Foundation::{LPARAM, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW};
         let class_name: Vec<u16> = "Shell_TrayWnd\0".encode_utf16().collect();
         if let Ok(h) = FindWindowW(PCWSTR(class_name.as_ptr()), None) {
             if !h.0.is_null() {
@@ -5147,7 +5253,8 @@ unsafe fn trigger_search(_hwnd: HWND, s: &mut State) {
         s.current_query_id += 1;
         s.results_stale = false;
         s.results = default_homepage_results();
-        s.selected = 2; // select Git Commits on homepage
+        // Land on the homepage item the user last visited, not a fixed default.
+        s.selected = s.homepage_sel.min(s.results.len().saturating_sub(1));
         s.scroll_offset = 0;
         let _ = InvalidateRect(_hwnd, None, FALSE);
         return;
@@ -5777,19 +5884,36 @@ fn floor_char_boundary(s: &str, index: usize) -> usize {
 }
 
 fn search_input_caret_active(s: &State) -> bool {
-    search_input_caret_active_flags(s.search_input_active, s.note_editing, s.chat_input_active)
+    search_input_caret_active_flags(
+        s.search_input_active,
+        s.note_editing,
+        s.chat_input_active,
+        !s.query.is_empty()
+            || !s.app_settings.show_placeholder
+            || !matches!(s.form_state, FormState::None),
+    )
 }
 
 fn search_input_caret_active_flags(
     search_input_active: bool,
     note_editing: bool,
     chat_input_active: bool,
+    has_visible_input: bool,
 ) -> bool {
-    search_input_active && !note_editing && !chat_input_active
+    search_input_active && !note_editing && !chat_input_active && has_visible_input
 }
 
 fn text_caret_active(s: &State) -> bool {
     s.note_editing || s.chat_input_active || search_input_caret_active(s)
+}
+
+fn blinking_text_caret_active(s: &State) -> bool {
+    blinking_text_caret_active_flags(s.note_editing, s.chat_input_active)
+}
+
+fn blinking_text_caret_active_flags(note_editing: bool, chat_input_active: bool) -> bool {
+    let _ = (note_editing, chat_input_active);
+    false
 }
 
 fn delete_word_before(s: &mut State) {
@@ -6341,7 +6465,9 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
         );
         SetTextColor(mdc, palette.clr_white);
-    } else if s.query.is_empty() && (s.app_settings.show_placeholder || !matches!(s.form_state, FormState::None)) {
+    } else if s.query.is_empty()
+        && (s.app_settings.show_placeholder || !matches!(s.form_state, FormState::None))
+    {
         let ph_str = match &s.form_state {
             FormState::CreateSnippetName => "Create Snippet: Enter Name...",
             FormState::CreateSnippetContent { .. } => "Create Snippet: Enter Content...",
@@ -6467,6 +6593,13 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             text_h,
             s.theme.palette().clr_white,
         );
+        // Remember where the caret is so the blink timer can repaint just this sliver.
+        s.caret_rect.set(RECT {
+            left: cursor_x - 1,
+            top: cursor_top - 1,
+            right: cursor_x + 3,
+            bottom: cursor_top + text_h + 1,
+        });
     }
     // ── Note editor panel (self-rendered) ──────────────────────────────────
     if s.note_editing {
@@ -7336,7 +7469,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 };
 
                 if !icon_to_draw.0.is_null() {
-                    let icon_y = centered_in_result_row(ry, RESULT_ICON_SIZE, s.app_settings.item_height as i32);
+                    let icon_y = centered_in_result_row(
+                        ry,
+                        RESULT_ICON_SIZE,
+                        s.app_settings.item_height as i32,
+                    );
                     let _ = unsafe {
                         DrawIconEx(
                             mdc,
@@ -7353,7 +7490,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 }
 
                 let tx = x + PAD_L + RESULT_ICON_SIZE + RESULT_TEXT_GAP;
-                let text_top = centered_in_result_row(ry, RESULT_TEXT_BLOCK_H, s.app_settings.item_height as i32);
+                let text_top = centered_in_result_row(
+                    ry,
+                    RESULT_TEXT_BLOCK_H,
+                    s.app_settings.item_height as i32,
+                );
                 SelectObject(mdc, s.font_n);
                 SetTextColor(mdc, palette.clr_white);
                 let display_name = res.entry.control_name.clone();
@@ -7517,7 +7658,8 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     );
                 }
 
-                let icon_y = centered_in_result_row(ry, RESULT_ICON_SIZE, s.app_settings.item_height as i32);
+                let icon_y =
+                    centered_in_result_row(ry, RESULT_ICON_SIZE, s.app_settings.item_height as i32);
                 let mut drew_thumbnail = false;
                 if let Some(path) = image_path_for_result(res) {
                     let mut cache = s.clipboard_thumbnails.borrow_mut();
@@ -7649,7 +7791,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 }
 
                 let tx = x + PAD_L + RESULT_ICON_SIZE + RESULT_TEXT_GAP;
-                let text_top = centered_in_result_row(ry, RESULT_TEXT_BLOCK_H, s.app_settings.item_height as i32);
+                let text_top = centered_in_result_row(
+                    ry,
+                    RESULT_TEXT_BLOCK_H,
+                    s.app_settings.item_height as i32,
+                );
                 SelectObject(mdc, s.font_n);
                 SetTextColor(mdc, palette.clr_white);
                 let display_name = if selected_clip_ids_contain(&s.selected_clip_ids, &res.entry.id)
@@ -7772,7 +7918,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         })
                     });
                     if let Some(hbitmap) = hbitmap {
-                        let icon_y = centered_in_result_row(ry, RESULT_ICON_SIZE, s.app_settings.item_height as i32);
+                        let icon_y = centered_in_result_row(
+                            ry,
+                            RESULT_ICON_SIZE,
+                            s.app_settings.item_height as i32,
+                        );
                         draw_cached_bmp(
                             mdc,
                             x + PAD_L,
@@ -7808,7 +7958,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         });
 
                 if !drew_thumbnail && !icon_to_draw.0.is_null() {
-                    let icon_y = centered_in_result_row(ry, RESULT_ICON_SIZE, s.app_settings.item_height as i32);
+                    let icon_y = centered_in_result_row(
+                        ry,
+                        RESULT_ICON_SIZE,
+                        s.app_settings.item_height as i32,
+                    );
                     let _ = unsafe {
                         DrawIconEx(
                             mdc,
@@ -7825,7 +7979,11 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 }
 
                 let tx = x + PAD_L + RESULT_ICON_SIZE + RESULT_TEXT_GAP;
-                let text_top = centered_in_result_row(ry, RESULT_TEXT_BLOCK_H, s.app_settings.item_height as i32);
+                let text_top = centered_in_result_row(
+                    ry,
+                    RESULT_TEXT_BLOCK_H,
+                    s.app_settings.item_height as i32,
+                );
                 SelectObject(mdc, s.font_n);
                 SetTextColor(mdc, palette.clr_white);
                 let display_name = res.entry.control_name.clone();
@@ -8144,7 +8302,14 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     let _ = SelectClipRgn(mdc, HRGN(null_mut()));
     let _ = DeleteObject(clip_rgn);
 
-    let _ = BitBlt(hdc, 0, 0, win_w, win_h, mdc, 0, 0, SRCCOPY);
+    // Blit only the invalidated region. Full-window invalidations (results, hover, animation)
+    // still copy everything; a caret-blink invalidation copies just the caret sliver, so the
+    // layered-window blit no longer hides/shows the hardware cursor on every blink.
+    let bx = ps.rcPaint.left;
+    let by = ps.rcPaint.top;
+    let bw = (ps.rcPaint.right - ps.rcPaint.left).max(0);
+    let bh = (ps.rcPaint.bottom - ps.rcPaint.top).max(0);
+    let _ = BitBlt(hdc, bx, by, bw, bh, mdc, bx, by, SRCCOPY);
     let _ = SelectObject(mdc, old);
     let _ = DeleteObject(bmp);
     let _ = DeleteDC(mdc);
@@ -9570,7 +9735,6 @@ fn log_timeline_event(
     );
 }
 
-
 unsafe fn load_shell_thumbnail(path: &str, size: i32) -> Option<HBITMAP> {
     let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
     let item: windows::Win32::UI::Shell::IShellItem =
@@ -9919,10 +10083,19 @@ mod tests {
 
     #[test]
     fn search_cursor_only_belongs_to_search_input() {
-        assert!(search_input_caret_active_flags(true, false, false));
-        assert!(!search_input_caret_active_flags(false, false, false));
-        assert!(!search_input_caret_active_flags(true, true, false));
-        assert!(!search_input_caret_active_flags(true, false, true));
+        assert!(search_input_caret_active_flags(true, false, false, true));
+        assert!(!search_input_caret_active_flags(false, false, false, true));
+        assert!(!search_input_caret_active_flags(true, true, false, true));
+        assert!(!search_input_caret_active_flags(true, false, true, true));
+        assert!(!search_input_caret_active_flags(true, false, false, false));
+    }
+
+    #[test]
+    fn custom_text_carets_do_not_use_blink_timer() {
+        assert!(search_input_caret_active_flags(true, false, false, true));
+        assert!(!blinking_text_caret_active_flags(false, false));
+        assert!(!blinking_text_caret_active_flags(true, false));
+        assert!(!blinking_text_caret_active_flags(false, true));
     }
 }
 

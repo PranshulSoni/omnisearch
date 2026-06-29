@@ -16,6 +16,9 @@ pub struct AppSettings {
     #[serde(default = "default_global_hotkey")]
     pub global_hotkey: String,
 
+    #[serde(default = "default_voice_hotkey")]
+    pub voice_hotkey: String,
+
     #[serde(default = "default_window_width")]
     pub window_width: u32,
 
@@ -78,6 +81,7 @@ impl Default for AppSettings {
             hide_on_lose_focus: default_true(),
             theme_mode: default_theme(),
             global_hotkey: default_global_hotkey(),
+            voice_hotkey: default_voice_hotkey(),
             window_width: default_window_width(),
             item_height: default_item_height(),
             show_taskbar: default_false(),
@@ -119,6 +123,9 @@ fn default_theme() -> String {
 fn default_global_hotkey() -> String {
     "Alt+Space".to_string()
 }
+fn default_voice_hotkey() -> String {
+    "Ctrl+Shift+Space".to_string()
+}
 fn default_window_width() -> u32 {
     720
 }
@@ -158,7 +165,6 @@ fn default_result_subtitle_font_weight() -> String {
 fn default_result_subtitle_font_size() -> u32 {
     13
 }
-
 
 impl AppSettings {
     pub fn get_settings_path() -> PathBuf {

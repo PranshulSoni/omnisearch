@@ -73,10 +73,25 @@ export component SettingsWindow inherits Window {
     
     // Callbacks to Rust
     callback save-settings();
-    callback format-hotkey(string, bool, bool, bool, bool) -> string;
-    callback validate-hotkey(string) -> string;
-    callback set-hotkey-recording(bool);
-    callback process-captured-hotkey(string);
+    // Re-assemble + validate the hotkey from the four dropdown slots, then apply/save it.
+    callback apply-hotkey();
+    // Same, for the voice dictation hotkey (must differ from the launcher hotkey).
+    callback apply-voice-hotkey();
+
+    // Hotkey dropdown models + selected values (built in Rust). Models are shared by both
+    // the launcher and voice dropdowns; only the selected values differ.
+    in-out property <[string]> slot1-model;
+    in-out property <[string]> slot2-model;
+    in-out property <[string]> slot34-model;
+    in-out property <string> slot1-val;
+    in-out property <string> slot2-val;
+    in-out property <string> slot3-val: "—";
+    in-out property <string> slot4-val: "—";
+    in-out property <string> vslot1-val;
+    in-out property <string> vslot2-val;
+    in-out property <string> vslot3-val: "—";
+    in-out property <string> vslot4-val: "—";
+    in-out property <string> voice-hotkey-error;
     
     // Agent settings properties
     in-out property <string> agent-api-key;
@@ -99,8 +114,6 @@ export component SettingsWindow inherits Window {
 
     
     property <int> current-page: 0;
-    in-out property <bool> recording-hotkey: false;
-    in-out property <string> previous-hotkey: "";
     property <bool> show-api-key: false;
 
     
@@ -151,9 +164,10 @@ export component SettingsWindow inherits Window {
                             border-radius: 10px;
                             background: root.accent;
                             Text {
-                                text: "⌖";
+                                text: "\u{e734}";
+                                font-family: "Segoe MDL2 Assets";
                                 color: #ffffff;
-                                font-size: 20px;
+                                font-size: 18px;
                                 font-weight: 700;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -198,17 +212,19 @@ export component SettingsWindow inherits Window {
                     Rectangle {
                         x: 0px;
                         y: 8px;
-                        width: 3px;
+                        width: root.current-page == 0 ? 3px : 0px;
                         height: parent.height - 16px;
                         border-radius: 2px;
-                        background: root.current-page == 0 ? root.accent : transparent;
+                        background: root.accent;
+                        animate width { duration: 160ms; easing: ease-in-out; }
                     }
                     HorizontalBox {
                         padding-left: 16px;
                         spacing: 10px;
                         Text {
-                            text: "⚙";
-                            font-size: 15px;
+                            text: "\u{e713}";
+                            font-family: "Segoe MDL2 Assets";
+                            font-size: 16px;
                             color: root.current-page == 0 ? root.text-primary : root.text-muted;
                             vertical-alignment: center;
                             width: 18px;
@@ -237,17 +253,19 @@ export component SettingsWindow inherits Window {
                     Rectangle {
                         x: 0px;
                         y: 8px;
-                        width: 3px;
+                        width: root.current-page == 1 ? 3px : 0px;
                         height: parent.height - 16px;
                         border-radius: 2px;
-                        background: root.current-page == 1 ? root.accent : transparent;
+                        background: root.accent;
+                        animate width { duration: 160ms; easing: ease-in-out; }
                     }
                     HorizontalBox {
                         padding-left: 16px;
                         spacing: 10px;
                         Text {
-                            text: "◑";
-                            font-size: 15px;
+                            text: "\u{e771}";
+                            font-family: "Segoe MDL2 Assets";
+                            font-size: 16px;
                             color: root.current-page == 1 ? root.text-primary : root.text-muted;
                             vertical-alignment: center;
                             width: 18px;
@@ -276,17 +294,19 @@ export component SettingsWindow inherits Window {
                     Rectangle {
                         x: 0px;
                         y: 8px;
-                        width: 3px;
+                        width: root.current-page == 2 ? 3px : 0px;
                         height: parent.height - 16px;
                         border-radius: 2px;
-                        background: root.current-page == 2 ? root.accent : transparent;
+                        background: root.accent;
+                        animate width { duration: 160ms; easing: ease-in-out; }
                     }
                     HorizontalBox {
                         padding-left: 16px;
                         spacing: 10px;
                         Text {
-                            text: "⌨";
-                            font-size: 15px;
+                            text: "\u{e765}";
+                            font-family: "Segoe MDL2 Assets";
+                            font-size: 16px;
                             color: root.current-page == 2 ? root.text-primary : root.text-muted;
                             vertical-alignment: center;
                             width: 18px;
@@ -315,17 +335,19 @@ export component SettingsWindow inherits Window {
                     Rectangle {
                         x: 0px;
                         y: 8px;
-                        width: 3px;
+                        width: root.current-page == 3 ? 3px : 0px;
                         height: parent.height - 16px;
                         border-radius: 2px;
-                        background: root.current-page == 3 ? root.accent : transparent;
+                        background: root.accent;
+                        animate width { duration: 160ms; easing: ease-in-out; }
                     }
                     HorizontalBox {
                         padding-left: 16px;
                         spacing: 10px;
                         Text {
-                            text: "🤖";
-                            font-size: 15px;
+                            text: "\u{e950}";
+                            font-family: "Segoe MDL2 Assets";
+                            font-size: 16px;
                             color: root.current-page == 3 ? root.text-primary : root.text-muted;
                             vertical-alignment: center;
                             width: 18px;
@@ -354,17 +376,19 @@ export component SettingsWindow inherits Window {
                     Rectangle {
                         x: 0px;
                         y: 8px;
-                        width: 3px;
+                        width: root.current-page == 4 ? 3px : 0px;
                         height: parent.height - 16px;
                         border-radius: 2px;
-                        background: root.current-page == 4 ? root.accent : transparent;
+                        background: root.accent;
+                        animate width { duration: 160ms; easing: ease-in-out; }
                     }
                     HorizontalBox {
                         padding-left: 16px;
                         spacing: 10px;
                         Text {
-                            text: "🗄";
-                            font-size: 15px;
+                            text: "\u{e8ce}";
+                            font-family: "Segoe MDL2 Assets";
+                            font-size: 16px;
                             color: root.current-page == 4 ? root.text-primary : root.text-muted;
                             vertical-alignment: center;
                             width: 18px;
@@ -397,17 +421,19 @@ export component SettingsWindow inherits Window {
                     Rectangle {
                         x: 0px;
                         y: 8px;
-                        width: 3px;
+                        width: root.current-page == 5 ? 3px : 0px;
                         height: parent.height - 16px;
                         border-radius: 2px;
-                        background: root.current-page == 5 ? root.accent : transparent;
+                        background: root.accent;
+                        animate width { duration: 160ms; easing: ease-in-out; }
                     }
                     HorizontalBox {
                         padding-left: 16px;
                         spacing: 10px;
                         Text {
-                            text: "ℹ";
-                            font-size: 15px;
+                            text: "\u{e946}";
+                            font-family: "Segoe MDL2 Assets";
+                            font-size: 16px;
                             color: root.current-page == 5 ? root.text-primary : root.text-muted;
                             vertical-alignment: center;
                             width: 18px;
@@ -453,14 +479,9 @@ export component SettingsWindow inherits Window {
                             spacing: 4px;
                             Text {
                                 text: "General";
-                                font-size: 22px;
+                                font-size: 30px;
                                 font-weight: 700;
                                 color: root.text-primary;
-                            }
-                            Text {
-                                text: "Launcher behavior and startup preferences";
-                                font-size: 13px;
-                                color: root.text-muted;
                             }
                         }
 
@@ -598,6 +619,7 @@ export component SettingsWindow inherits Window {
                                         alignment: center;
                                         ComboBox {
                                             width: 220px;
+                                            height: 40px;
                                             model: [
                                                 "Remember Last Position",
                                                 "Monitor with Mouse Cursor",
@@ -624,7 +646,7 @@ export component SettingsWindow inherits Window {
                         alignment: start;
                         spacing: 16px;
                         
-                        Text { text: "Appearance"; font-size: 26px; font-weight: 600; color: root.text-primary; }
+                        Text { text: "Appearance"; font-size: 30px; font-weight: 700; color: root.text-primary; }
                         
                         // Preview & Edits Container (At the Top!)
                         HorizontalBox {
@@ -684,10 +706,12 @@ export component SettingsWindow inherits Window {
                                                 padding-right: 16px;
                                                 spacing: 12px;
                                                 
-                                                // Search Icon (using highly compatible magnifying glass)
+                                                // Search Icon
                                                 Text {
-                                                    text: "🔍";
-                                                    font-size: 14px;
+                                                    text: "\u{e721}";
+                                                    font-family: "Segoe MDL2 Assets";
+                                                    font-size: 22px;
+                                                    color: root.theme-mode == "Light" ? #343434 : #d8d8d8;
                                                     vertical-alignment: center;
                                                 }
 
@@ -710,10 +734,12 @@ export component SettingsWindow inherits Window {
 
                                                 Rectangle { } // Spacer
                                                 
-                                                // Microphone Icon (using highly compatible emoji)
+                                                // Microphone Icon
                                                 Text {
-                                                    text: "🎤";
-                                                    font-size: 14px;
+                                                    text: "\u{e720}";
+                                                    font-family: "Segoe MDL2 Assets";
+                                                    font-size: 22px;
+                                                    color: root.theme-mode == "Light" ? #343434 : #d8d8d8;
                                                     vertical-alignment: center;
                                                 }
                                             }
@@ -966,6 +992,7 @@ export component SettingsWindow inherits Window {
                                             Text { text: "Query Font Family"; color: root.text-secondary; font-size: 12px; }
                                             ComboBox {
                                                 width: 100%;
+                                                height: 38px;
                                                 model: ["Segoe UI Variable", "Arial", "Consolas", "Outfit"];
                                                 current-value: root.query-font-family;
                                                 selected(val) => {
@@ -976,6 +1003,7 @@ export component SettingsWindow inherits Window {
                                             Text { text: "Query Font Weight"; color: root.text-secondary; font-size: 12px; }
                                             ComboBox {
                                                 width: 100%;
+                                                height: 38px;
                                                 model: ["Regular", "Semi-Bold", "Bold"];
                                                 current-value: root.query-font-weight;
                                                 selected(val) => {
@@ -1026,6 +1054,7 @@ export component SettingsWindow inherits Window {
                                             Text { text: "Result Title Font Family"; color: root.text-secondary; font-size: 12px; }
                                             ComboBox {
                                                 width: 100%;
+                                                height: 38px;
                                                 model: ["Segoe UI Variable", "Arial", "Consolas", "Outfit"];
                                                 current-value: root.result-title-font-family;
                                                 selected(val) => {
@@ -1036,6 +1065,7 @@ export component SettingsWindow inherits Window {
                                             Text { text: "Result Title Font Weight"; color: root.text-secondary; font-size: 12px; }
                                             ComboBox {
                                                 width: 100%;
+                                                height: 38px;
                                                 model: ["Regular", "Semi-Bold", "Bold"];
                                                 current-value: root.result-title-font-weight;
                                                 selected(val) => {
@@ -1066,6 +1096,7 @@ export component SettingsWindow inherits Window {
                                             Text { text: "Result Subtitle Font Family"; color: root.text-secondary; font-size: 12px; }
                                             ComboBox {
                                                 width: 100%;
+                                                height: 38px;
                                                 model: ["Segoe UI Variable", "Arial", "Consolas", "Outfit"];
                                                 current-value: root.result-subtitle-font-family;
                                                 selected(val) => {
@@ -1076,6 +1107,7 @@ export component SettingsWindow inherits Window {
                                             Text { text: "Result Subtitle Font Weight"; color: root.text-secondary; font-size: 12px; }
                                             ComboBox {
                                                 width: 100%;
+                                                height: 38px;
                                                 model: ["Regular", "Semi-Bold", "Bold"];
                                                 current-value: root.result-subtitle-font-weight;
                                                 selected(val) => {
@@ -1211,62 +1243,82 @@ export component SettingsWindow inherits Window {
                         // Header
                         VerticalBox {
                             spacing: 4px;
-                            Text { text: "Hotkeys"; font-size: 26px; font-weight: 700; color: root.text-primary; }
-                            Text { text: "Keyboard shortcuts used by the launcher"; font-size: 13px; color: root.text-muted; }
+                            Text { text: "Hotkeys"; font-size: 30px; font-weight: 700; color: root.text-primary; }
                         }
 
-                        // Open launcher row card
+                        // Open launcher hotkey card — four dropdowns (slots 1 & 2 required)
                         Rectangle {
                             background: root.card-bg;
                             border-radius: 8px;
                             border-color: root.border-color;
                             border-width: 1px;
-                            height: 64px;
-                            
-                            ta-launcher-row := TouchArea {
-                                clicked => {
-                                    root.hotkey-error = "";
-                                    root.previous-hotkey = root.global-hotkey;
-                                    root.recording-hotkey = true;
-                                    root.set-hotkey-recording(true);
-                                }
-                            }
-                            
-                            HorizontalBox {
-                                padding-left: 20px;
-                                padding-right: 20px;
-                                spacing: 16px;
 
-                                VerticalBox {
-                                    alignment: center;
-                                    spacing: 2px;
-                                    Text { text: "Open launcher"; color: root.text-primary; font-size: 14px; font-weight: 600; }
-                                    Text { text: "Toggles the search window"; color: root.text-muted; font-size: 12px; }
-                                }
-                                
-                                Rectangle { horizontal-stretch: 1; }
-                                
-                                VerticalBox {
-                                    alignment: center;
+                            VerticalLayout {
+                                padding: 20px;
+                                spacing: 14px;
+
+                                HorizontalBox {
+                                    spacing: 16px;
+                                    padding: 0;
+
+                                    VerticalBox {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text { text: "Open launcher"; color: root.text-primary; font-size: 14px; font-weight: 600; }
+                                        Text { text: "Toggles the search window"; color: root.text-muted; font-size: 12px; }
+                                    }
+
+                                    Rectangle { horizontal-stretch: 1; }
+
                                     Rectangle {
-                                        width: 180px;
                                         height: 34px;
+                                        min-width: 150px;
                                         border-radius: 6px;
-                                        border-width: root.recording-hotkey ? 2px : 1px;
-                                        border-color: root.recording-hotkey ? #3b82f6 : root.border-color;
-                                        background: root.recording-hotkey ? #13243d : root.bg-color;
-                                        
-                                        animate border-color { duration: 120ms; }
-                                        animate background { duration: 120ms; }
-
+                                        border-width: 1px;
+                                        border-color: root.border-color;
+                                        background: root.bg-color;
                                         Text {
-                                            text: root.recording-hotkey ? "Press shortcut…" : root.global-hotkey;
-                                            color: root.recording-hotkey ? #93c5fd : root.text-primary;
-                                            font-size: 13px;
-                                            font-weight: 600;
+                                            text: root.global-hotkey;
+                                            color: root.text-primary;
+                                            font-size: 14px;
+                                            font-weight: 700;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
                                         }
+                                    }
+                                }
+
+                                HorizontalBox {
+                                    spacing: 10px;
+                                    padding: 0;
+
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        height: 40px;
+                                        model: root.slot1-model;
+                                        current-value <=> root.slot1-val;
+                                        selected => { root.apply-hotkey(); }
+                                    }
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        height: 40px;
+                                        model: root.slot2-model;
+                                        current-value <=> root.slot2-val;
+                                        selected => { root.apply-hotkey(); }
+                                    }
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        height: 40px;
+                                        model: root.slot34-model;
+                                        current-value <=> root.slot3-val;
+                                        selected => { root.apply-hotkey(); }
+                                    }
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        height: 40px;
+                                        model: root.slot34-model;
+                                        current-value <=> root.slot4-val;
+                                        selected => { root.apply-hotkey(); }
                                     }
                                 }
                             }
@@ -1274,47 +1326,98 @@ export component SettingsWindow inherits Window {
 
                         Rectangle { height: 6px; }
 
-                        // Voice dictation row card
+                        // Voice dictation hotkey card — same editor as Open launcher
                         Rectangle {
                             background: root.card-bg;
                             border-radius: 8px;
                             border-color: root.border-color;
                             border-width: 1px;
-                            height: 64px;
 
-                            HorizontalBox {
-                                padding-left: 20px;
-                                padding-right: 20px;
-                                spacing: 16px;
+                            VerticalLayout {
+                                padding: 20px;
+                                spacing: 14px;
 
-                                VerticalBox {
-                                    alignment: center;
-                                    spacing: 2px;
-                                    Text { text: "Voice dictation"; color: root.text-primary; font-size: 14px; font-weight: 600; }
-                                    Text { text: "Fixed shortcut · managed by the launcher"; color: root.text-muted; font-size: 12px; }
-                                }
+                                HorizontalBox {
+                                    spacing: 16px;
+                                    padding: 0;
 
-                                Rectangle { horizontal-stretch: 1; }
+                                    VerticalBox {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text { text: "Voice dictation"; color: root.text-primary; font-size: 14px; font-weight: 600; }
+                                        Text { text: "Starts microphone dictation"; color: root.text-muted; font-size: 12px; }
+                                    }
 
-                                VerticalBox {
-                                    alignment: center;
+                                    Rectangle { horizontal-stretch: 1; }
+
                                     Rectangle {
-                                        width: 180px;
+                                        min-width: 150px;
                                         height: 34px;
                                         border-radius: 6px;
                                         border-width: 1px;
                                         border-color: root.border-color;
                                         background: root.bg-color;
-
                                         Text {
                                             text: root.voice-hotkey;
-                                            color: root.text-muted;
-                                            font-size: 13px;
+                                            color: root.text-primary;
+                                            font-size: 14px;
                                             font-weight: 600;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
                                         }
                                     }
+                                }
+
+                                HorizontalBox {
+                                    spacing: 10px;
+                                    padding: 0;
+
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        height: 40px;
+                                        model: root.slot1-model;
+                                        current-value <=> root.vslot1-val;
+                                        selected => { root.apply-voice-hotkey(); }
+                                    }
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        height: 40px;
+                                        model: root.slot2-model;
+                                        current-value <=> root.vslot2-val;
+                                        selected => { root.apply-voice-hotkey(); }
+                                    }
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        height: 40px;
+                                        model: root.slot34-model;
+                                        current-value <=> root.vslot3-val;
+                                        selected => { root.apply-voice-hotkey(); }
+                                    }
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        height: 40px;
+                                        model: root.slot34-model;
+                                        current-value <=> root.vslot4-val;
+                                        selected => { root.apply-voice-hotkey(); }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.voice-hotkey-error != "": Rectangle {
+                            height: 42px;
+                            border-radius: 8px;
+                            background: #3a1d1d;
+                            border-color: #7f1d1d;
+                            border-width: 1px;
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                Text {
+                                    text: root.voice-hotkey-error;
+                                    color: #fecaca;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
                                 }
                             }
                         }
@@ -1343,7 +1446,7 @@ export component SettingsWindow inherits Window {
                             spacing: 6px;
                             padding-left: 4px;
                             Text {
-                                text: "Click the shortcut pill to record a new hotkey. Press Escape to cancel.";
+                                text: "Pick a modifier and a key. Slots 1 & 2 are required; 3 & 4 are optional. Changes apply immediately.";
                                 color: root.text-muted;
                                 font-size: 12px;
                                 vertical-alignment: center;
@@ -1361,15 +1464,10 @@ export component SettingsWindow inherits Window {
                         VerticalBox {
                             spacing: 4px;
                             Text {
-                                text: "Agent Settings";
-                                font-size: 22px;
+                                text: "Agent";
+                                font-size: 30px;
                                 font-weight: 700;
                                 color: root.text-primary;
-                            }
-                            Text {
-                                text: "Configure settings for autonomous agent and AI helper features";
-                                font-size: 13px;
-                                color: root.text-muted;
                             }
                         }
 
@@ -1516,15 +1614,10 @@ export component SettingsWindow inherits Window {
                         VerticalBox {
                             spacing: 4px;
                             Text {
-                                text: "Database Settings";
-                                font-size: 22px;
+                                text: "Database";
+                                font-size: 30px;
                                 font-weight: 700;
                                 color: root.text-primary;
-                            }
-                            Text {
-                                text: "Manage local search index database and folders to scan";
-                                font-size: 13px;
-                                color: root.text-muted;
                             }
                         }
 
@@ -1628,7 +1721,7 @@ export component SettingsWindow inherits Window {
                                 VerticalBox {
                                     spacing: 8px;
                                     if root.db-folders.length == 0: Text {
-                                        text: "Default Directories (User Profile & Fixed Slices)";
+                                        text: "No indexed directories configured";
                                         color: root.text-muted;
                                         font-size: 13px;
                                         horizontal-alignment: center;
@@ -1667,7 +1760,7 @@ export component SettingsWindow inherits Window {
                     if root.current-page == 5: VerticalBox {
                         alignment: start;
                         spacing: 24px;
-                        Text { text: "About"; font-size: 26px; font-weight: 600; color: root.text-primary; }
+                        Text { text: "About"; font-size: 30px; font-weight: 700; color: root.text-primary; }
                         Rectangle {
                             background: root.card-bg;
                             border-radius: 8px;
