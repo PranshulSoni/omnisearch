@@ -47,6 +47,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let conn = Connection::open(&db_path)?;
 
+    // 0. Print indexer state table
+    println!("\n--- Indexer State Table ---");
+    let mut stmt = conn.prepare("SELECT key, value FROM indexer_state").ok();
+    if let Some(ref mut stmt) = stmt {
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for r in rows {
+            if let Ok((k, v)) = r {
+                println!("  {} = {:?}", k, v);
+            }
+        }
+    } else {
+        println!("  (indexer_state table does not exist or cannot be queried)");
+    }
+    println!("---------------------------\n");
+
     // 1. Total files
     let total_files: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
     println!("Total files in 'files' table: {}", total_files);
