@@ -438,7 +438,7 @@ impl State {
             return self.search_h() + 24;
         }
         if self.query.is_empty() {
-            return self.search_h() + 36 + 8 * self.item_h() + 8;
+            return self.search_h() + 37 + 8 * self.item_h() + 8;
         }
         let n = self.results.len().min(VISIBLE_RESULTS) as i32;
         if self.has_prefix() {
@@ -455,9 +455,9 @@ impl State {
                     headers_count += 1;
                 }
             }
-            self.search_h() + 49 + n * self.item_h() + headers_count * 24 + 8
+            self.search_h() + 1 + n * self.item_h() + headers_count * 24 + 8
         } else {
-            let offset = 80;
+            let offset = 81;
             let footer = 8;
             self.search_h() + offset + n * self.item_h() + footer
         }
