@@ -151,6 +151,82 @@ fn content_match_source(extension: &str, only_code: bool) -> &'static str {
     }
 }
 
+fn empty_scope_result(query: &str) -> Option<SearchResult> {
+    let q = query.trim().to_ascii_lowercase();
+    let (prefix, title, detail) = [
+        (
+            "bookmarks:",
+            "No bookmarks found",
+            "Browser bookmarks are indexed in the background.",
+        ),
+        (
+            "history:",
+            "No browser history found",
+            "Browser history is indexed in the background.",
+        ),
+        (
+            "commits:",
+            "No git commits found",
+            "Git repositories may still be indexing.",
+        ),
+        (
+            "agentchats:",
+            "No agent history found",
+            "Agent runs will appear here after they are created.",
+        ),
+        (
+            "clip:",
+            "No clipboard history found",
+            "Copied items will appear here after capture.",
+        ),
+        (
+            "clipboard:",
+            "No clipboard history found",
+            "Copied items will appear here after capture.",
+        ),
+        (
+            "file:",
+            "No files found",
+            "Indexed files will appear here when they match this page.",
+        ),
+        (
+            "code:",
+            "No code files found",
+            "Indexed source files will appear here when they match this page.",
+        ),
+        (
+            "img:",
+            "No images found",
+            "Indexed images and OCR matches will appear here.",
+        ),
+        (
+            "image:",
+            "No images found",
+            "Indexed images and OCR matches will appear here.",
+        ),
+        (
+            "screenshots:",
+            "No screenshots found",
+            "Indexed screenshots and OCR matches will appear here.",
+        ),
+    ]
+    .into_iter()
+    .find(|(prefix, _, _)| q.starts_with(prefix))?;
+
+    Some(SearchResult {
+        entry: CatalogEntry {
+            id: format!("empty.{}", prefix.trim_end_matches(':')),
+            control_name: title.to_string(),
+            breadcrumb_path: "Search > Empty page".to_string(),
+            launch_command: prefix.to_string(),
+            source: "FOLDER".to_string(),
+            description: detail.to_string(),
+            synonyms: String::new(),
+        },
+        score: 0.0,
+    })
+}
+
 /// lean-build allowlist: keep only the curated feature set. See SearchEngine::search.
 fn lean_allowed(r: &SearchResult) -> bool {
     let s = r.entry.source.as_str();
@@ -2953,13 +3029,28 @@ impl SearchEngine {
         self.search_with_fts(query, top_k, true)
     }
 
-    pub fn search_with_fts(&mut self, query: &str, top_k: usize, with_fts: bool) -> Vec<SearchResult> {
+    pub fn search_with_fts(
+        &mut self,
+        query: &str,
+        top_k: usize,
+        with_fts: bool,
+    ) -> Vec<SearchResult> {
         let mut results = self.search_raw_with_fts(query, top_k, with_fts);
         results.retain(lean_allowed);
+        if results.is_empty() {
+            if let Some(empty) = empty_scope_result(query) {
+                return vec![empty];
+            }
+        }
         results
     }
 
-    fn search_raw_with_fts(&mut self, query: &str, top_k: usize, with_fts: bool) -> Vec<SearchResult> {
+    fn search_raw_with_fts(
+        &mut self,
+        query: &str,
+        top_k: usize,
+        with_fts: bool,
+    ) -> Vec<SearchResult> {
         // Rebuild the in-memory file index once a background indexing pass finishes, so newly
         // indexed files become searchable without restarting the app.
         let now_indexing = crate::indexer::IS_INDEXING.load(std::sync::atomic::Ordering::Relaxed);
@@ -5183,6 +5274,15 @@ mod tests {
         assert_eq!(content_match_source("pdf", false), "FILE_CONTENT");
         assert_eq!(content_match_source("rs", false), "CODE_CONTENT");
         assert_eq!(content_match_source("png", false), "OCR");
+    }
+
+    #[test]
+    fn scoped_pages_get_empty_state_instead_of_blank_results() {
+        let empty = empty_scope_result("bookmarks: missing").unwrap();
+        assert_eq!(empty.entry.control_name, "No bookmarks found");
+        assert_eq!(empty.entry.launch_command, "bookmarks:");
+        assert!(lean_allowed(&empty));
+        assert!(empty_scope_result("plain search").is_none());
     }
 
     #[test]
