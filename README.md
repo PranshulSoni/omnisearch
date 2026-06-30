@@ -33,7 +33,7 @@ OmniSearch opens with `Alt+Space` and gives one command/search surface for local
 - Added clipboard history with image capture, pinning, multi-select, and a 500-entry retention limit.
 - Added Git indexing with TODO/FIXME comments scanning and seamless launching of VS Code at exact line numbers (`code -g <file>:<line>`).
 - Added AI chat and Hermes agent integrations with SQLite chat persistence and tool execution approval prompts.
-- Maintained local-first storage under `%APPDATA%\opensearch-os` using SQLite.
+- Maintained local-first storage under `%APPDATA%\omnisearch` using SQLite.
 
 ## Performance And Optimization
 
@@ -105,7 +105,7 @@ General search shows the curated deep-search result set. Prefixes let you jump d
 
 ## Architecture
 
-The Rust app lives in `opensearch-os/`.
+The Rust app lives in `omnisearch/`.
 
 | File | Responsibility |
 |---|---|
@@ -125,7 +125,7 @@ The Rust app lives in `opensearch-os/`.
 Runtime data is stored under:
 
 ```text
-%APPDATA%\opensearch-os
+%APPDATA%\omnisearch
 ```
 
 Main storage uses SQLite with tables for indexed files, FTS content, browser items, clipboard history, chats, agents, and settings. The app keeps expensive work disk-backed and capped where needed instead of keeping everything in RAM.
@@ -141,27 +141,27 @@ Main storage uses SQLite with tables for indexed files, FTS content, browser ite
 ### Build
 
 ```powershell
-cd opensearch-os
+cd omnisearch
 cargo build
 ```
 
 ### Release Build
 
 ```powershell
-cd opensearch-os
+cd omnisearch
 cargo build --release
 ```
 
 ### Run
 
 ```powershell
-.\target\release\opensearch-os.exe
+.\target\release\omnisearch.exe
 ```
 
 If the app is already running, kill it before rebuilding because Windows can lock the executable:
 
 ```powershell
-taskkill /F /IM opensearch-os.exe
+taskkill /F /IM omnisearch.exe
 ```
 
 ### Test
@@ -169,7 +169,7 @@ taskkill /F /IM opensearch-os.exe
 Use a single test thread because some tests share temporary SQLite/appdata state:
 
 ```powershell
-cd opensearch-os
+cd omnisearch
 cargo test -- --test-threads=1
 ```
 

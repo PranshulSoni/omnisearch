@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-pub const STARTUP_RUN_VALUE_NAME: &str = "opensearch-os";
+pub const STARTUP_RUN_VALUE_NAME: &str = "omnisearch";
 const LEGACY_STARTUP_RUN_VALUE_NAMES: &[&str] = &["OpenSearchOS"];
 
 pub fn set_run_on_startup(enable: bool) {
@@ -83,12 +83,12 @@ mod tests {
     #[test]
     fn startup_command_quotes_paths_with_spaces() {
         assert_eq!(
-            format_startup_command(r"C:\Program Files\OpenSearch OS\opensearch-os.exe"),
-            r#""C:\Program Files\OpenSearch OS\opensearch-os.exe""#
+            format_startup_command(r"C:\Program Files\OpenSearch OS\omnisearch.exe"),
+            r#""C:\Program Files\OpenSearch OS\omnisearch.exe""#
         );
         assert_eq!(
-            format_startup_command(r#""C:\Program Files\OpenSearch OS\opensearch-os.exe""#),
-            r#""C:\Program Files\OpenSearch OS\opensearch-os.exe""#
+            format_startup_command(r#""C:\Program Files\OpenSearch OS\omnisearch.exe""#),
+            r#""C:\Program Files\OpenSearch OS\omnisearch.exe""#
         );
     }
 }

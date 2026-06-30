@@ -117,7 +117,7 @@ unsafe fn setup_tray_icon(
     }
     let res = Shell_NotifyIconW(NIM_ADD, &nid);
 
-    if let Ok(mut log_file) = std::fs::OpenOptions::new().create(true).append(true).open("C:\\Users\\Pranshul Soni\\Documents\\Projects\\Backend\\Project-Raycast\\opensearch-os\\tray_debug.log") {
+    if let Ok(mut log_file) = std::fs::OpenOptions::new().create(true).append(true).open("C:\\Users\\Pranshul Soni\\Documents\\Projects\\Backend\\Project-Raycast\\omnisearch\\tray_debug.log") {
         use std::io::Write;
         let _ = writeln!(log_file, "setup_tray_icon: hwnd={:?}, hicon={:?}, NIM_ADD res={:?}, last_error={:?}",
             hwnd, hicon, res, std::io::Error::last_os_error()
@@ -133,7 +133,7 @@ unsafe fn remove_tray_icon(hwnd: windows::Win32::Foundation::HWND) {
     nid.uID = 1;
     let res = Shell_NotifyIconW(NIM_DELETE, &nid);
 
-    if let Ok(mut log_file) = std::fs::OpenOptions::new().create(true).append(true).open("C:\\Users\\Pranshul Soni\\Documents\\Projects\\Backend\\Project-Raycast\\opensearch-os\\tray_debug.log") {
+    if let Ok(mut log_file) = std::fs::OpenOptions::new().create(true).append(true).open("C:\\Users\\Pranshul Soni\\Documents\\Projects\\Backend\\Project-Raycast\\omnisearch\\tray_debug.log") {
         use std::io::Write;
         let _ = writeln!(log_file, "remove_tray_icon: hwnd={:?}, NIM_DELETE res={:?}, last_error={:?}",
             hwnd, res, std::io::Error::last_os_error()
@@ -553,7 +553,7 @@ fn enforce_single_instance() -> Option<windows::Win32::Foundation::HANDLE> {
         let handle = CreateMutexW(None, true, PCWSTR(name.as_ptr()));
         if let Ok(h) = handle {
             if GetLastError() == ERROR_ALREADY_EXISTS {
-                let class_name: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
+                let class_name: Vec<u16> = "omnisearch\0".encode_utf16().collect();
                 if let Ok(hwnd) = FindWindowW(PCWSTR(class_name.as_ptr()), None) {
                     if !hwnd.0.is_null() {
                         let _ = PostMessageW(hwnd, WM_COMMAND, WPARAM(1), LPARAM(0));
@@ -608,7 +608,7 @@ fn main() {
 }
 
 /// Install a global panic hook that appends the panic message, source location and a
-/// backtrace to %APPDATA%/opensearch-os/panic.log. This binary is a windowed app with no
+/// backtrace to %APPDATA%/omnisearch/panic.log. This binary is a windowed app with no
 /// console, so a panic otherwise produces only an opaque 0xC000041D exit with no message.
 /// The hook itself never panics (every fallible call is ignored), so it can't recurse.
 fn install_panic_logger() {
@@ -637,7 +637,7 @@ fn install_panic_logger() {
             "\n==== PANIC (epoch {secs}) ====\nthread: {thread}\nlocation: {loc}\nmessage: {msg}\nbacktrace:\n{bt}\n"
         );
         if let Ok(appdata) = std::env::var("APPDATA") {
-            let dir = std::path::Path::new(&appdata).join("opensearch-os");
+            let dir = std::path::Path::new(&appdata).join("omnisearch");
             let _ = std::fs::create_dir_all(&dir);
             if let Ok(mut f) = std::fs::OpenOptions::new()
                 .create(true)
@@ -727,7 +727,7 @@ unsafe fn run(first_settings_run: bool) {
 
     let db_path = match std::env::var("APPDATA") {
         Ok(d) => {
-            let path = std::path::PathBuf::from(d).join("opensearch-os");
+            let path = std::path::PathBuf::from(d).join("omnisearch");
             let _ = std::fs::create_dir_all(&path);
             path.join("file_index.db")
         }
@@ -998,7 +998,7 @@ unsafe fn run(first_settings_run: bool) {
         )
     };
 
-    let class: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
+    let class: Vec<u16> = "omnisearch\0".encode_utf16().collect();
     let wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
@@ -1013,7 +1013,7 @@ unsafe fn run(first_settings_run: bool) {
     };
     RegisterClassExW(&wc);
 
-    let preview_class: Vec<u16> = "opensearch-os-preview\0".encode_utf16().collect();
+    let preview_class: Vec<u16> = "omnisearch-preview\0".encode_utf16().collect();
     let wc_preview = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
@@ -1453,7 +1453,7 @@ unsafe fn show_preview_window(hwnd_parent: HWND, s: &mut State) {
     }
 
     if s.hwnd_preview.is_none() {
-        let preview_class: Vec<u16> = "opensearch-os-preview\0".encode_utf16().collect();
+        let preview_class: Vec<u16> = "omnisearch-preview\0".encode_utf16().collect();
         let hinst = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap();
 
         let hwnd_preview = CreateWindowExW(
@@ -3366,7 +3366,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
 
                 // Reload filesystem watcher with new folders list
                 let db_path_watcher = match std::env::var("APPDATA") {
-                    Ok(d) => std::path::PathBuf::from(d).join("opensearch-os").join("file_index.db"),
+                    Ok(d) => std::path::PathBuf::from(d).join("omnisearch").join("file_index.db"),
                     Err(_) => std::path::PathBuf::from("file_index.db"),
                 };
                 indexer::start_watcher(db_path_watcher);
@@ -11059,9 +11059,9 @@ mod tests {
     #[test]
     fn clipboard_image_path_uses_clipboard_images_dir() {
         let db_path =
-            std::path::PathBuf::from(r"C:\Users\Test\AppData\Roaming\opensearch-os\app.db");
+            std::path::PathBuf::from(r"C:\Users\Test\AppData\Roaming\omnisearch\app.db");
         let (_, path_str) = clipboard_image_path(&db_path, 123).unwrap();
-        assert!(path_str.ends_with(r"opensearch-os\clipboard_images\image_123.bmp"));
+        assert!(path_str.ends_with(r"omnisearch\clipboard_images\image_123.bmp"));
     }
 
     #[test]
@@ -11351,7 +11351,7 @@ unsafe fn handle_form_enter(hwnd: HWND, s: &mut State) {
             if !input.is_empty() {
                 if let Ok(appdata) = std::env::var("APPDATA") {
                     let notes_dir = std::path::PathBuf::from(appdata)
-                        .join("opensearch-os")
+                        .join("omnisearch")
                         .join("notes");
                     let _ = std::fs::create_dir_all(&notes_dir);
                     let safe_name = input.replace(|c: char| !c.is_alphanumeric() && c != ' ', "_");

@@ -1,10 +1,10 @@
 [package]
-name = "opensearch-os"
+name = "omnisearch"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "opensearch-os"
+name = "omnisearch"
 path = "src/main.rs"
 
 [[bin]]

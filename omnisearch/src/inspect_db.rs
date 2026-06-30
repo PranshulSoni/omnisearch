@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = match std::env::var("APPDATA") {
-        Ok(d) => PathBuf::from(d).join("opensearch-os").join("file_index.db"),
+        Ok(d) => PathBuf::from(d).join("omnisearch").join("file_index.db"),
         Err(_) => PathBuf::from("file_index.db"),
     };
 

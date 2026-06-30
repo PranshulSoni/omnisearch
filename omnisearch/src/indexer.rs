@@ -196,7 +196,7 @@ fn log_indexer(msg: &str) {
     use std::fs::OpenOptions;
     use std::io::Write;
     let log_dir = match std::env::var("APPDATA") {
-        Ok(d) => PathBuf::from(d).join("opensearch-os"),
+        Ok(d) => PathBuf::from(d).join("omnisearch"),
         Err(_) => PathBuf::from("."),
     };
     let _ = std::fs::create_dir_all(&log_dir);

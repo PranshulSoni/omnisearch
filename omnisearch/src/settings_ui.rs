@@ -13,7 +13,7 @@ thread_local! {
 fn find_launcher_hwnd() -> Option<HWND> {
     use windows::core::PCWSTR;
     use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
-    let class_name: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
+    let class_name: Vec<u16> = "omnisearch\0".encode_utf16().collect();
     if let Ok(hwnd) = unsafe { FindWindowW(PCWSTR(class_name.as_ptr()), None) } {
         if !hwnd.0.is_null() {
             return Some(hwnd);
@@ -337,7 +337,7 @@ pub fn run_settings_window() {
                         };
                         let appdata = std::env::var("APPDATA").unwrap_or_default();
                         let db_path = std::path::PathBuf::from(appdata)
-                            .join("opensearch-os")
+                            .join("omnisearch")
                             .join("file_index.db");
                         let _ = crate::indexer::run_indexer_folders(&db_path, vec![std::path::PathBuf::from(path_str_clone)]);
                     });
@@ -405,7 +405,7 @@ pub fn run_settings_window() {
     ui.on_rebuild_index(move || {
         let appdata = std::env::var("APPDATA").unwrap_or_default();
         let db_path = std::path::PathBuf::from(appdata)
-            .join("opensearch-os")
+            .join("omnisearch")
             .join("file_index.db");
         std::thread::spawn(move || {
             let _ = unsafe {
@@ -430,7 +430,7 @@ pub fn run_settings_window() {
         // never block the Slint event loop even while the indexer is writing.
         let appdata = std::env::var("APPDATA").unwrap_or_default();
         let db_path = std::path::PathBuf::from(&appdata)
-            .join("opensearch-os")
+            .join("omnisearch")
             .join("file_index.db");
 
         let conn = match rusqlite::Connection::open(&db_path) {
@@ -521,7 +521,7 @@ fn log_settings_ui(msg: &str) {
     use std::io::Write;
     use std::path::PathBuf;
     let log_dir = match std::env::var("APPDATA") {
-        Ok(d) => PathBuf::from(d).join("opensearch-os"),
+        Ok(d) => PathBuf::from(d).join("omnisearch"),
         Err(_) => PathBuf::from("."),
     };
     let _ = std::fs::create_dir_all(&log_dir);
@@ -540,7 +540,7 @@ fn get_db_conn() -> Option<rusqlite::Connection> {
         }
     };
     let path = std::path::PathBuf::from(appdata)
-        .join("opensearch-os")
+        .join("omnisearch")
         .join("file_index.db");
     match rusqlite::Connection::open(&path) {
         Ok(conn) => {

@@ -343,7 +343,7 @@ fn handle_action(action: &str) {
                     .spawn();
                 if let Ok(appdata) = std::env::var("APPDATA") {
                     let db_path = std::path::PathBuf::from(appdata)
-                        .join("opensearch-os")
+                        .join("omnisearch")
                         .join("file_index.db");
                     if let Ok(conn) = rusqlite::Connection::open(db_path) {
                         if let Ok(blocked) = conn.query_row(
@@ -387,7 +387,7 @@ fn handle_action(action: &str) {
         "reveal_logs" => {
             if let Ok(appdata) = std::env::var("APPDATA") {
                 let _ = Command::new("explorer.exe")
-                    .arg(std::path::PathBuf::from(appdata).join("opensearch-os"))
+                    .arg(std::path::PathBuf::from(appdata).join("omnisearch"))
                     .spawn();
             }
         }
@@ -406,8 +406,8 @@ fn handle_action(action: &str) {
         "copy_logs" => {
             if let Ok(appdata) = std::env::var("APPDATA") {
                 let log_path = std::path::PathBuf::from(appdata)
-                    .join("opensearch-os")
-                    .join("opensearch-os.log");
+                    .join("omnisearch")
+                    .join("omnisearch.log");
                 let _ = Command::new("powershell")
                     .args([
                         "-WindowStyle",
@@ -438,7 +438,7 @@ fn handle_action(action: &str) {
         "clipboard:paste_sequentially" => {
             if let Ok(appdata) = std::env::var("APPDATA") {
                 let db_path = std::path::PathBuf::from(appdata)
-                    .join("opensearch-os")
+                    .join("omnisearch")
                     .join("index.db");
                 if let Ok(conn) = rusqlite::Connection::open(&db_path) {
                     if let Ok(mut stmt) = conn.prepare("SELECT content FROM clipboard_history WHERE is_image = 0 ORDER BY timestamp DESC LIMIT 3") {
@@ -706,7 +706,7 @@ fn get_target_window() -> Option<HWND> {
     };
 
     unsafe {
-        let class: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
+        let class: Vec<u16> = "omnisearch\0".encode_utf16().collect();
         let launcher_hwnd = FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()).unwrap_or_default();
         let fg = GetForegroundWindow();
 
@@ -724,7 +724,7 @@ fn get_target_window() -> Option<HWND> {
                     let class_name = String::from_utf16_lossy(&class_buf[..class_len]);
                     if class_name != "Shell_TrayWnd"
                         && class_name != "Progman"
-                        && class_name != "opensearch-os"
+                        && class_name != "omnisearch"
                     {
                         let mut title_buf = [0u16; 256];
                         let title_len = GetWindowTextW(c, &mut title_buf) as usize;

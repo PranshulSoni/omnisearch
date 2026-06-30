@@ -5867,7 +5867,7 @@ mod tests {
     fn test_search_file() {
         let db_path = match std::env::var("APPDATA") {
             Ok(d) => {
-                let path = std::path::PathBuf::from(d).join("opensearch-os");
+                let path = std::path::PathBuf::from(d).join("omnisearch");
                 path.join("file_index.db")
             }
             Err(_) => std::path::PathBuf::from("file_index.db"),
@@ -9932,7 +9932,7 @@ impl SearchEngine {
         let q = query.trim().to_lowercase();
         if let Ok(appdata) = std::env::var("APPDATA") {
             let notes_dir = std::path::PathBuf::from(appdata)
-                .join("opensearch-os")
+                .join("omnisearch")
                 .join("notes");
             let _ = std::fs::create_dir_all(&notes_dir); // fix #1: ensure dir exists before reading
             if let Ok(entries) = std::fs::read_dir(&notes_dir) {

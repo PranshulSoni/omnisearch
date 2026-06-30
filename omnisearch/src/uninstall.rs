@@ -36,9 +36,9 @@ fn show_message(text: &str, title: &str, is_question: bool) -> bool {
 }
 
 fn kill_processes() {
-    // Terminate opensearch-os.exe
+    // Terminate omnisearch.exe
     let _ = Command::new("taskkill")
-        .args(["/F", "/IM", "opensearch-os.exe"])
+        .args(["/F", "/IM", "omnisearch.exe"])
         .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .output();
 
@@ -62,7 +62,7 @@ fn cleanup_startup_entries() {
         "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
     let approved_startup_folder_key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\StartupFolder";
 
-    for value in ["opensearch-os", "OpenSearchOS"] {
+    for value in ["omnisearch", "OpenSearchOS"] {
         delete_registry_value(run_key, value);
         delete_registry_value(approved_run_key, value);
     }
@@ -120,7 +120,7 @@ fn main() {
     let install_dir = PathBuf::from(&local_appdata)
         .join("Programs")
         .join("OpenSearch OS");
-    let data_dir = PathBuf::from(&appdata).join("opensearch-os");
+    let data_dir = PathBuf::from(&appdata).join("omnisearch");
 
     let current_exe = std::env::current_exe().unwrap_or_default();
     let current_exe_lower = current_exe.to_string_lossy().to_lowercase();
@@ -129,7 +129,7 @@ fn main() {
     // Self-copy/redirection trick if uninstaller is running inside the install folder
     if !is_cleanup && current_exe_lower.starts_with(&install_dir_lower) {
         let temp_dir = std::env::temp_dir();
-        let temp_exe = temp_dir.join("opensearch-os-uninstaller.exe");
+        let temp_exe = temp_dir.join("omnisearch-uninstaller.exe");
 
         if fs::copy(&current_exe, &temp_exe).is_ok() {
             let spawn_res = Command::new(&temp_exe).arg("--run-cleanup").spawn();
@@ -197,7 +197,7 @@ fn main() {
 
     // Self-delete the temp uninstaller executable if running from Temp
     if is_cleanup {
-        let temp_exe = std::env::temp_dir().join("opensearch-os-uninstaller.exe");
+        let temp_exe = std::env::temp_dir().join("omnisearch-uninstaller.exe");
         let _ = Command::new("cmd")
             .args([
                 "/c",
