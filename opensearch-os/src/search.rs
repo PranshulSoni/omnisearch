@@ -363,6 +363,9 @@ impl SearchEngine {
             },
         ];
 
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         let conn = Connection::open(&db_path)?;
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
         conn.busy_timeout(std::time::Duration::from_secs(5))?;

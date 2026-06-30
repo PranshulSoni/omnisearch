@@ -425,6 +425,7 @@ impl State {
 
     fn reset_results(&mut self) {
         if self.query.is_empty() {
+            self.active_filter = FilterType::All;
             self.results = default_homepage_results();
             self.results_stale = false;
             self.selected = self.homepage_sel.min(self.results.len().saturating_sub(1));
@@ -1740,6 +1741,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     }
                     trigger_icon_loading(hwnd, s);
                     let _ = InvalidateRect(hwnd, None, FALSE);
+                    let _ = UpdateWindow(hwnd);
                 }
             }
             LRESULT(0)
@@ -5222,13 +5224,10 @@ unsafe fn trigger_search(_hwnd: HWND, s: &mut State) {
         s.current_query_id += 1;
         s.results_stale = false;
         s.search_loading = false;
+        s.active_filter = FilterType::All;
         let _ = KillTimer(_hwnd, TIMER_SEARCH_ANIM);
         s.unfiltered_results = default_homepage_results();
-        let mut filtered = s.unfiltered_results.clone();
-        if !matches!(s.active_filter, FilterType::All) {
-            filtered.retain(|r| result_matches_filter(r, s.active_filter));
-        }
-        s.results = filtered;
+        s.results = s.unfiltered_results.clone();
         // Land on the homepage item the user last visited, not a fixed default.
         s.selected = s.homepage_sel.min(s.results.len().saturating_sub(1));
         s.scroll_offset = 0;
