@@ -48,6 +48,11 @@ const RESULT_ICON_SIZE: i32 = 32;
 const RESULT_TEXT_BLOCK_H: i32 = 40;
 const RESULT_TEXT_GAP: i32 = 12;
 const CONTENT_HEADER_H: i32 = 80;
+// Compact header band for single-label modes (homepage + scoped prefixes like `clip:`),
+// which draw one section label instead of the filter row + results header. The old code
+// reused CONTENT_HEADER_H (80px) here, leaving ~54px of dead space before the first row.
+// ponytail: one constant + a mode-aware header_h() keeps paint, hit-test and sizing in sync.
+const LABEL_HEADER_H: i32 = 38;
 const HEIGHT_ANIM_MS: u128 = 90;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
@@ -475,11 +480,19 @@ impl State {
     fn launcher_top_y(&self) -> i32 {
         launcher_top_y(self.cy, self.paint_win_h())
     }
+    // Height of the band between the search bar and the first result row. Homepage and
+    // scoped prefixes draw a single compact label; normal search draws the taller filter
+    // row + results header. Must match the paint sites and the *_win_h() helpers.
+    fn header_h(&self) -> i32 {
+        if self.query.is_empty() || self.has_prefix() {
+            LABEL_HEADER_H
+        } else {
+            CONTENT_HEADER_H
+        }
+    }
     fn result_row_y(&self, i: usize) -> i32 {
         let end_y = self.launcher_top_y();
-        let mut cur_y = end_y + self.search_h() + 1;
-
-        cur_y += CONTENT_HEADER_H;
+        let cur_y = end_y + self.search_h() + 1 + self.header_h();
         cur_y + i as i32 * self.item_h()
     }
     fn result_rect(&self, i: usize) -> RECT {
@@ -5340,7 +5353,7 @@ fn visible_row_count(result_count: usize) -> i32 {
 }
 
 fn homepage_win_h(search_h: i32, item_h: i32, result_count: usize) -> i32 {
-    search_h + 1 + CONTENT_HEADER_H + visible_row_count(result_count) * item_h + 8
+    search_h + 1 + LABEL_HEADER_H + visible_row_count(result_count) * item_h + 8
 }
 
 fn launcher_top_y(cy: i32, current_h: i32) -> i32 {
@@ -5352,7 +5365,7 @@ fn normal_search_win_h(search_h: i32, item_h: i32, result_count: usize) -> i32 {
 }
 
 fn scoped_results_win_h(search_h: i32, item_h: i32, result_count: usize) -> i32 {
-    search_h + 1 + CONTENT_HEADER_H + visible_row_count(result_count) * item_h + 8
+    search_h + 1 + LABEL_HEADER_H + visible_row_count(result_count) * item_h + 8
 }
 
 unsafe fn invalidate_search_row(hwnd: HWND, s: &State) {
@@ -7540,7 +7553,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
             );
 
-            list_y += CONTENT_HEADER_H;
+            list_y += LABEL_HEADER_H;
         } else if !s.has_prefix() {
             // Search state layout: Filter Row (hidden when inside a scope like clip:, agents:)
             let filters = [
@@ -7723,7 +7736,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 &mut count_rect,
                 DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
             );
-            list_y += CONTENT_HEADER_H;
+            list_y += LABEL_HEADER_H;
         }
 
         for i in 0..n {
@@ -10550,14 +10563,16 @@ mod tests {
     #[test]
     fn scoped_results_height_matches_homepage_height() {
         assert_eq!(scoped_results_win_h(60, 54, 2), homepage_win_h(60, 54, 2));
-        assert_eq!(scoped_results_win_h(60, 54, 2), normal_search_win_h(60, 54, 2));
+        // Homepage/scoped use the compact label header; normal search uses the taller
+        // filter + results header, so it is strictly taller for the same row count.
+        assert!(scoped_results_win_h(60, 54, 2) < normal_search_win_h(60, 54, 2));
     }
 
     #[test]
     fn launcher_top_is_anchored_to_homepage_height() {
-        assert_eq!(homepage_win_h(60, 54, 8), 581);
-        assert_eq!(launcher_top_y(300, 581), 10);
-        assert_eq!(launcher_top_y(300, 581), launcher_top_y(300, 581));
+        // 60 + 1 + LABEL_HEADER_H(38) + 8*54 + 8 = 539
+        assert_eq!(homepage_win_h(60, 54, 8), 539);
+        assert_eq!(launcher_top_y(300, 539), 31);
     }
 
     #[test]
