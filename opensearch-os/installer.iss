@@ -16,7 +16,6 @@ Source: "target\release\uninstall.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\OpenSearch OS"; Filename: "{app}\opensearch-os.exe"
-Name: "{userstartup}\OpenSearch OS"; Filename: "{app}\opensearch-os.exe"
 Name: "{userdesktop}\OpenSearch OS"; Filename: "{app}\opensearch-os.exe"
 Name: "{group}\Uninstall OpenSearch OS"; Filename: "{app}\uninstall.exe"
 

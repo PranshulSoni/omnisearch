@@ -581,7 +581,8 @@ fn main() {
         None => return,
     };
 
-    register_startup();
+    let startup_settings = crate::settings::AppSettings::load();
+    crate::settings_startup::sync_run_on_startup(startup_settings.run_on_startup);
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
         let _ = windows::Win32::System::Com::CoInitializeEx(
@@ -593,46 +594,6 @@ fn main() {
 
     unsafe {
         run();
-    }
-}
-
-fn register_startup() {
-    // Add to HKCU Run so it launches on login
-    if let Ok(exe) = std::env::current_exe() {
-        let exe_str = exe.to_string_lossy().to_string();
-        let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
-            let hkcu = windows::Win32::System::Registry::HKEY_CURRENT_USER;
-            let subkey: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Run\0"
-                .encode_utf16()
-                .collect();
-            let value_name: Vec<u16> = "OpenSearchOS\0".encode_utf16().collect();
-            let exe_wide: Vec<u16> = format!("{}\0", exe_str).encode_utf16().collect();
-            let mut hkey = windows::Win32::System::Registry::HKEY::default();
-            unsafe {
-                let err = windows::Win32::System::Registry::RegOpenKeyExW(
-                    hkcu,
-                    windows::core::PCWSTR(subkey.as_ptr()),
-                    0,
-                    windows::Win32::System::Registry::KEY_SET_VALUE,
-                    &mut hkey,
-                );
-                if err.is_err() {
-                    return Err("open key failed".into());
-                }
-                let _ = windows::Win32::System::Registry::RegSetValueExW(
-                    hkey,
-                    windows::core::PCWSTR(value_name.as_ptr()),
-                    0,
-                    windows::Win32::System::Registry::REG_SZ,
-                    Some(std::slice::from_raw_parts(
-                        exe_wide.as_ptr() as *const u8,
-                        (exe_wide.len() - 1) * 2,
-                    )),
-                );
-                let _ = windows::Win32::System::Registry::RegCloseKey(hkey);
-            }
-            Ok(())
-        })();
     }
 }
 

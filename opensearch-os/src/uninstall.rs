@@ -49,6 +49,26 @@ fn kill_processes() {
         .output();
 }
 
+fn delete_registry_value(key: &str, value: &str) {
+    let _ = Command::new("reg")
+        .args(["delete", key, "/v", value, "/f"])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .output();
+}
+
+fn cleanup_startup_entries() {
+    let run_key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    let approved_run_key =
+        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+    let approved_startup_folder_key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\StartupFolder";
+
+    for value in ["opensearch-os", "OpenSearchOS"] {
+        delete_registry_value(run_key, value);
+        delete_registry_value(approved_run_key, value);
+    }
+    delete_registry_value(approved_startup_folder_key, "OpenSearch OS.lnk");
+}
+
 fn delete_dir_with_retry(path: &Path) -> bool {
     if !path.exists() {
         return true;
@@ -81,17 +101,7 @@ fn main() {
     // Terminate any active application and gateway processes first
     kill_processes();
 
-    // Clean up startup registry key if it exists
-    let _ = Command::new("reg")
-        .args([
-            "delete",
-            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-            "/v",
-            "opensearch-os",
-            "/f",
-        ])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .output();
+    cleanup_startup_entries();
 
     // Resolve paths
     let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();

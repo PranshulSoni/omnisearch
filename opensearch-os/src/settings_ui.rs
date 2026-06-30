@@ -235,7 +235,7 @@ pub fn run_settings_window() {
             let always_approve = ui.get_agent_always_approve();
 
             std::thread::spawn(move || {
-                crate::settings_startup::set_run_on_startup(run_on_startup);
+                crate::settings_startup::sync_run_on_startup(run_on_startup);
                 save_ai_settings(&api_key, &endpoint, &model, always_approve);
             });
 
