@@ -489,8 +489,25 @@ fn ensure_hermes_gateway_running() -> Result<()> {
     Ok(())
 }
 
+fn fallback_config_from_key(key: &str) -> Option<AiConfig> {
+    if key.is_empty() || key == "hermes" {
+        return None;
+    }
+    Some(AiConfig {
+        endpoint: "https://opencode.ai/zen/v1/chat/completions".to_string(),
+        model: "deepseek-v4-flash-free".to_string(),
+        api_key: key.to_string(),
+    })
+}
+
 fn get_agent_config() -> AiConfig {
-    get_hermes_config()
+    if HERMES_GATEWAY_RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
+        get_hermes_config()
+    } else if let Ok(cfg) = get_config() {
+        fallback_config_from_key(&cfg.api_key).unwrap_or_else(get_hermes_config)
+    } else {
+        get_hermes_config()
+    }
 }
 
 /// Human-readable label for errors, based on which backend the request hit.
@@ -1088,6 +1105,7 @@ mod tests {
         // Isolate APPDATA to a temporary path to avoid reading host DB/configs
         let old_appdata = std::env::var("APPDATA").ok();
         let temp_dir = std::env::temp_dir().join("opensearch-os-test-appdata");
+        let _ = std::fs::remove_dir_all(&temp_dir); // Clean any stale database/directory
         let _ = std::fs::create_dir_all(&temp_dir);
         std::env::set_var("APPDATA", &temp_dir);
 
@@ -1132,6 +1150,7 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         let old_appdata = std::env::var("APPDATA").ok();
         let temp_dir = std::env::temp_dir().join("opensearch-os-test-hermes-fallback");
+        let _ = std::fs::remove_dir_all(&temp_dir); // Clean any stale database/directory
         let app_dir = temp_dir.join("opensearch-os");
         let _ = std::fs::create_dir_all(&app_dir);
         std::env::set_var("APPDATA", &temp_dir);
