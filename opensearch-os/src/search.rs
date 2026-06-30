@@ -275,6 +275,15 @@ pub struct RecentFileInfo {
     pub path: String, // resolved target path
 }
 
+/// One row of the in-memory filename index used for instant fast-phase file/folder search.
+struct FileRow {
+    name: String,
+    name_lower: String,
+    path: String,
+    ext: String,
+    path_modifier: f32,
+}
+
 pub struct SearchEngine {
     vecs: Vec<f32>,
     meta: Vec<CatalogEntry>,
@@ -285,6 +294,10 @@ pub struct SearchEngine {
     anchor_categories: Vec<AnchorCategory>,
     apps: Vec<AppInfo>,
     recent_files: Vec<RecentFileInfo>,
+    // In-memory filename index — lets the fast phase scan files/folders in RAM (Everything-style)
+    // instead of a per-keystroke `LIKE '%q%'` full-table scan of `files`.
+    file_index: Vec<FileRow>,
+    was_indexing: bool,
     _db_path: std::path::PathBuf,
     conn: Connection,
 }
@@ -529,11 +542,14 @@ impl SearchEngine {
             anchor_categories,
             apps: vec![],
             recent_files: vec![],
+            file_index: Vec::new(),
+            was_indexing: false,
             _db_path: db_path,
             conn,
         };
         engine.apps = scan_apps();
         engine.recent_files = scan_recent_files();
+        engine.file_index = Self::build_file_index(&engine.conn);
 
         let _ = engine.search("settings", 1);
         Ok(engine)
@@ -573,6 +589,131 @@ impl SearchEngine {
         }
 
         0.0
+    }
+
+    /// Load the whole `files` table into RAM once, precomputing the lowercase name and the
+    /// path score so each search is a pure in-memory scan.
+    fn build_file_index(conn: &Connection) -> Vec<FileRow> {
+        let mut rows = Vec::new();
+        if let Ok(mut stmt) = conn.prepare("SELECT path, name, extension FROM files") {
+            if let Ok(it) = stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            }) {
+                for (path, name, ext) in it.filter_map(|r| r.ok()) {
+                    let name_lower = name.to_lowercase();
+                    let path_modifier = Self::get_path_score_modifier(&path);
+                    rows.push(FileRow {
+                        name,
+                        name_lower,
+                        path,
+                        ext,
+                        path_modifier,
+                    });
+                }
+            }
+        }
+        rows
+    }
+
+    /// Instant in-memory equivalent of the filename portion of `search_files_generic` (no SQL,
+    /// no content FTS). Scores every row and returns the best `max_results`. O(n) over the index;
+    /// fine for the user-folder-sized index, revisit with a prefix trie if it ever grows huge.
+    fn search_files_in_memory(
+        &self,
+        query: &str,
+        only_code: bool,
+        max_results: usize,
+    ) -> Vec<SearchResult> {
+        let q_lower = query.trim().to_lowercase();
+        let q_words: Vec<&str> = q_lower.split_whitespace().collect();
+        if q_words.is_empty() {
+            return Vec::new();
+        }
+        let code_exts = [
+            "rs", "py", "js", "ts", "json", "html", "css", "c", "cpp", "h", "hpp", "cs", "go",
+            "java", "kt", "sh", "bat", "ps1", "yaml", "yml", "toml", "ini", "sql", "xml",
+        ];
+        let mut results = Vec::new();
+        for row in &self.file_index {
+            if row.path_modifier < -1.0 {
+                continue;
+            }
+            let name_no_ext_lower = match row.name_lower.rfind('.') {
+                Some(d) => &row.name_lower[..d],
+                None => row.name_lower.as_str(),
+            };
+            let mut score = if row.name_lower == q_lower || name_no_ext_lower == q_lower {
+                3.0
+            } else if row.name_lower.starts_with(&q_lower) || name_no_ext_lower.starts_with(&q_lower)
+            {
+                2.5
+            } else if row.name_lower.contains(&q_lower) {
+                1.8
+            } else {
+                let words: Vec<&str> = name_no_ext_lower
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|w| !w.is_empty())
+                    .collect();
+                let matched = q_words.iter().filter(|w| words.contains(w)).count();
+                if matched > 0 {
+                    0.8 + 0.4 * (matched as f32 / q_words.len() as f32)
+                } else {
+                    0.0
+                }
+            };
+            if score <= 0.0 {
+                continue;
+            }
+            let is_code = code_exts.contains(&row.ext.as_str());
+            if only_code && !is_code {
+                continue;
+            }
+            score += row.path_modifier;
+            let source = if row.ext == "folder" {
+                "FOLDER"
+            } else if only_code || is_code {
+                "CODE"
+            } else {
+                "FILE"
+            };
+            let breadcrumb = if source == "FOLDER" {
+                format!("Folder > {}", row.path)
+            } else {
+                format!(
+                    "{} > {}",
+                    if source == "CODE" { "Code" } else { "File" },
+                    row.path
+                )
+            };
+            let description = if source == "FOLDER" {
+                "Local folder".to_string()
+            } else {
+                format!("Local {} file", row.ext.to_uppercase())
+            };
+            results.push(SearchResult {
+                entry: CatalogEntry {
+                    id: format!("{}.{}", source.to_lowercase(), row.path),
+                    control_name: row.name.clone(),
+                    breadcrumb_path: breadcrumb,
+                    launch_command: row.path.clone(),
+                    source: source.to_string(),
+                    description,
+                    synonyms: row.name_lower.clone(),
+                },
+                score,
+            });
+        }
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(max_results);
+        results
     }
 
 
@@ -926,6 +1067,10 @@ impl SearchEngine {
     }
 
     fn search_local_files_with_fts(&self, query: &str, with_fts: bool) -> Vec<SearchResult> {
+        if !with_fts {
+            // Fast phase: instant in-memory filename/folder scan, no SQL full-table LIKE.
+            return self.search_files_in_memory(query, false, 300);
+        }
         self.search_files_generic(query, false, 300, with_fts)
     }
 
@@ -2811,6 +2956,14 @@ impl SearchEngine {
     }
 
     fn search_raw_with_fts(&mut self, query: &str, top_k: usize, with_fts: bool) -> Vec<SearchResult> {
+        // Rebuild the in-memory file index once a background indexing pass finishes, so newly
+        // indexed files become searchable without restarting the app.
+        let now_indexing = crate::indexer::IS_INDEXING.load(std::sync::atomic::Ordering::Relaxed);
+        if self.was_indexing && !now_indexing {
+            self.file_index = Self::build_file_index(&self.conn);
+        }
+        self.was_indexing = now_indexing;
+
         let q = query.trim();
         let q_lower_trimmed = q.to_lowercase();
 
