@@ -17,6 +17,7 @@ mod uninstall;
 
 use search::{SearchEngine, SearchResult};
 use std::os::windows::process::CommandExt;
+use std::process::Command;
 pub mod hotkey;
 
 use std::ptr::null_mut;
@@ -581,6 +582,7 @@ fn main() {
         None => return,
     };
 
+    let first_settings_run = !crate::settings::AppSettings::get_settings_path().exists();
     let startup_settings = crate::settings::AppSettings::load();
     crate::settings_startup::sync_run_on_startup(startup_settings.run_on_startup);
     unsafe {
@@ -593,7 +595,7 @@ fn main() {
     }
 
     unsafe {
-        run();
+        run(first_settings_run);
     }
 }
 
@@ -623,7 +625,7 @@ unsafe fn create_gdi_font(family: &str, size_px: i32, weight_str: &str) -> HFONT
     )
 }
 
-unsafe fn run() {
+unsafe fn run(first_settings_run: bool) {
     let hinst = GetModuleHandleW(PCWSTR::null()).unwrap();
     let face: Vec<u16> = "Segoe UI Variable\0".encode_utf16().collect();
     let fp = PCWSTR(face.as_ptr());
@@ -1181,6 +1183,13 @@ unsafe fn run() {
             "launcher hotkey {} registration FAILED (already in use?)",
             settings.global_hotkey
         ));
+        if should_prompt_for_default_hotkey_conflict(
+            first_settings_run,
+            &settings.global_hotkey,
+            false,
+        ) {
+            prompt_default_hotkey_conflict(hwnd, &settings.global_hotkey);
+        }
     } else {
         applog::log(&format!(
             "launcher hotkey {} registered",
@@ -1195,6 +1204,34 @@ unsafe fn run() {
     }
 
     let _ = UnregisterHotKey(hwnd, HOTKEY_ID);
+}
+
+fn should_prompt_for_default_hotkey_conflict(
+    first_settings_run: bool,
+    hotkey: &str,
+    registered: bool,
+) -> bool {
+    first_settings_run && !registered && crate::hotkey::same_hotkey(hotkey, "Alt+Space")
+}
+
+unsafe fn prompt_default_hotkey_conflict(hwnd: HWND, hotkey: &str) {
+    let message = format!(
+        "{hotkey} is already used by another app.\n\nOpen Settings to change the launcher hotkey now?\n\nChoose No to keep {hotkey}; it will start working after the other app releases it."
+    );
+    let mut msg: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut title: Vec<u16> = "Launcher Hotkey Conflict\0".encode_utf16().collect();
+    let choice = MessageBoxW(
+        hwnd,
+        PCWSTR(msg.as_ptr()),
+        PCWSTR(title.as_ptr()),
+        MB_ICONWARNING | MB_YESNO,
+    );
+    let _ = (&mut msg, &mut title);
+    if choice == IDYES {
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = Command::new(exe).arg("--settings").spawn();
+        }
+    }
 }
 
 unsafe extern "system" fn preview_wnd_proc(
@@ -10717,6 +10754,30 @@ mod tests {
         for source in ["FILE", "CODE", "Settings", "SYSTEM"] {
             assert!(!is_content_match_source(source));
         }
+    }
+
+    #[test]
+    fn first_install_prompts_only_for_default_hotkey_conflict() {
+        assert!(should_prompt_for_default_hotkey_conflict(
+            true,
+            "Alt+Space",
+            false
+        ));
+        assert!(!should_prompt_for_default_hotkey_conflict(
+            false,
+            "Alt+Space",
+            false
+        ));
+        assert!(!should_prompt_for_default_hotkey_conflict(
+            true,
+            "Ctrl+Alt+K",
+            false
+        ));
+        assert!(!should_prompt_for_default_hotkey_conflict(
+            true,
+            "Alt+Space",
+            true
+        ));
     }
 
     #[test]
