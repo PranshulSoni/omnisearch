@@ -44,7 +44,7 @@ struct SlintAgent {
 
 export component SettingsWindow inherits Window {
     title: "OmniSearch Settings";
-    icon: @image-url("../../icons/OmniSearchTrans_small.png");
+    icon: @image-url("../../icons/OmniSearchTrans.png");
     min-width: 950px;
     min-height: 600px;
     preferred-width: 950px;
@@ -173,7 +173,7 @@ export component SettingsWindow inherits Window {
                         HorizontalLayout {
                             alignment: center;
                             Image {
-                                source: @image-url("../../icons/OmniSearchTrans_small.png");
+                                source: @image-url("../../icons/OmniSearchTrans.png");
                                 width: 64px;
                                 height: 64px;
                                 image-fit: contain;
@@ -665,7 +665,7 @@ export component SettingsWindow inherits Window {
                                 // Background image (User's wallpaper)
                                 if root.has-desktop-wallpaper : Image {
                                     source: root.desktop-wallpaper;
-                                    image-fit: fill;
+                                    image-fit: cover;
                                     width: 100%;
                                     height: 100%;
                                 }
