@@ -44,7 +44,7 @@ struct SlintAgent {
 
 export component SettingsWindow inherits Window {
     title: "OmniSearch Settings";
-    icon: @image-url("../../icons/OmniSearchLogo.png");
+    icon: @image-url("../../icons/OmniSearchTrans.png");
     min-width: 950px;
     min-height: 600px;
     preferred-width: 950px;
@@ -162,15 +162,18 @@ export component SettingsWindow inherits Window {
                         spacing: 12px;
                         alignment: start;
                         
-                        // App logo image
-                        Image {
-                            source: @image-url("../../icons/OmniSearchLogo.png");
-                            width: 36px;
-                            height: 36px;
-                            image-fit: contain;
-                            vertical-alignment: center;
+                        // App logo image centered vertically
+                        VerticalLayout {
+                            alignment: center;
+                            Image {
+                                source: @image-url("../../icons/OmniSearchTrans.png");
+                                width: 36px;
+                                height: 36px;
+                                image-fit: contain;
+                            }
                         }
                         
+                        // Text block centered vertically
                         VerticalLayout {
                             alignment: center;
                             spacing: 2px;
