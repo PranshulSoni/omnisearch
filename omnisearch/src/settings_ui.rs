@@ -264,6 +264,12 @@ pub fn run_settings_window() {
         }
     });
 
+    ui.on_open_url(move |url| {
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", "", url.as_str()])
+            .spawn();
+    });
+
     // Re-assemble + validate the hotkey from the 4 dropdowns; apply, save and notify the
     // launcher whenever the selection forms a valid combo. Invalid intermediate states
     // (e.g. only a modifier picked) just show an error and leave the saved hotkey untouched.

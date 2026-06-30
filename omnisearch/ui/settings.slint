@@ -85,6 +85,7 @@ export component SettingsWindow inherits Window {
     callback save-settings();
     // Re-assemble + validate the hotkey from the four dropdown slots, then apply/save it.
     callback apply-hotkey();
+    callback open-url(string);
 
     // Hotkey dropdown models + selected values (built in Rust).
     in-out property <[string]> slot1-model;
@@ -163,39 +164,29 @@ export component SettingsWindow inherits Window {
 
                 // App identity block
                 Rectangle {
-                    height: 80px;
+                    height: 140px;
                     background: transparent;
-                    HorizontalLayout {
-                        padding-left: 20px;
-                        padding-right: 20px;
+                    VerticalLayout {
+                        alignment: center;
                         spacing: 12px;
-                        alignment: start;
                         
-                        // App logo image centered vertically
-                        VerticalLayout {
+                        HorizontalLayout {
                             alignment: center;
                             Image {
                                 source: @image-url("../../icons/OmniSearchTrans_small.png");
-                                width: 36px;
-                                height: 36px;
+                                width: 64px;
+                                height: 64px;
                                 image-fit: contain;
                             }
                         }
                         
-                        // Text block centered vertically
-                        VerticalLayout {
+                        HorizontalLayout {
                             alignment: center;
-                            spacing: 2px;
                             Text {
                                 text: "OmniSearch";
-                                font-size: 15px;
+                                font-size: 16px;
                                 font-weight: 700;
                                 color: root.text-primary;
-                            }
-                            Text {
-                                text: "Settings";
-                                font-size: 11px;
-                                color: root.text-muted;
                             }
                         }
                     }
@@ -1646,17 +1637,116 @@ export component SettingsWindow inherits Window {
                         alignment: start;
                         spacing: 24px;
                         Text { text: "About"; font-size: 30px; font-weight: 700; color: root.text-primary; }
+                        
+                        // Card 1: Version & Sponsors
                         Rectangle {
                             background: root.card-bg;
                             border-radius: 8px;
                             border-color: root.border-color;
                             border-width: 1px;
-                            padding: 32px;
-                            VerticalBox {
-                                spacing: 12px;
-                                Text { text: "OmniSearch"; font-size: 22px; font-weight: 700; color: root.text-primary; }
-                                Text { text: "Version 0.1.0"; font-size: 14px; color: root.text-muted; }
-                                Text { text: "A blazing fast Win32 search launcher in Rust."; color: root.text-secondary; font-size: 14px; }
+                            height: 64px;
+                            HorizontalLayout {
+                                padding-left: 20px;
+                                padding-right: 20px;
+                                spacing: 16px;
+                                
+                                // Left side
+                                HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 12px;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Text { text: "ℹ"; font-size: 18px; color: root.text-secondary; }
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text { text: "0.1.0"; font-size: 14px; font-weight: 600; color: root.text-primary; }
+                                        Text { text: "Version"; font-size: 11px; color: root.text-muted; }
+                                    }
+                                }
+                                
+                                Rectangle { horizontal-stretch: 1; }
+                                
+                                // Right side
+                                HorizontalLayout {
+                                    alignment: end;
+                                    spacing: 12px;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Button {
+                                            text: "Check for Updates";
+                                        }
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Button {
+                                            text: "Become a Sponsor";
+                                            primary: true;
+                                            clicked => { root.open-url("https://github.com/sponsors/PranshulSoni"); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Card 2: Links
+                        Rectangle {
+                            background: root.card-bg;
+                            border-radius: 8px;
+                            border-color: root.border-color;
+                            border-width: 1px;
+                            height: 64px;
+                            HorizontalLayout {
+                                padding-left: 20px;
+                                padding-right: 20px;
+                                spacing: 16px;
+                                
+                                // Left side
+                                HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 12px;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Text { text: "🌐"; font-size: 18px; color: root.text-secondary; }
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Text { text: "Website"; font-size: 14px; font-weight: 600; color: root.text-primary; }
+                                    }
+                                }
+                                
+                                Rectangle { horizontal-stretch: 1; }
+                                
+                                // Right side
+                                HorizontalLayout {
+                                    alignment: end;
+                                    spacing: 16px;
+                                    
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Text {
+                                            text: "Website";
+                                            color: website-ta.has-hover ? #4daaf8 : #1d90f3;
+                                            font-size: 13px;
+                                            website-ta := TouchArea {
+                                                clicked => { root.open-url("https://omnisearch.app"); }
+                                            }
+                                        }
+                                    }
+                                    
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Text {
+                                            text: "GitHub";
+                                            color: github-ta.has-hover ? #4daaf8 : #1d90f3;
+                                            font-size: 13px;
+                                            github-ta := TouchArea {
+                                                clicked => { root.open-url("https://github.com/PranshulSoni/omnisearch"); }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
