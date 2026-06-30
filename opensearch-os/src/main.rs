@@ -230,7 +230,10 @@ impl Theme {
                 clr_bdgbg: COLORREF(0x00_3B_3B_3B),
                 clr_bdgtx: COLORREF(0x00_FF_FF_FF),
                 clr_accent: COLORREF(0x00_E5_99_4C),
-                bg_footer: COLORREF(0x00_23_1D_19),
+                // Neutral footer shade matching the gray bg (#2f2f2f). Was #191d23, a
+                // navy leftover from an older accent theme that clashed with the new
+                // neutral dark theme — this is the "clipboard guide" mismatch.
+                bg_footer: COLORREF(0x00_26_26_26),
                 scrollbar_track: COLORREF(0x00_28_28_28),
                 scrollbar_thumb: COLORREF(0x00_4D_4D_4D),
             },
