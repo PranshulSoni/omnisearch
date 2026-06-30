@@ -47,6 +47,8 @@ const SEARCH_ICON_SIZE: i32 = 44;
 const RESULT_ICON_SIZE: i32 = 32;
 const RESULT_TEXT_BLOCK_H: i32 = 40;
 const RESULT_TEXT_GAP: i32 = 12;
+const CONTENT_HEADER_H: i32 = 80;
+const HEIGHT_ANIM_MS: u128 = 90;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
 fn centered_in_result_row(row_y: i32, height: i32, item_h: i32) -> i32 {
@@ -373,6 +375,10 @@ struct State {
     unfiltered_results: Vec<SearchResult>,
     search_loading: bool,
     search_anim_tick: usize,
+    shown_h: i32,
+    target_h: i32,
+    height_anim_from: i32,
+    height_anim_started: std::time::Instant,
 }
 
 #[derive(PartialEq)]
@@ -438,6 +444,9 @@ impl State {
     }
 
     fn win_h(&self) -> i32 {
+        self.target_win_h()
+    }
+    fn target_win_h(&self) -> i32 {
         if self.note_editing {
             return self.search_h() + 1 + AI_PANEL_H;
         }
@@ -448,58 +457,28 @@ impl State {
             return self.search_h() + 24;
         }
         if self.query.is_empty() {
-            return homepage_win_h(self.search_h(), self.item_h());
+            return homepage_win_h(self.search_h(), self.item_h(), self.results.len());
         }
         if self.has_prefix() {
-            let n = self.results.len().min(VISIBLE_RESULTS) as i32;
-            let mut headers_count = 0;
-            for idx in 0..(n as usize) {
-                let res_idx = self.scroll_offset + idx;
-                if res_idx >= self.results.len() {
-                    break;
-                }
-                let starts_section = res_idx == 0
-                    || source_section_label_res(&self.results[res_idx - 1])
-                        != source_section_label_res(&self.results[res_idx]);
-                if starts_section {
-                    headers_count += 1;
-                }
-            }
-            self.search_h() + 1 + n * self.item_h() + headers_count * 24 + 8
+            scoped_results_win_h(self.search_h(), self.item_h(), self.results.len())
         } else {
-            normal_search_win_h(self.search_h(), self.item_h())
+            normal_search_win_h(self.search_h(), self.item_h(), self.results.len())
+        }
+    }
+    fn paint_win_h(&self) -> i32 {
+        match self.anim {
+            Anim::Visible => self.shown_h.max(self.search_h()),
+            _ => self.target_win_h(),
         }
     }
     fn launcher_top_y(&self) -> i32 {
-        launcher_top_y(self.cy, self.search_h(), self.item_h())
+        launcher_top_y(self.cy, self.paint_win_h())
     }
     fn result_row_y(&self, i: usize) -> i32 {
         let end_y = self.launcher_top_y();
         let mut cur_y = end_y + self.search_h() + 1;
 
-        if self.query.is_empty() {
-            cur_y += 36; // "Quick Search" header
-            return cur_y + i as i32 * self.item_h();
-        }
-
-        if self.has_prefix() {
-            let mut headers_count = 0;
-            for idx in 0..=i {
-                let res_idx = self.scroll_offset + idx;
-                if res_idx >= self.results.len() {
-                    break;
-                }
-                let starts_section = res_idx == 0
-                    || source_section_label_res(&self.results[res_idx - 1])
-                        != source_section_label_res(&self.results[res_idx]);
-                if starts_section {
-                    headers_count += 1;
-                }
-            }
-            return cur_y + 48 + headers_count * 24 + i as i32 * self.item_h();
-        }
-
-        cur_y += 80; // "Best matches first" label
+        cur_y += CONTENT_HEADER_H;
         cur_y + i as i32 * self.item_h()
     }
     fn result_rect(&self, i: usize) -> RECT {
@@ -949,6 +928,10 @@ unsafe fn run() {
         unfiltered_results: default_homepage_results(),
         search_loading: false,
         search_anim_tick: 0,
+        shown_h: homepage_win_h(60, 68, 8),
+        target_h: homepage_win_h(60, 68, 8),
+        height_anim_from: homepage_win_h(60, 68, 8),
+        height_anim_started: std::time::Instant::now(),
     });
 
     // Spawn background Hermes gateway status checker and auto-starter
@@ -1688,7 +1671,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     if !matches!(s.active_filter, FilterType::All) {
                         filtered.retain(|r| result_matches_filter(r, s.active_filter));
                     }
-                    apply_sort(&mut filtered, s.sort_asc);
+                    apply_sort(&mut filtered, s.sort_asc, &s.query);
                     s.results = filtered;
                     s.result_reasons = compute_result_reasons(&s.results);
                     if s.results.is_empty() {
@@ -1711,6 +1694,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         s.app_icons.retain(|k, _| !k.starts_with("window:"));
                     }
                     trigger_icon_loading(hwnd, s);
+                    sync_height_animation(hwnd, s);
                     invalidate_results_area(hwnd, s);
                 }
             }
@@ -1808,7 +1792,21 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
 
                 TIMER_SEARCH_ANIM => {
                     s.search_anim_tick = (s.search_anim_tick + 1) % 8;
-                    invalidate_search_row(hwnd, s);
+                    let next_h = animated_height(s);
+                    let height_changed = next_h != s.shown_h;
+                    if height_changed {
+                        s.shown_h = next_h;
+                    }
+                    if s.shown_h == s.target_h && !s.search_loading {
+                        let _ = KillTimer(hwnd, TIMER_SEARCH_ANIM);
+                    }
+                    if height_changed {
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                    } else if s.search_loading {
+                        invalidate_search_row(hwnd, s);
+                    } else {
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                    }
                 }
                 _ => {}
             }
@@ -1869,6 +1867,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     s.cursor_pos += c.len_utf8();
                     s.selected = 0;
                     s.scroll_offset = 0;
+                    sync_height_animation(hwnd, s);
                     kick_debounce(hwnd, s);
                     reset_cursor_blink(hwnd, s);
                     invalidate_search_row(hwnd, s);
@@ -2148,9 +2147,11 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         if s.query.is_empty() {
                             s.selected = s.homepage_sel;
                             s.reset_results();
+                            sync_height_animation(hwnd, s);
                         } else {
                             s.selected = 0;
                             s.results.clear();
+                            sync_height_animation(hwnd, s);
                             kick_debounce(hwnd, s);
                         }
                         reset_cursor_blink(hwnd, s);
@@ -2936,7 +2937,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                             if !matches!(s.active_filter, FilterType::All) {
                                 filtered.retain(|r| result_matches_filter(r, s.active_filter));
                             }
-                            apply_sort(&mut filtered, s.sort_asc);
+                            apply_sort(&mut filtered, s.sort_asc, &s.query);
                             s.results = filtered;
                             s.result_reasons = compute_result_reasons(&s.results);
                             if s.results.is_empty() {
@@ -2946,6 +2947,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                                 s.selected = s.selected.min(s.results.len() - 1);
                                 s.scroll_offset = s.scroll_offset.min(s.results.len().saturating_sub(VISIBLE_RESULTS));
                             }
+                            sync_height_animation(hwnd, s);
                             let _ = InvalidateRect(hwnd, None, FALSE);
                         }
                         return LRESULT(0);
@@ -2961,9 +2963,10 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 let sort_x_right = x_start + WIN_W - 12;
                 if my >= sort_row_top && my < sort_row_bot && mx >= sort_x_left && mx < sort_x_right {
                     s.sort_asc = !s.sort_asc;
-                    apply_sort(&mut s.results, s.sort_asc);
+                    apply_sort(&mut s.results, s.sort_asc, &s.query);
                     s.selected = 0;
                     s.scroll_offset = 0;
+                    sync_height_animation(hwnd, s);
                     let _ = InvalidateRect(hwnd, None, FALSE);
                     return LRESULT(0);
                 }
@@ -3563,6 +3566,10 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
         if is_finished {
             if appearing {
                 s.anim = Anim::Visible;
+                s.target_h = s.target_win_h();
+                s.shown_h = s.target_h;
+                s.height_anim_from = s.target_h;
+                s.height_anim_started = std::time::Instant::now();
                 force_foreground(hwnd);
             } else {
                 s.anim = Anim::Hidden;
@@ -5173,9 +5180,35 @@ unsafe fn kick_debounce(hwnd: HWND, s: &mut State) {
     let _ = SetTimer(hwnd, TIMER_DEBOUNCE, 20, None);
 }
 
-fn search_row_invalidation_rect(client_w: i32, cy: i32, search_h: i32, item_h: i32) -> RECT {
+unsafe fn sync_height_animation(hwnd: HWND, s: &mut State) {
+    let target = s.target_win_h();
+    if s.target_h != target {
+        s.height_anim_from = s.shown_h.max(s.search_h());
+        s.target_h = target;
+        s.height_anim_started = std::time::Instant::now();
+        let _ = SetTimer(hwnd, TIMER_SEARCH_ANIM, 16, None);
+        let _ = InvalidateRect(hwnd, None, FALSE);
+    } else if s.shown_h == 0 {
+        s.shown_h = target;
+    }
+}
+
+fn animated_height(s: &State) -> i32 {
+    if s.shown_h <= 0 {
+        return s.target_win_h();
+    }
+    if s.shown_h == s.target_h {
+        return s.shown_h;
+    }
+    let elapsed = s.height_anim_started.elapsed().as_millis();
+    let t = (elapsed as f32 / HEIGHT_ANIM_MS as f32).clamp(0.0, 1.0);
+    let eased = ease_out(t);
+    (s.height_anim_from as f32 + (s.target_h - s.height_anim_from) as f32 * eased) as i32
+}
+
+fn search_row_invalidation_rect(client_w: i32, cy: i32, current_h: i32, search_h: i32) -> RECT {
     let x = (client_w - WIN_W) / 2;
-    let y = launcher_top_y(cy, search_h, item_h);
+    let y = launcher_top_y(cy, current_h);
     RECT {
         left: x,
         top: y,
@@ -5187,30 +5220,37 @@ fn search_row_invalidation_rect(client_w: i32, cy: i32, search_h: i32, item_h: i
 fn results_invalidation_rect(
     client_w: i32,
     cy: i32,
-    win_h: i32,
+    current_h: i32,
     search_h: i32,
-    item_h: i32,
 ) -> RECT {
     let x = (client_w - WIN_W) / 2;
-    let y = launcher_top_y(cy, search_h, item_h);
+    let y = launcher_top_y(cy, current_h);
     RECT {
         left: x,
         top: y + search_h + 1,
         right: x + WIN_W,
-        bottom: y + win_h,
+        bottom: y + current_h,
     }
 }
 
-fn homepage_win_h(search_h: i32, item_h: i32) -> i32 {
-    search_h + 37 + 8 * item_h + 8
+fn visible_row_count(result_count: usize) -> i32 {
+    result_count.clamp(1, VISIBLE_RESULTS) as i32
 }
 
-fn launcher_top_y(cy: i32, search_h: i32, item_h: i32) -> i32 {
-    cy - homepage_win_h(search_h, item_h) / 2
+fn homepage_win_h(search_h: i32, item_h: i32, result_count: usize) -> i32 {
+    search_h + 1 + CONTENT_HEADER_H + visible_row_count(result_count) * item_h + 8
 }
 
-fn normal_search_win_h(search_h: i32, item_h: i32) -> i32 {
-    search_h + 81 + VISIBLE_RESULTS as i32 * item_h + 8
+fn launcher_top_y(cy: i32, current_h: i32) -> i32 {
+    cy - current_h / 2
+}
+
+fn normal_search_win_h(search_h: i32, item_h: i32, result_count: usize) -> i32 {
+    search_h + 1 + CONTENT_HEADER_H + visible_row_count(result_count) * item_h + 8
+}
+
+fn scoped_results_win_h(search_h: i32, item_h: i32, result_count: usize) -> i32 {
+    search_h + 1 + CONTENT_HEADER_H + visible_row_count(result_count) * item_h + 8
 }
 
 unsafe fn invalidate_search_row(hwnd: HWND, s: &State) {
@@ -5223,8 +5263,8 @@ unsafe fn invalidate_search_row(hwnd: HWND, s: &State) {
         let rect = search_row_invalidation_rect(
             client.right - client.left,
             s.cy,
+            s.paint_win_h(),
             s.search_h(),
-            s.item_h(),
         );
         let _ = InvalidateRect(hwnd, Some(&rect), FALSE);
     } else {
@@ -5242,9 +5282,8 @@ unsafe fn invalidate_results_area(hwnd: HWND, s: &State) {
         let rect = results_invalidation_rect(
             client.right - client.left,
             s.cy,
-            s.win_h(),
+            s.paint_win_h(),
             s.search_h(),
-            s.item_h(),
         );
         let _ = InvalidateRect(hwnd, Some(&rect), FALSE);
     } else {
@@ -5270,6 +5309,7 @@ unsafe fn trigger_search(_hwnd: HWND, s: &mut State) {
         // Land on the homepage item the user last visited, not a fixed default.
         s.selected = s.homepage_sel.min(s.results.len().saturating_sub(1));
         s.scroll_offset = 0;
+        sync_height_animation(_hwnd, s);
         let _ = InvalidateRect(_hwnd, None, FALSE);
         return;
     }
@@ -5279,6 +5319,7 @@ unsafe fn trigger_search(_hwnd: HWND, s: &mut State) {
     s.results_stale = true;
     s.current_query_id += 1;
     s.search_loading = true;
+    sync_height_animation(_hwnd, s);
     let _ = SetTimer(_hwnd, TIMER_SEARCH_ANIM, 80, None);
     let req = SearchRequest {
         query: s.query.clone(),
@@ -6516,7 +6557,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     let pill_r = 32;
 
     let end_w = win_w;
-    let end_h = s.win_h();
+    let end_h = s.paint_win_h();
 
     let w = (pill_w as f32 + (end_w - pill_w) as f32 * t) as i32;
     let h = (pill_h as f32 + (end_h - pill_h) as f32 * t) as i32;
@@ -7375,7 +7416,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
             );
 
-            list_y += 36;
+            list_y += CONTENT_HEADER_H;
         } else if !s.has_prefix() {
             // Search state layout: Filter Row (hidden when inside a scope like clip:, agents:)
             let filters = [
@@ -7518,6 +7559,47 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
                 list_y += 32;
             }
+        } else {
+            SelectObject(mdc, s.font_c);
+            SetTextColor(mdc, s.theme.palette().clr_gray);
+            let section = s
+                .results
+                .first()
+                .map(source_section_label_res)
+                .unwrap_or("Results");
+            let mut label: Vec<u16> = section.encode_utf16().collect();
+            let mut label_rect = RECT {
+                left: x + PAD_L,
+                top: list_y + 10,
+                right: x + list_w / 2,
+                bottom: list_y + 26,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut label,
+                &mut label_rect,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
+
+            let count_text = if s.results.len() == 1 {
+                "1 result".to_string()
+            } else {
+                format!("{} results", s.results.len())
+            };
+            let mut count: Vec<u16> = count_text.encode_utf16().collect();
+            let mut count_rect = RECT {
+                left: x + list_w / 2,
+                top: list_y + 10,
+                right: x + list_w - PAD_L,
+                bottom: list_y + 26,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut count,
+                &mut count_rect,
+                DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+            );
+            list_y += CONTENT_HEADER_H;
         }
 
         for i in 0..n {
@@ -7666,7 +7748,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 let starts_section = res_idx == 0
                     || source_section_label_res(&s.results[res_idx - 1])
                         != source_section_label_res(res);
-                if starts_section {
+                if false && starts_section {
                     SelectObject(mdc, s.font_b);
                     SetTextColor(mdc, palette.clr_gray);
                     let section = source_section_label_res(res);
@@ -8674,7 +8756,7 @@ fn filter_index(ftype: FilterType) -> usize {
     }
 }
 
-fn apply_sort(results: &mut Vec<SearchResult>, sort_asc: bool) {
+fn apply_sort(results: &mut Vec<SearchResult>, sort_asc: bool, query: &str) {
     if sort_asc {
         results.sort_by(|a, b| {
             a.entry
@@ -8683,11 +8765,87 @@ fn apply_sort(results: &mut Vec<SearchResult>, sort_asc: bool) {
                 .cmp(&b.entry.control_name.to_lowercase())
         });
     } else {
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let q = clean_query_prefix(query).trim().to_lowercase();
+        results.sort_by(|a, b| best_match_cmp(a, b, &q));
+    }
+}
+
+fn best_match_cmp(a: &SearchResult, b: &SearchResult, query: &str) -> std::cmp::Ordering {
+    best_match_tuple(b, query)
+        .partial_cmp(&best_match_tuple(a, query))
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| {
+            a.entry
+                .control_name
+                .to_lowercase()
+                .cmp(&b.entry.control_name.to_lowercase())
+        })
+}
+
+fn best_match_tuple(result: &SearchResult, query: &str) -> (f32, f32, f32) {
+    (
+        title_match_rank(&result.entry.control_name, query),
+        source_priority(&result.entry.source, &result.entry.launch_command),
+        result.score,
+    )
+}
+
+fn title_match_rank(title: &str, query: &str) -> f32 {
+    let q = query.trim();
+    if q.is_empty() {
+        return 0.0;
+    }
+    let title_lower = title.to_lowercase();
+    let stem_lower = title_lower
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(title_lower.as_str());
+    if title_lower == q || stem_lower == q {
+        100.0
+    } else if title_lower.starts_with(q) || stem_lower.starts_with(q) {
+        90.0
+    } else if title_lower.contains(q) || stem_lower.contains(q) {
+        70.0
+    } else {
+        let words: Vec<&str> = stem_lower
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .collect();
+        let q_words: Vec<&str> = q.split_whitespace().collect();
+        if q_words.is_empty() {
+            0.0
+        } else {
+            let matched = q_words.iter().filter(|word| words.contains(word)).count();
+            if matched == 0 {
+                0.0
+            } else {
+                40.0 + 20.0 * matched as f32 / q_words.len() as f32
+            }
+        }
+    }
+}
+
+fn source_priority(source: &str, command: &str) -> f32 {
+    if source == "app" {
+        60.0
+    } else if matches!(source, "FILE" | "FOLDER" | "RECENT" | "CODE") {
+        50.0
+    } else if source.eq_ignore_ascii_case("settings")
+        || source.eq_ignore_ascii_case("control")
+        || command.starts_with("ms-settings:")
+        || command.starts_with("control")
+        || command.contains(".cpl")
+        || command.ends_with(".msc")
+    {
+        45.0
+    } else if matches!(source, "BOOKMARK" | "HISTORY" | "QUICKLINK") {
+        40.0
+    } else if source == "web" {
+        30.0
+    } else if matches!(source, "FILE_CONTENT" | "CODE_CONTENT" | "PDF" | "DOCX" | "OCR") {
+        20.0
+    } else {
+        10.0
     }
 }
 
@@ -10213,27 +10371,78 @@ mod tests {
 
     #[test]
     fn search_row_invalidation_only_covers_search_header() {
-        let rect = search_row_invalidation_rect(900, 300, 60, 54);
-        assert_eq!((rect.left, rect.top, rect.right, rect.bottom), (30, 32, 870, 94));
+        let rect = search_row_invalidation_rect(900, 300, 581, 60);
+        assert_eq!((rect.left, rect.top, rect.right, rect.bottom), (30, 10, 870, 72));
     }
 
     #[test]
     fn results_invalidation_starts_below_search_header() {
-        let rect = results_invalidation_rect(900, 300, 500, 60, 54);
-        assert_eq!((rect.left, rect.top, rect.right, rect.bottom), (30, 93, 870, 532));
+        let rect = results_invalidation_rect(900, 300, 581, 60);
+        assert_eq!((rect.left, rect.top, rect.right, rect.bottom), (30, 71, 870, 591));
     }
 
     #[test]
     fn normal_search_height_does_not_depend_on_result_count() {
-        assert_eq!(normal_search_win_h(60, 54), 581);
-        assert_eq!(normal_search_win_h(60, 68), 693);
+        assert_eq!(normal_search_win_h(60, 54, 1), 203);
+        assert_eq!(normal_search_win_h(60, 54, 8), 581);
+    }
+
+    #[test]
+    fn scoped_results_height_matches_homepage_height() {
+        assert_eq!(scoped_results_win_h(60, 54, 2), homepage_win_h(60, 54, 2));
+        assert_eq!(scoped_results_win_h(60, 54, 2), normal_search_win_h(60, 54, 2));
     }
 
     #[test]
     fn launcher_top_is_anchored_to_homepage_height() {
-        assert_eq!(homepage_win_h(60, 54), 537);
-        assert_eq!(launcher_top_y(300, 60, 54), 32);
-        assert_eq!(launcher_top_y(300, 60, 54), launcher_top_y(300, 60, 54));
+        assert_eq!(homepage_win_h(60, 54, 8), 581);
+        assert_eq!(launcher_top_y(300, 581), 10);
+        assert_eq!(launcher_top_y(300, 581), launcher_top_y(300, 581));
+    }
+
+    #[test]
+    fn best_match_prefers_title_match_over_raw_score() {
+        let mk = |source: &str, name: &str, score: f32| SearchResult {
+            score,
+            entry: search::CatalogEntry {
+                id: format!("{source}.{name}"),
+                control_name: name.to_string(),
+                breadcrumb_path: String::new(),
+                launch_command: String::new(),
+                source: source.to_string(),
+                description: String::new(),
+                synonyms: String::new(),
+            },
+        };
+        let mut results = vec![
+            mk("web", "Search Google for \"task\"", 500.0),
+            mk("app", "Task Manager", 10.0),
+            mk("FILE_CONTENT", "notes.txt", 600.0),
+        ];
+        apply_sort(&mut results, false, "task");
+        assert_eq!(results[0].entry.control_name, "Task Manager");
+    }
+
+    #[test]
+    fn best_match_keeps_content_below_file_title_match() {
+        let mk = |source: &str, name: &str, score: f32| SearchResult {
+            score,
+            entry: search::CatalogEntry {
+                id: format!("{source}.{name}"),
+                control_name: name.to_string(),
+                breadcrumb_path: String::new(),
+                launch_command: String::new(),
+                source: source.to_string(),
+                description: String::new(),
+                synonyms: String::new(),
+            },
+        };
+        let mut results = vec![
+            mk("OCR", "random-screenshot.png", 900.0),
+            mk("FILE", "project-plan.txt", 20.0),
+        ];
+        apply_sort(&mut results, false, "project");
+        assert_eq!(results[0].entry.control_name, "project-plan.txt");
     }
 
     #[test]
