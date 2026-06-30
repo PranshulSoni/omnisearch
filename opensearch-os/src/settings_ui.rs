@@ -483,6 +483,7 @@ pub fn run_settings_window() {
     ui.window().show().ok();
     ui.window().set_minimized(false);
     slint::run_event_loop().ok();
+    drop(ui);
 }
 
 fn log_settings_ui(msg: &str) {
