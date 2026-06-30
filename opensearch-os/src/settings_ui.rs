@@ -134,6 +134,26 @@ pub fn run_settings_window() {
     let folders_model = slint::ModelRc::new(slint::VecModel::from(folders_vec));
     ui.set_db_folders(folders_model);
 
+    // Load Available Agents from DB
+    let mut slint_agents = Vec::new();
+    if let Some(conn) = get_db_conn() {
+        if let Ok(mut stmt) = conn.prepare("SELECT id, name, goal FROM agents ORDER BY ts DESC") {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                Ok(SlintAgent {
+                    id: row.get::<_, i32>(0)?,
+                    name: SharedString::from(row.get::<_, String>(1)?),
+                    goal: SharedString::from(row.get::<_, String>(2)?),
+                })
+            }) {
+                for agent in rows.filter_map(|r| r.ok()) {
+                    slint_agents.push(agent);
+                }
+            }
+        }
+    }
+    let agents_model = slint::ModelRc::new(slint::VecModel::from(slint_agents));
+    ui.set_available_agents(agents_model);
+
     // Close = hide window, terminate event loop
     let ui_weak_close = ui.as_weak();
     ui.window().on_close_requested(move || {
@@ -152,6 +172,25 @@ pub fn run_settings_window() {
             slint::quit_event_loop().ok();
         }
         CloseRequestResponse::HideWindow
+    });
+
+    // Launch agent callback
+    let ui_weak_launch = ui.as_weak();
+    ui.on_launch_agent(move |agent_id| {
+        if let Some(ui) = ui_weak_launch.upgrade() {
+            if let Some(hwnd) = find_launcher_hwnd() {
+                unsafe {
+                    let _ = PostMessageW(
+                        hwnd,
+                        windows::Win32::UI::WindowsAndMessaging::WM_USER + 12,
+                        windows::Win32::Foundation::WPARAM(agent_id as usize),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
+                }
+            }
+            ui.window().hide().ok();
+            slint::quit_event_loop().ok();
+        }
     });
 
     // Save settings callback
