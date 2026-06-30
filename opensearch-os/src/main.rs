@@ -104,10 +104,12 @@ unsafe fn setup_tray_icon(
     nid.uID = 1;
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
-    let mut hicon = LoadIconW(hinst, PCWSTR(1 as _)).unwrap_or_default();
-    if hicon.0.is_null() {
-        hicon = LoadIconW(HINSTANCE(std::ptr::null_mut()), IDI_APPLICATION).unwrap_or_default();
-    }
+    let hicon = unsafe {
+        load_png_to_hicon(
+            include_bytes!("../../icons/OmniSearchLogo.png"),
+            16,
+        )
+    };
     nid.hIcon = hicon;
     let tip = "OpenSearch OS".encode_utf16().collect::<Vec<u16>>();
     for (i, &c) in tip.iter().enumerate().take(127) {
@@ -983,12 +985,27 @@ unsafe fn run(first_settings_run: bool) {
         configure_hermes_llm(&cfg.endpoint, &cfg.model, &cfg.api_key);
     }
 
+    let icon_main = unsafe {
+        load_png_to_hicon(
+            include_bytes!("../../icons/OmniSearchLogo.png"),
+            32,
+        )
+    };
+    let icon_main_sm = unsafe {
+        load_png_to_hicon(
+            include_bytes!("../../icons/OmniSearchLogo.png"),
+            16,
+        )
+    };
+
     let class: Vec<u16> = "opensearch-os\0".encode_utf16().collect();
     let wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(wnd_proc),
         hInstance: hinst.into(),
+        hIcon: icon_main,
+        hIconSm: icon_main_sm,
         hCursor: LoadCursorW(HINSTANCE(null_mut()), IDC_ARROW).unwrap(),
         hbrBackground: HBRUSH(null_mut()),
         lpszClassName: PCWSTR(class.as_ptr()),
@@ -1002,6 +1019,8 @@ unsafe fn run(first_settings_run: bool) {
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(preview_wnd_proc),
         hInstance: hinst.into(),
+        hIcon: icon_main,
+        hIconSm: icon_main_sm,
         hCursor: LoadCursorW(HINSTANCE(null_mut()), IDC_ARROW).unwrap(),
         hbrBackground: HBRUSH(null_mut()),
         lpszClassName: PCWSTR(preview_class.as_ptr()),

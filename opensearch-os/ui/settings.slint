@@ -44,6 +44,7 @@ struct SlintAgent {
 
 export component SettingsWindow inherits Window {
     title: "OmniSearch Settings";
+    icon: @image-url("../../icons/OmniSearchLogo.png");
     min-width: 950px;
     min-height: 600px;
     preferred-width: 950px;
@@ -155,27 +156,22 @@ export component SettingsWindow inherits Window {
                 Rectangle {
                     height: 80px;
                     background: transparent;
-                    HorizontalBox {
+                    HorizontalLayout {
                         padding-left: 20px;
                         padding-right: 20px;
                         spacing: 12px;
-                        // App icon pill
-                        Rectangle {
+                        alignment: start;
+                        
+                        // App logo image
+                        Image {
+                            source: @image-url("../../icons/OmniSearchLogo.png");
                             width: 36px;
                             height: 36px;
-                            border-radius: 10px;
-                            background: root.accent;
-                            Text {
-                                text: "\u{e734}";
-                                font-family: "Segoe MDL2 Assets";
-                                color: #ffffff;
-                                font-size: 18px;
-                                font-weight: 700;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
+                            image-fit: contain;
+                            vertical-alignment: center;
                         }
-                        VerticalBox {
+                        
+                        VerticalLayout {
                             alignment: center;
                             spacing: 2px;
                             Text {
@@ -1284,6 +1280,7 @@ export component SettingsWindow inherits Window {
                                 HorizontalBox {
                                     spacing: 10px;
                                     padding: 0;
+                                    width: 480px;
 
                                     ComboBox {
                                         horizontal-stretch: 1;
@@ -1399,19 +1396,14 @@ export component SettingsWindow inherits Window {
                                     Rectangle {
                                         width: 36px;
                                         height: 36px;
-                                        border-radius: 18px;
-                                        background: #1b262c;
-                                        border-width: 1px;
-                                        border-color: root.border-color;
+                                        border-radius: 8px;
                                         clip: true;
                                         
                                         Image {
                                             source: root.agent-logo;
-                                            width: 24px;
-                                            height: 24px;
+                                            width: 36px;
+                                            height: 36px;
                                             image-fit: contain;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
                                         }
                                     }
                                     
@@ -1451,7 +1443,7 @@ export component SettingsWindow inherits Window {
                                             alignment: center;
                                             
                                             Text {
-                                                text: "Message ➜";
+                                                text: "Message";
                                                 font-size: 11px;
                                                 font-weight: 700;
                                                 color: agent-card-ta.has-hover ? #1e1e1e : root.accent;

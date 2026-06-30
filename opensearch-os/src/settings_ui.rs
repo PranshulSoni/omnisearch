@@ -323,8 +323,24 @@ pub fn run_settings_window() {
                     s.scan_folders = defaults;
                 }
                 if !s.scan_folders.contains(&path_str) {
-                    s.scan_folders.push(path_str);
+                    s.scan_folders.push(path_str.clone());
                     s.save();
+
+                    // Immediately scan/index the newly added folder in the background
+                    let path_str_clone = path_str.clone();
+                    std::thread::spawn(move || {
+                        let _ = unsafe {
+                            windows::Win32::System::Com::CoInitializeEx(
+                                None,
+                                windows::Win32::System::Com::COINIT_MULTITHREADED,
+                            )
+                        };
+                        let appdata = std::env::var("APPDATA").unwrap_or_default();
+                        let db_path = std::path::PathBuf::from(appdata)
+                            .join("opensearch-os")
+                            .join("file_index.db");
+                        let _ = crate::indexer::run_indexer_folders(&db_path, vec![std::path::PathBuf::from(path_str_clone)]);
+                    });
                     let folders_vec: Vec<slint::SharedString> = s
                         .scan_folders
                         .iter()
