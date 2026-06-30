@@ -46,6 +46,9 @@ const BADGE_W: i32 = 54;
 const BADGE_H: i32 = 18;
 const SEARCH_ICON_SIZE: i32 = 44;
 const RESULT_ICON_SIZE: i32 = 32;
+// Agent icons (homepage Agents/Agent History + the agents:/agentchats: scoped views) draw
+// larger than other result icons so the logo reads clearly instead of looking tiny.
+const AGENT_ICON_SIZE: i32 = 40;
 const RESULT_TEXT_BLOCK_H: i32 = 40;
 const RESULT_TEXT_GAP: i32 = 12;
 const CONTENT_HEADER_H: i32 = 80;
@@ -771,11 +774,11 @@ unsafe fn run(first_settings_run: bool) {
     let icon_memory = load_icon_from_dll("shell32.dll", 238, 64);
     let icon_agent = load_png_to_hicon(
         include_bytes!("../../icons/AgentLogo.png"),
-        RESULT_ICON_SIZE as u32,
+        AGENT_ICON_SIZE as u32,
     );
     let icon_agent_chat = load_png_to_hicon(
         include_bytes!("../../icons/AgentMessageIcon.png"),
-        RESULT_ICON_SIZE as u32,
+        AGENT_ICON_SIZE as u32,
     );
 
     // Load at exactly the draw size (from 256² sources via Lanczos) so DrawIconEx never rescales
@@ -6576,6 +6579,31 @@ unsafe fn draw_spinner(hdc: HDC, x: i32, y: i32, size: i32, tick: usize, color: 
     }
 }
 
+// Draw a result-row icon at `x_base` (the row's normal icon origin) for row top `ry`.
+// Agent icons (icon_agent / icon_agent_chat) render at AGENT_ICON_SIZE — larger than other
+// result icons — while staying centered on the same point as a RESULT_ICON_SIZE icon, so
+// row alignment is unchanged and the larger glyph never overlaps the result text.
+unsafe fn draw_result_icon(mdc: HDC, s: &State, icon: HICON, x_base: i32, ry: i32) {
+    if icon.0.is_null() {
+        return;
+    }
+    let is_agent = icon.0 == s.icon_agent.0 || icon.0 == s.icon_agent_chat.0;
+    let size = if is_agent { AGENT_ICON_SIZE } else { RESULT_ICON_SIZE };
+    let ix = x_base - (size - RESULT_ICON_SIZE) / 2;
+    let iy = centered_in_result_row(ry, size, s.app_settings.item_height as i32);
+    let _ = DrawIconEx(
+        mdc,
+        ix,
+        iy,
+        icon,
+        size,
+        size,
+        0,
+        HBRUSH(null_mut()),
+        DI_NORMAL,
+    );
+}
+
 unsafe fn paint(hwnd: HWND, s: &State) {
     #[allow(non_snake_case)]
     let SEARCH_H = s.search_h();
@@ -7881,26 +7909,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     _ => s.icon_app,
                 };
 
-                if !icon_to_draw.0.is_null() {
-                    let icon_y = centered_in_result_row(
-                        ry,
-                        RESULT_ICON_SIZE,
-                        s.app_settings.item_height as i32,
-                    );
-                    let _ = unsafe {
-                        DrawIconEx(
-                            mdc,
-                            x + PAD_L,
-                            icon_y,
-                            icon_to_draw,
-                            RESULT_ICON_SIZE,
-                            RESULT_ICON_SIZE,
-                            0,
-                            HBRUSH(null_mut()),
-                            DI_NORMAL,
-                        )
-                    };
-                }
+                draw_result_icon(mdc, s, icon_to_draw, x + PAD_L, ry);
 
                 let tx = x + PAD_L + RESULT_ICON_SIZE + RESULT_TEXT_GAP;
                 let text_top = centered_in_result_row(
@@ -8167,6 +8176,13 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         || res.entry.launch_command.starts_with("action:ask_clipboard")
                     {
                         s.icon_clipboard
+                    } else if res.entry.launch_command.starts_with("openagent:") {
+                        // Agents in the `agents:` view — same icon as homepage Agents.
+                        s.icon_agent
+                    } else if res.entry.source == "AI_CHAT" {
+                        // Agent runs / chats in the `agentchats:` view — same icon as
+                        // homepage Agent History.
+                        s.icon_agent_chat
                     } else if res.entry.source == "AI"
                         || res.entry.source == "MEMORY"
                         || res
@@ -8196,21 +8212,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         s.icon_app
                     };
 
-                    if !icon_to_draw.0.is_null() {
-                        let _ = unsafe {
-                            DrawIconEx(
-                                mdc,
-                                x + PAD_L,
-                                icon_y,
-                                icon_to_draw,
-                                RESULT_ICON_SIZE,
-                                RESULT_ICON_SIZE,
-                                0,
-                                HBRUSH(null_mut()),
-                                DI_NORMAL,
-                            )
-                        };
-                    }
+                    draw_result_icon(mdc, s, icon_to_draw, x + PAD_L, ry);
                 }
 
                 let tx = x + PAD_L + RESULT_ICON_SIZE + RESULT_TEXT_GAP;
