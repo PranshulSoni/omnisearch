@@ -735,33 +735,12 @@ unsafe fn run(first_settings_run: bool) {
     // Ensure agents table exists and has a default Hermes agent
     ensure_default_agents(&db_path);
 
-    // Load the Windows Settings icon from the real Settings UWP app.
-    // SHGetFileInfoW with the shell:AppsFolder path returns the actual gear logo.
-    let icon_settings = {
-        let settings_path = "shell:AppsFolder\\windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel";
-        let wide: Vec<u16> = settings_path
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        let mut shfi = windows::Win32::UI::Shell::SHFILEINFOW::default();
-        let flags = windows::Win32::UI::Shell::SHGFI_ICON
-            | windows::Win32::UI::Shell::SHGFI_LARGEICON
-            | windows::Win32::UI::Shell::SHGFI_USEFILEATTRIBUTES;
-        let res = unsafe {
-            windows::Win32::UI::Shell::SHGetFileInfoW(
-                windows::core::PCWSTR(wide.as_ptr()),
-                windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(0),
-                Some(&mut shfi),
-                std::mem::size_of::<windows::Win32::UI::Shell::SHFILEINFOW>() as u32,
-                flags,
-            )
-        };
-        if res != 0 && !shfi.hIcon.0.is_null() {
-            shfi.hIcon
-        } else {
-            // Fallback: classic gear icon from shell32
-            unsafe { load_icon_from_dll("shell32.dll", 274, 64) }
-        }
+    // Load the custom Settings icon from PNG at compile time.
+    let icon_settings = unsafe {
+        load_png_to_hicon(
+            include_bytes!("../../icons/settings.png"),
+            RESULT_ICON_SIZE as u32,
+        )
     };
     let icon_web = load_icon_from_dll("shell32.dll", 14, 64);
     let icon_bookmark = load_icon_from_dll("shell32.dll", 43, 64);
@@ -8118,10 +8097,9 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                         .get(&res.entry.launch_command)
                         .copied()
                         .filter(|h| !h.0.is_null());
-                    let icon_to_draw = if res.entry.launch_command.starts_with("ms-settings:")
-                        || res.entry.launch_command.starts_with("control")
-                        || res.entry.launch_command.contains(".cpl")
-                        || res.entry.launch_command.ends_with(".msc")
+                    let icon_to_draw = if search::is_native_settings_command(&res.entry.launch_command)
+                        || res.entry.source == "CONTROL"
+                        || res.entry.source == "SETTINGS"
                     {
                         s.icon_settings
                     } else if let Some(hicon) = cached_icon {
@@ -8450,7 +8428,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                                 }
                                 "MEMORY" | "AI" => s.icon_app,
                                 "PDF" => s.icon_file,
-                                "Settings" | "SETTINGS" => s.icon_settings,
+                                "Settings" | "SETTINGS" | "CONTROL" => s.icon_settings,
                                 "SNIPPET" | "TODO" => s.icon_file,
                                 _ => s.icon_app,
                             }
