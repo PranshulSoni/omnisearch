@@ -727,11 +727,11 @@ unsafe fn run(first_settings_run: bool) {
     let icon_memory = load_icon_from_dll("shell32.dll", 238, 64);
     let icon_agent = load_png_to_hicon(
         include_bytes!("../../icons/AgentLogo.png"),
-        64,
+        RESULT_ICON_SIZE as u32,
     );
     let icon_agent_chat = load_png_to_hicon(
         include_bytes!("../../icons/AgentMessageIcon.png"),
-        64,
+        RESULT_ICON_SIZE as u32,
     );
 
     // Load at exactly the draw size (from 256² sources via Lanczos) so DrawIconEx never rescales
@@ -7811,7 +7811,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     "HOMEPAGE_LOCAL" => s.icon_folder,
                     "HOMEPAGE_CODE" | "HOMEPAGE_OCR" => s.icon_file,
                     "HOMEPAGE_AI" | "AI" => s.icon_agent,
-                    "AI_CHAT" => s.icon_agent_chat,
+                    "HOMEPAGE_AI_CHAT" | "AI_CHAT" => s.icon_agent_chat,
                     _ => s.icon_app,
                 };
 
@@ -8858,7 +8858,7 @@ fn default_homepage_results() -> Vec<crate::search::SearchResult> {
             "Agent History",
             "AI > Agent History",
             "agentchats:",
-            "HOMEPAGE_AI",
+            "HOMEPAGE_AI_CHAT",
         ),
     ];
 
