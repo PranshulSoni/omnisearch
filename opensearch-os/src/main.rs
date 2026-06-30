@@ -146,7 +146,7 @@ struct SearchRequest {
 }
 // ── Animation ─────────────────────────────────────────────────────────────────
 // const ANIM_TICK_MS: u32 = 1;
-const ANIM_DURATION_SEC: f32 = 0.220; // 220ms
+const ANIM_DURATION_SEC: f32 = 0.150; // 150ms
                                       // const MAX_ALPHA: u8 = 255;
 
 // ── Genie Morph Dimensions ────────────────────────────────────────────────────
@@ -626,6 +626,8 @@ unsafe fn create_gdi_font(family: &str, size_px: i32, weight_str: &str) -> HFONT
 }
 
 unsafe fn run(first_settings_run: bool) {
+    let _ = windows::Win32::Media::timeBeginPeriod(1);
+
     let hinst = GetModuleHandleW(PCWSTR::null()).unwrap();
     let face: Vec<u16> = "Segoe UI Variable\0".encode_utf16().collect();
     let fp = PCWSTR(face.as_ptr());
