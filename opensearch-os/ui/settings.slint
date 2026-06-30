@@ -100,7 +100,7 @@ export component SettingsWindow inherits Window {
     in-out property <string> agent-endpoint;
     in-out property <string> agent-model;
     in-out property <bool> agent-always-approve;
-    in-out property <image> agent-logo: @image-url("../../icons/OmniSearchTrans_small.png");
+    in-out property <image> agent-logo: @image-url("../../icons/AgentLogo_small.png");
 
     // Database settings properties
     in-out property <string> db-last-indexed;
@@ -838,68 +838,7 @@ export component SettingsWindow inherits Window {
                                                 }
                                             }
 
-                                            // Mockup Item 5: Local Files
-                                            Rectangle {
-                                                height: 34px;
-                                                background: transparent;
-                                                border-radius: 4px;
-                                                HorizontalLayout {
-                                                    padding-left: 8px;
-                                                    padding-right: 8px;
-                                                    spacing: 12px;
-                                                    Text { text: "📁"; font-size: 14px; vertical-alignment: center; }
-                                                    VerticalLayout {
-                                                        alignment: center;
-                                                        spacing: 0;
-                                                        Text { text: "Local Files"; font-size: 11px; font-weight: 600; color: root.theme-mode == "Light" ? #222222 : #d8dee9; }
-                                                        Text { text: "Local > Files"; font-size: 9px; color: root.theme-mode == "Light" ? #888888 : #4c566a; }
-                                                    }
-                                                    Rectangle { } // Spacer
-                                                    Text { text: "Local"; font-size: 9px; color: root.theme-mode == "Light" ? #777777 : #4c566a; vertical-alignment: center; }
-                                                }
-                                            }
 
-                                            // Mockup Item 6: Source Code
-                                            Rectangle {
-                                                height: 34px;
-                                                background: transparent;
-                                                border-radius: 4px;
-                                                HorizontalLayout {
-                                                    padding-left: 8px;
-                                                    padding-right: 8px;
-                                                    spacing: 12px;
-                                                    Text { text: "💻"; font-size: 14px; vertical-alignment: center; }
-                                                    VerticalLayout {
-                                                        alignment: center;
-                                                        spacing: 0;
-                                                        Text { text: "Source Code"; font-size: 11px; font-weight: 600; color: root.theme-mode == "Light" ? #222222 : #d8dee9; }
-                                                        Text { text: "Local > Source Code"; font-size: 9px; color: root.theme-mode == "Light" ? #888888 : #4c566a; }
-                                                    }
-                                                    Rectangle { } // Spacer
-                                                    Text { text: "Code"; font-size: 9px; color: root.theme-mode == "Light" ? #777777 : #4c566a; vertical-alignment: center; }
-                                                }
-                                            }
-
-                                            // Mockup Item 7: Search Screenshots
-                                            Rectangle {
-                                                height: 34px;
-                                                background: transparent;
-                                                border-radius: 4px;
-                                                HorizontalLayout {
-                                                    padding-left: 8px;
-                                                    padding-right: 8px;
-                                                    spacing: 12px;
-                                                    Text { text: "📷"; font-size: 14px; vertical-alignment: center; }
-                                                    VerticalLayout {
-                                                        alignment: center;
-                                                        spacing: 0;
-                                                        Text { text: "Search Screenshots"; font-size: 11px; font-weight: 600; color: root.theme-mode == "Light" ? #222222 : #d8dee9; }
-                                                        Text { text: "Local > Image Text (OCR)"; font-size: 9px; color: root.theme-mode == "Light" ? #888888 : #4c566a; }
-                                                    }
-                                                    Rectangle { } // Spacer
-                                                    Text { text: "OCR"; font-size: 9px; color: root.theme-mode == "Light" ? #777777 : #4c566a; vertical-alignment: center; }
-                                                }
-                                            }
 
                                             // Mockup Item 8: Agent History
                                             Rectangle {
@@ -1577,17 +1516,20 @@ export component SettingsWindow inherits Window {
                                     padding-left: 20px;
                                     padding-right: 20px;
                                     spacing: 16px;
-                                    Rectangle {
-                                        width: 36px;
-                                        height: 36px;
-                                        border-radius: 9px;
-                                        background: #3b2a22;
-                                        Text {
-                                            text: "⚠";
-                                            color: #f97316;
-                                            font-size: 16px;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: 36px;
+                                            height: 36px;
+                                            border-radius: 9px;
+                                            background: #3b2a22;
+                                            Text {
+                                                text: "⚠";
+                                                color: #f97316;
+                                                font-size: 16px;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
                                         }
                                     }
                                     VerticalBox {
