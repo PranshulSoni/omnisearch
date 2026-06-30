@@ -303,7 +303,7 @@ pub struct SearchEngine {
 }
 
 impl SearchEngine {
-    pub fn new(db_path: std::path::PathBuf) -> Result<Self> {
+    pub fn new(db_path: std::path::PathBuf, build_file_index: bool) -> Result<Self> {
         if CATALOG.len() < 8 {
             bail!("catalog.bin too small");
         }
@@ -549,7 +549,11 @@ impl SearchEngine {
         };
         engine.apps = scan_apps();
         engine.recent_files = scan_recent_files();
-        engine.file_index = Self::build_file_index(&engine.conn);
+        // Only the fast engine needs the in-memory index; the slow (content) engine searches
+        // files via SQL/FTS and runs on its own thread, so it skips this to save RAM + startup.
+        if build_file_index {
+            engine.file_index = Self::build_file_index(&engine.conn);
+        }
 
         let _ = engine.search("settings", 1);
         Ok(engine)
@@ -594,7 +598,6 @@ impl SearchEngine {
     /// Load the whole `files` table into RAM once, precomputing the lowercase name and the
     /// path score so each search is a pure in-memory scan.
     fn build_file_index(conn: &Connection) -> Vec<FileRow> {
-        let t_build = std::time::Instant::now();
         let mut rows = Vec::new();
         if let Ok(mut stmt) = conn.prepare("SELECT path, name, extension FROM files") {
             if let Ok(it) = stmt.query_map([], |r| {
@@ -617,11 +620,6 @@ impl SearchEngine {
                 }
             }
         }
-        crate::voice::log(&format!(
-            "[perf] file_index built {} rows in {}ms",
-            rows.len(),
-            t_build.elapsed().as_millis()
-        ));
         rows
     }
 
@@ -5331,7 +5329,7 @@ mod tests {
                 .join("model_int8.onnx");
         }
         let _ = &model_path;
-        let mut engine = SearchEngine::new(std::path::PathBuf::from("test_db.db"))
+        let mut engine = SearchEngine::new(std::path::PathBuf::from("test_db.db"), true)
             .expect("Failed to initialize engine");
 
         let queries = vec![
@@ -5594,7 +5592,7 @@ mod tests {
                 .join("model_int8.onnx");
         }
         let _ = &model_path;
-        let mut engine = SearchEngine::new(db_path).expect("Failed to initialize engine");
+        let mut engine = SearchEngine::new(db_path, true).expect("Failed to initialize engine");
 
         println!("--- DIAGNOSTIC SEARCH TEST ---");
         let results = engine.search("resume", 10);

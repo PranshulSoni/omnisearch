@@ -134,6 +134,7 @@ unsafe fn remove_tray_icon(hwnd: windows::Win32::Foundation::HWND) {
 // AI answer panel height (below the search bar) when showing an AI response.
 const AI_PANEL_H: i32 = 360;
 
+#[derive(Clone)]
 struct SearchRequest {
     query: String,
     query_id: usize,
@@ -281,6 +282,9 @@ struct State {
     hovered_item: Option<usize>,
     mouse_tracking: bool,
     search_tx: Option<std::sync::mpsc::Sender<SearchRequest>>,
+    // Separate channel to the slow (content/FTS) worker thread so the fast file/folder worker is
+    // never blocked behind a multi-second content search.
+    search_tx_slow: Option<std::sync::mpsc::Sender<SearchRequest>>,
     icon_tx: Option<std::sync::mpsc::Sender<IconRequest>>,
     current_query_id: usize,
     db_path: std::path::PathBuf,
@@ -908,6 +912,7 @@ unsafe fn run() {
         hovered_item: None,
         mouse_tracking: false,
         search_tx: None,
+        search_tx_slow: None,
         icon_tx: Some(icon_tx),
         current_query_id: 0,
         db_path: db_path.clone(),
@@ -1163,11 +1168,13 @@ unsafe fn run() {
         });
 
         let db_path_for_engine = db_path.clone();
-        let result = SearchEngine::new(db_path_for_engine);
+        let result = SearchEngine::new(db_path_for_engine, true);
+        let db_path_for_slow = db_path.clone();
+        let result_slow = SearchEngine::new(db_path_for_slow, false);
         let hwnd_bg = HWND(hwnd_usize as *mut std::ffi::c_void);
         unsafe {
-            match result {
-                Ok(mut engine) => {
+            match (result, result_slow) {
+                (Ok(mut engine), Ok(mut slow_engine)) => {
                     // Import Windows Clipboard History in background
                     let db_path_clone = db_path.clone();
                     std::thread::spawn(move || {
@@ -1179,80 +1186,68 @@ unsafe fn run() {
                         windows::Win32::System::Com::CoUninitialize();
                     });
 
-                    // Spawn worker channels
-                    let (tx, rx) = std::sync::mpsc::channel::<SearchRequest>();
-                    let hwnd_worker = SendHwnd(hwnd_bg);
+                    // Two independent worker threads, each with its own engine and channel, so a
+                    // multi-second content (FTS) search NEVER blocks instant file/folder results.
+                    // Each thread coalesces to the newest queued query; stale results are dropped by
+                    // the UI via query_id, so no explicit cancellation is needed.
+                    let (tx_fast, rx_fast) = std::sync::mpsc::channel::<SearchRequest>();
+                    let (tx_slow, rx_slow) = std::sync::mpsc::channel::<SearchRequest>();
+                    let hwnd_worker_fast = SendHwnd(hwnd_bg);
+                    let hwnd_worker_slow = SendHwnd(hwnd_bg);
 
-                    // Spawn search worker thread
+                    // FAST worker: apps + recent + in-memory files/folders (is_final = false).
                     std::thread::spawn(move || {
-                        let hwnd_target = hwnd_worker;
-                        let mut latest_req: Option<SearchRequest> = None;
+                        let hwnd_target = hwnd_worker_fast;
                         loop {
-                            let req = if latest_req.is_none() {
-                                match rx.recv() {
-                                    Ok(r) => r,
-                                    Err(_) => break,
-                                }
-                            } else {
-                                latest_req.take().unwrap()
+                            let mut current_req = match rx_fast.recv() {
+                                Ok(r) => r,
+                                Err(_) => break,
                             };
-
-                            let mut current_req = req;
-                            while let Ok(next_req) = rx.try_recv() {
+                            while let Ok(next_req) = rx_fast.try_recv() {
                                 current_req = next_req;
                             }
-
-                            // 1. Run Fast Search (with_fts = false)
-                            let t_fast = std::time::Instant::now();
-                            let fast_results = engine.search_with_fts(&current_req.query, MAX_RESULTS, false);
-                            voice::log(&format!(
-                                "[perf] fast '{}' -> {} results in {}ms",
-                                current_req.query,
-                                fast_results.len(),
-                                t_fast.elapsed().as_millis()
-                            ));
-                            let fast_results_ptr = Box::into_raw(Box::new(fast_results)) as isize;
-                            let wparam_fast = (current_req.query_id & 0xFFFF_FFFF) as usize; // is_final = false
+                            let results =
+                                engine.search_with_fts(&current_req.query, MAX_RESULTS, false);
+                            let ptr = Box::into_raw(Box::new(results)) as isize;
+                            let wparam = (current_req.query_id & 0xFFFF_FFFF) as usize; // is_final = false
                             let _ = PostMessageW(
                                 hwnd_target.0,
                                 WM_SEARCH_RESULTS,
-                                WPARAM(wparam_fast),
-                                LPARAM(fast_results_ptr),
-                            );
-
-                            // 2. Check if a new query has arrived before starting the slow search
-                            match rx.try_recv() {
-                                Ok(next_req) => {
-                                    latest_req = Some(next_req);
-                                    continue;
-                                }
-                                Err(_) => {}
-                            }
-
-                            // 3. Run Slow Search (with_fts = true)
-                            let t_slow = std::time::Instant::now();
-                            let slow_results = engine.search_with_fts(&current_req.query, MAX_RESULTS, true);
-                            voice::log(&format!(
-                                "[perf] slow '{}' -> {} results in {}ms",
-                                current_req.query,
-                                slow_results.len(),
-                                t_slow.elapsed().as_millis()
-                            ));
-                            let slow_results_ptr = Box::into_raw(Box::new(slow_results)) as isize;
-                            let wparam_slow = ((current_req.query_id & 0xFFFF_FFFF) as usize) | (1 << 32); // is_final = true
-                            let _ = PostMessageW(
-                                hwnd_target.0,
-                                WM_SEARCH_RESULTS,
-                                WPARAM(wparam_slow),
-                                LPARAM(slow_results_ptr),
+                                WPARAM(wparam),
+                                LPARAM(ptr),
                             );
                         }
                     });
 
-                    let tx_ptr = Box::into_raw(Box::new(tx)) as isize;
+                    // SLOW worker: full search incl. content/OCR/settings FTS (is_final = true).
+                    std::thread::spawn(move || {
+                        let hwnd_target = hwnd_worker_slow;
+                        loop {
+                            let mut current_req = match rx_slow.recv() {
+                                Ok(r) => r,
+                                Err(_) => break,
+                            };
+                            while let Ok(next_req) = rx_slow.try_recv() {
+                                current_req = next_req;
+                            }
+                            let results =
+                                slow_engine.search_with_fts(&current_req.query, MAX_RESULTS, true);
+                            let ptr = Box::into_raw(Box::new(results)) as isize;
+                            let wparam =
+                                ((current_req.query_id & 0xFFFF_FFFF) as usize) | (1 << 32); // is_final = true
+                            let _ = PostMessageW(
+                                hwnd_target.0,
+                                WM_SEARCH_RESULTS,
+                                WPARAM(wparam),
+                                LPARAM(ptr),
+                            );
+                        }
+                    });
+
+                    let tx_ptr = Box::into_raw(Box::new((tx_fast, tx_slow))) as isize;
                     let _ = PostMessageW(hwnd_bg, WM_ENGINE_READY, WPARAM(1), LPARAM(tx_ptr));
                 }
-                Err(e) => {
+                (Err(e), _) | (_, Err(e)) => {
                     let msg = Box::into_raw(Box::new(e.to_string())) as isize;
                     let _ = PostMessageW(hwnd_bg, WM_ENGINE_READY, WPARAM(0), LPARAM(msg));
                 }
@@ -1687,11 +1682,18 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
 
         WM_ENGINE_READY => {
             if wp.0 == 1 {
-                let tx =
-                    unsafe { *Box::from_raw(lp.0 as *mut std::sync::mpsc::Sender<SearchRequest>) };
+                let (tx_fast, tx_slow) = unsafe {
+                    *Box::from_raw(
+                        lp.0 as *mut (
+                            std::sync::mpsc::Sender<SearchRequest>,
+                            std::sync::mpsc::Sender<SearchRequest>,
+                        ),
+                    )
+                };
                 if !sp.is_null() {
                     let s = &mut *sp;
-                    s.search_tx = Some(tx);
+                    s.search_tx = Some(tx_fast);
+                    s.search_tx_slow = Some(tx_slow);
                     trigger_search(hwnd, s);
                 }
             } else {
@@ -5259,7 +5261,12 @@ unsafe fn trigger_search(_hwnd: HWND, s: &mut State) {
         query: s.query.clone(),
         query_id: s.current_query_id,
     };
+    // Dispatch to both workers; the fast one returns files/folders instantly, the slow one
+    // streams in content/OCR/settings whenever its FTS finishes.
     if let Some(ref tx) = s.search_tx {
+        let _ = tx.send(req.clone());
+    }
+    if let Some(ref tx) = s.search_tx_slow {
         let _ = tx.send(req);
     }
 }
