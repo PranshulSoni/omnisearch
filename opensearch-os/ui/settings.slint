@@ -1293,10 +1293,9 @@ export component SettingsWindow inherits Window {
                                     alignment: start;
                                     HorizontalLayout {
                                         spacing: 10px;
-                                        max-width: 480px;
 
                                         ComboBox {
-                                            horizontal-stretch: 1;
+                                            width: 110px;
                                             height: 40px;
                                             model: root.slot1-model;
                                             current-value <=> root.slot1-val;
@@ -1304,21 +1303,21 @@ export component SettingsWindow inherits Window {
                                         }
 
                                         ComboBox {
-                                            horizontal-stretch: 1;
+                                            width: 110px;
                                             height: 40px;
                                             model: root.slot2-model;
                                             current-value <=> root.slot2-val;
                                             selected => { root.apply-hotkey(); }
                                         }
                                         ComboBox {
-                                            horizontal-stretch: 1;
+                                            width: 110px;
                                             height: 40px;
                                             model: root.slot34-model;
                                             current-value <=> root.slot3-val;
                                             selected => { root.apply-hotkey(); }
                                         }
                                         ComboBox {
-                                            horizontal-stretch: 1;
+                                            width: 110px;
                                             height: 40px;
                                             model: root.slot34-model;
                                             current-value <=> root.slot4-val;
