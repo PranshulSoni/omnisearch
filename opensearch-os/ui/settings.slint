@@ -1622,69 +1622,6 @@ export component SettingsWindow inherits Window {
                             }
                         }
 
-                        // Section: Status
-                        VerticalBox {
-                            spacing: 12px;
-                            Text {
-                                text: "INDEX STATUS";
-                                font-size: 11px;
-                                font-weight: 600;
-                                color: root.text-muted;
-                                letter-spacing: 1px;
-                            }
-                            
-                            Rectangle {
-                                background: root.card-bg;
-                                border-radius: 8px;
-                                border-color: root.border-color;
-                                border-width: 1px;
-                                padding: 20px;
-                                
-                                VerticalBox {
-                                    spacing: 12px;
-                                    
-                                    HorizontalBox {
-                                        padding: 0;
-                                        Text { text: "Total Files Indexed"; color: root.text-secondary; font-size: 13px; }
-                                        Rectangle { horizontal-stretch: 1; }
-                                        Text { text: root.db-file-count; color: root.text-primary; font-weight: 600; font-size: 13px; }
-                                    }
-                                    
-                                    Rectangle { height: 1px; background: root.border-color; }
-                                    
-                                    HorizontalBox {
-                                        padding: 0;
-                                        Text { text: "Last Crawled Time"; color: root.text-secondary; font-size: 13px; }
-                                        Rectangle { horizontal-stretch: 1; }
-                                        Text { text: root.db-last-indexed; color: root.text-primary; font-weight: 600; font-size: 13px; }
-                                    }
-                                    
-                                    Rectangle { height: 1px; background: root.border-color; }
-                                    
-                                    HorizontalBox {
-                                        padding: 0;
-                                        Text { text: "Indexer State"; color: root.text-secondary; font-size: 13px; }
-                                        Rectangle { horizontal-stretch: 1; }
-                                        HorizontalBox {
-                                            spacing: 6px;
-                                            if root.db-is-indexing: Rectangle {
-                                                width: 8px;
-                                                height: 8px;
-                                                border-radius: 4px;
-                                                background: #f59e0b; // Orange scanning indicator
-                                            }
-                                            Text {
-                                                text: root.db-status;
-                                                color: root.db-is-indexing ? #f59e0b : root.text-primary;
-                                                font-weight: 600;
-                                                font-size: 13px;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
                         // Section: Folders
                         VerticalBox {
                             spacing: 12px;
@@ -1717,9 +1654,9 @@ export component SettingsWindow inherits Window {
                                 border-radius: 8px;
                                 border-color: root.border-color;
                                 border-width: 1px;
-                                padding: 12px;
                                 
                                 VerticalBox {
+                                    padding: 12px;
                                     spacing: 8px;
                                     if root.db-folders.length == 0: Text {
                                         text: "No indexed directories configured";
