@@ -8,28 +8,32 @@ This branch (`lean-build`) focuses on the core search product: find the right th
 
 Omnisearch opens with `Alt+Space` and gives one command/search surface for local Windows data:
 
-- Launch apps and Windows settings.
-- Search files and folders by name.
-- Search PDF, DOCX, text, source-code, and OCR-indexed image content.
-- Search browser bookmarks and history across Chrome, Edge, Brave, and Firefox profiles.
-- Search clipboard history, including saved clipboard images and pinned entries.
-- Search Git commits, branches, repositories, and TODO/FIXME comments.
-- Search AI chats, agent runs, and persistent agents.
-- Run selected Windows actions such as volume control, DNS flush, lock, sleep, restart Explorer, and settings shortcuts.
+- **Apps & Windows/UWP Launching**: Direct COM enumeration of modern Windows Store apps (Calculator, Settings, Camera, etc.) via `IShellItem` and launching via `shell:AppsFolder\<AppID>`.
+- **In-Process Calculator**: High-speed math parser (evaluates formulas like `2+2`, `15% of 340`, `sqrt(9)*4`, etc.) and copies the result to the clipboard on Enter.
+- **Recent Files & PIDLs**: Displays recently used files (parsing `%APPDATA%\Microsoft\Windows\Recent`) with clean high-resolution icons, resolving shortcuts via `IShellLinkW` and stripping arrow watermarks.
+- **Deep Code & Document Search**: Fast full-text search across plain text, source code files, Word DOCX, and PDF content (truncated to 50KB) powered by SQLite FTS5.
+- **Browser Bookmarks & History**: Searches browser data across Chromium (Chrome, Edge, Brave) and Gecko (Firefox) user profiles, safe-copying databases before querying.
+- **Clipboard History**: Tracks text/image clipboard entries with image capture, pinning, and multi-select support.
+- **Git Repository Search**: Metadata-first repository discovery, HEAD branches/commits search, and codebase TODO/FIXME comment scanning. Hitting Enter on a TODO launches VS Code directly at the exact file and line number (`code -g <file>:<line>`).
+- **Quick System Actions**: Lock, sleep, restart, shutdown, and empty recycle bin/trash.
+- **AI Chat & Hermes Agents**: Persistent local AI chats, streaming response progress, and tool execution approval flows.
 
 ## Resume-Friendly Highlights
 
 - Built a native Windows launcher in Rust using Win32 APIs and custom GDI rendering instead of Electron or a browser shell.
-- Implemented a SQLite + FTS5 indexing pipeline for local files, document text, source code, image OCR, browser data, clipboard history, and Git metadata.
-- Added hybrid search behavior that combines Everything IPC metadata search, SQLite fallback queries, FTS5 content search, curated source filters, and custom ranking.
-- Designed a 720px compact launcher UI with a 64px search bar, 76px result rows, dynamic result filters, horizontal filter scrolling, high-resolution icon rendering, keyboard navigation, mouse hover states, and dark-mode visual polish.
-- Built asynchronous search and icon-loading flows with Win32 message passing (`WM_SEARCH_RESULTS`, `WM_ICON_LOADED`) and a 150ms keystroke debounce so expensive work stays out of the paint loop.
-- Added OCR indexing for images/screenshots using Windows OCR APIs with image-size protection to avoid hangs or out-of-memory failures.
-- Integrated browser indexing for Chromium and Firefox profiles, including a capped import of the latest 5,000 browser-history URLs.
-- Added clipboard history with image capture, pinning, multi-select support, and retention capped to the latest 500 non-pinned entries.
-- Added Git indexing with a 15-minute background refresh for repositories, commits, branches, and TODO/FIXME task discovery.
-- Added AI chat and Hermes agent integrations with SQLite chat persistence, streaming run progress, and approval prompts for tool execution.
-- Maintained local-first storage under `%APPDATA%\opensearch-os` with SQLite as the primary persistence layer.
+- Implemented a SQLite + FTS5 indexing pipeline for local files, document text, source code, browser data, clipboard history, and Git metadata.
+- Designed a custom UWP/Windows Store application resolver using COM `IShellItem` to launch native Windows applications seamlessly.
+- Built a shell shortcut resolver utilizing `IShellLinkW` and Windows PIDLs to extract clean, high-resolution application icons without shortcut arrow watermarks.
+- Created an asynchronous icon-loading thread pool communicating with GDI rendering via Windows message passing (`WM_ICON_LOADED`) to eliminate UI lag.
+- Implemented a high-speed, in-process math parser (recursive descent) evaluating algebraic and percentage operations.
+- Added hybrid search behavior that combines SQLite queries, FTS5 content search, and custom source-specific ranking.
+- Designed a 720px compact launcher UI with Segoe UI Variable fonts, dynamic result filters, keyboard navigation, and dark-mode visual polish.
+- Added OCR indexing for images/screenshots using Windows OCR APIs with image-size protection.
+- Integrated browser indexing for Chromium and Firefox profiles, safe-copying locked databases and capping imports at 5,000 URLs.
+- Added clipboard history with image capture, pinning, multi-select, and a 500-entry retention limit.
+- Added Git indexing with TODO/FIXME comments scanning and seamless launching of VS Code at exact line numbers (`code -g <file>:<line>`).
+- Added AI chat and Hermes agent integrations with SQLite chat persistence and tool execution approval prompts.
+- Maintained local-first storage under `%APPDATA%\opensearch-os` using SQLite.
 
 ## Performance And Optimization
 
