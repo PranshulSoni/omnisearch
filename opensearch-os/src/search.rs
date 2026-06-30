@@ -101,6 +101,71 @@ pub fn insert_memory_event(
     );
 }
 
+fn ensure_settings_catalog_fts(conn: &Connection, meta: &[CatalogEntry]) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "
+        CREATE VIRTUAL TABLE IF NOT EXISTS settings_catalog_fts USING fts5(
+            name,
+            breadcrumb,
+            description,
+            synonyms,
+            launch_command UNINDEXED,
+            source UNINDEXED
+        );
+        DELETE FROM settings_catalog_fts;
+        ",
+    )?;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut insert_entry = |entry: &CatalogEntry| -> rusqlite::Result<()> {
+        if !is_native_settings_command(&entry.launch_command) {
+            return Ok(());
+        }
+        if !seen.insert(entry.launch_command.clone()) {
+            return Ok(());
+        }
+        conn.execute(
+            "INSERT INTO settings_catalog_fts
+             (name, breadcrumb, description, synonyms, launch_command, source)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                entry.control_name,
+                entry.breadcrumb_path,
+                entry.description,
+                entry.synonyms,
+                entry.launch_command,
+                native_settings_source(&entry.launch_command),
+            ],
+        )?;
+        Ok(())
+    };
+
+    for entry in meta {
+        insert_entry(entry)?;
+    }
+
+    for action in QUICK_ACTIONS {
+        if !is_native_settings_command(action.launch_command) {
+            continue;
+        }
+        let entry = CatalogEntry {
+            id: format!(
+                "settings.quick.{}",
+                action.name.to_lowercase().replace(' ', "_")
+            ),
+            control_name: action.name.to_string(),
+            breadcrumb_path: action.breadcrumb.to_string(),
+            launch_command: action.launch_command.to_string(),
+            source: native_settings_source(action.launch_command).to_string(),
+            description: action.description.to_string(),
+            synonyms: action.triggers.join("|"),
+        };
+        insert_entry(&entry)?;
+    }
+
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct CatalogEntry {
     pub id: String,
@@ -225,21 +290,59 @@ fn empty_scope_result(query: &str) -> Option<SearchResult> {
     })
 }
 
+pub(crate) fn is_native_settings_command(command: &str) -> bool {
+    let cmd = command.to_ascii_lowercase();
+    cmd.starts_with("ms-settings:")
+        || cmd.starts_with("control")
+        || cmd.contains(".cpl")
+        || cmd.ends_with(".msc")
+        || cmd.contains("shell:::{")
+        || cmd.starts_with("optionalfeatures.exe")
+        || cmd.starts_with("useraccountcontrolsettings.exe")
+        || cmd.starts_with("dfrgui.exe")
+        || cmd.starts_with("cleanmgr.exe")
+        || cmd.starts_with("regedit.exe")
+        || cmd.starts_with("msconfig.exe")
+        || cmd.starts_with("resmon.exe")
+        || cmd.starts_with("sndvol.exe")
+        || cmd.starts_with("mblctr.exe")
+        || cmd.starts_with("systemproperties")
+        || cmd.starts_with("inetmgr.exe")
+        || cmd.starts_with("odbcad32.exe")
+        || cmd.starts_with("mstsc.exe")
+        || cmd.starts_with("dxdiag.exe")
+        || cmd.starts_with("msinfo32.exe")
+        || cmd.starts_with("wt.exe")
+        || cmd.starts_with("powershell.exe")
+        || cmd.starts_with("windowssandbox.exe")
+        || cmd.starts_with("cmd.exe")
+}
+
+fn native_settings_source(command: &str) -> &'static str {
+    let cmd = command.to_ascii_lowercase();
+    if cmd.starts_with("control") || cmd.contains(".cpl") || cmd.contains("shell:::{") {
+        "CONTROL"
+    } else {
+        "SETTINGS"
+    }
+}
+
+fn is_native_settings_result(result: &SearchResult) -> bool {
+    is_native_settings_command(&result.entry.launch_command)
+        || result.entry.source.eq_ignore_ascii_case("settings")
+        || result.entry.source.eq_ignore_ascii_case("control")
+}
+
 /// lean-build allowlist: keep only the curated feature set. See SearchEngine::search.
 fn lean_allowed(r: &SearchResult) -> bool {
     let s = r.entry.source.as_str();
     let cmd = r.entry.launch_command.as_str();
 
     // (4) Control panel + modern settings — matched by how Windows opens them.
-    if cmd.starts_with("ms-settings:")
-        || cmd.starts_with("control")
-        || cmd.contains(".cpl")
-        || cmd.ends_with(".msc")
+    if is_native_settings_result(r)
         || cmd.starts_with("action:")
         || s == "ACTION"
         || s == "SYSTEM"
-        || s == "settings"
-        || s == "control"
     {
         return true;
     }
@@ -603,6 +706,7 @@ impl SearchEngine {
                 ],
             );
         }
+        ensure_settings_catalog_fts(&conn, &meta)?;
 
         let meta_index = meta.iter().map(CatalogEntryIndex::from_entry).collect();
         let mut engine = Self {
@@ -629,6 +733,53 @@ impl SearchEngine {
 
         let _ = engine.search("settings", 1);
         Ok(engine)
+    }
+
+    fn search_settings_catalog_fts(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+        let fts_query = make_fts_prefix_query(query);
+        if fts_query.is_empty() {
+            return Vec::new();
+        }
+
+        let mut stmt = match self.conn.prepare(
+            "SELECT name, breadcrumb, description, synonyms, launch_command, source
+             FROM settings_catalog_fts
+             WHERE settings_catalog_fts MATCH ?
+             ORDER BY bm25(settings_catalog_fts)
+             LIMIT ?",
+        ) {
+            Ok(stmt) => stmt,
+            Err(_) => return Vec::new(),
+        };
+
+        let rows = match stmt.query_map(
+            rusqlite::params![fts_query, limit as i64],
+            |row| -> rusqlite::Result<CatalogEntry> {
+                let launch_command: String = row.get(4)?;
+                Ok(CatalogEntry {
+                    id: format!("settings.{}", launch_command),
+                    control_name: row.get(0)?,
+                    breadcrumb_path: row.get(1)?,
+                    description: row.get(2)?,
+                    synonyms: row.get(3)?,
+                    source: row
+                        .get::<_, String>(5)
+                        .unwrap_or_else(|_| native_settings_source(&launch_command).to_string()),
+                    launch_command,
+                })
+            },
+        ) {
+            Ok(rows) => rows,
+            Err(_) => return Vec::new(),
+        };
+
+        rows.filter_map(|row| row.ok())
+            .enumerate()
+            .map(|(idx, entry)| SearchResult {
+                entry,
+                score: 130.0 - idx as f32,
+            })
+            .collect()
     }
 
     fn get_path_score_modifier(full_path: &str) -> f32 {
@@ -3066,7 +3217,10 @@ impl SearchEngine {
             let q_lower = q_lower_trimmed.clone();
             let q_words: Vec<&str> = q_lower.split_whitespace().collect();
 
-            // 1. App matches
+            // 1. Native Settings / Control Panel matches from FTS5.
+            let mut settings_matches = self.search_settings_catalog_fts(&q_lower, top_k.max(30));
+
+            // 2. App matches
             let mut app_matches = Vec::new();
             for app in &self.apps {
                 let app_lower = app.name.to_lowercase();
@@ -3119,7 +3273,7 @@ impl SearchEngine {
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
 
-            // 2. Recent matches
+            // 3. Recent matches
             let mut recent_matches = Vec::new();
             for rf in &self.recent_files {
                 let name_lower = rf.name.to_lowercase();
@@ -3175,7 +3329,7 @@ impl SearchEngine {
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
 
-            // 3. File matches by title
+            // 4. File matches by title
             let mut file_matches = self.search_local_files_with_fts(&q_lower, false);
             file_matches.sort_unstable_by(|a, b| {
                 b.score
@@ -3188,6 +3342,7 @@ impl SearchEngine {
 
             // Merge and return
             let mut merged = Vec::new();
+            merged.append(&mut settings_matches);
             merged.append(&mut app_matches);
             merged.append(&mut recent_matches);
             merged.append(&mut file_matches);
@@ -4468,6 +4623,7 @@ impl SearchEngine {
         let mut conv_results: Vec<SearchResult> = Vec::new();
 
         let mut final_results = get_live_results(q);
+        let mut settings_matches = self.search_settings_catalog_fts(&q_lower, top_k.max(50));
         let mut vec_results: Vec<SearchResult> = scores
             .into_iter()
             .filter(|(_, s)| *s > 0.35)
@@ -4747,6 +4903,7 @@ impl SearchEngine {
         }
 
         let mut merged = Vec::new();
+        merged.append(&mut settings_matches);
         merged.append(&mut app_matches);
         merged.append(&mut recent_matches);
         merged.append(&mut file_matches);
@@ -5349,6 +5506,37 @@ mod tests {
                 .iter()
                 .any(|action| action.launch_command == command));
         }
+    }
+
+    #[test]
+    fn settings_fts_returns_search_settings_in_fast_path() {
+        let mut engine = SearchEngine::new(std::path::PathBuf::from("test_db.db"), false)
+            .expect("Failed to initialize engine");
+
+        let results = engine.search_with_fts("Search", 10, false);
+        assert!(
+            results.iter().any(is_native_settings_result),
+            "Search should return native settings/control results, got {:?}",
+            results
+                .iter()
+                .map(|r| (&r.entry.control_name, &r.entry.launch_command))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            results.iter().any(|r| {
+                let name = r.entry.control_name.to_lowercase();
+                let breadcrumb = r.entry.breadcrumb_path.to_lowercase();
+                is_native_settings_result(r)
+                    && (name.contains("search")
+                        || breadcrumb.contains("search")
+                        || breadcrumb.contains("indexing"))
+            }),
+            "Search should directly match settings catalog rows, got {:?}",
+            results
+                .iter()
+                .map(|r| (&r.entry.control_name, &r.entry.breadcrumb_path))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -6285,6 +6473,49 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         breadcrumb: "System > Settings > Windows Update",
         launch_command: "ms-settings:windowsupdate",
         description: "Open Windows Update settings.",
+    },
+    QuickAction {
+        triggers: &[
+            "search",
+            "search settings",
+            "windows search",
+            "search permissions",
+            "safe search",
+            "cloud content search",
+            "search history",
+        ],
+        name: "Windows Search Settings",
+        breadcrumb: "Settings > Privacy & Security > Search Permissions",
+        launch_command: "ms-settings:search-permissions",
+        description: "Configure Windows Search permissions, SafeSearch, cloud content, and history.",
+    },
+    QuickAction {
+        triggers: &[
+            "search indexing",
+            "indexing",
+            "indexing options",
+            "indexed locations",
+            "windows indexing",
+            "search index",
+            "rebuild search index",
+        ],
+        name: "Indexing Options",
+        breadcrumb: "Control Panel > Indexing Options",
+        launch_command: "control.exe /name Microsoft.IndexingOptions",
+        description: "Configure indexed locations and rebuild the Windows Search index.",
+    },
+    QuickAction {
+        triggers: &[
+            "find my files",
+            "search files settings",
+            "enhanced search",
+            "classic search",
+            "file search settings",
+        ],
+        name: "Searching Windows",
+        breadcrumb: "Settings > Privacy & Security > Searching Windows",
+        launch_command: "ms-settings:cortana-windowssearch",
+        description: "Control classic/enhanced Windows file search and excluded folders.",
     },
     QuickAction {
         triggers: &["copy logs", "show logs", "reveal logs"],
