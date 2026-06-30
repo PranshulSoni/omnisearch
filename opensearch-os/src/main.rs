@@ -146,7 +146,7 @@ struct SearchRequest {
 }
 // ── Animation ─────────────────────────────────────────────────────────────────
 // const ANIM_TICK_MS: u32 = 1;
-const ANIM_DURATION_SEC: f32 = 0.150; // 150ms
+const ANIM_DURATION_SEC: f32 = 0.100; // 220ms
                                       // const MAX_ALPHA: u8 = 255;
 
 // ── Genie Morph Dimensions ────────────────────────────────────────────────────
@@ -1822,9 +1822,9 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         // Nothing left to animate.
                         let _ = KillTimer(hwnd, TIMER_SEARCH_ANIM);
                     } else if height_done && s.search_loading && !window_anim_active {
-                        // Keep the UI fully responsive at 120fps (8ms) even when loading.
-                        // Previously this dropped to 80ms (12fps) which caused severe perceived lag.
-                        let _ = SetTimer(hwnd, TIMER_SEARCH_ANIM, 8, None);
+                        // Grow finished; only the loading spinner remains, so ease off to a
+                        // gentle 80ms cadence instead of repainting the search row at 60fps.
+                        let _ = SetTimer(hwnd, TIMER_SEARCH_ANIM, 80, None);
                     }
                     if window_anim_active || height_changed {
                         let _ = InvalidateRect(hwnd, None, FALSE);
@@ -3590,7 +3590,7 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
     }
 
     let _ = InvalidateRect(hwnd, None, FALSE);
-    let _ = SetTimer(hwnd, TIMER_SEARCH_ANIM, 8, None);
+    let _ = SetTimer(hwnd, TIMER_SEARCH_ANIM, 3, None);
 }
 
 // AttachThreadInput trick: allows SetForegroundWindow to succeed even from background context.
@@ -5231,7 +5231,7 @@ unsafe fn sync_height_animation(hwnd: HWND, s: &mut State) {
         s.height_anim_from = s.shown_h.max(s.search_h());
         s.target_h = target;
         s.height_anim_started = std::time::Instant::now();
-        let _ = SetTimer(hwnd, TIMER_SEARCH_ANIM, 8, None);
+        let _ = SetTimer(hwnd, TIMER_SEARCH_ANIM, 3, None);
         let _ = InvalidateRect(hwnd, None, FALSE);
     } else if s.shown_h == 0 {
         s.shown_h = target;
@@ -5424,7 +5424,7 @@ unsafe fn trigger_search(_hwnd: HWND, s: &mut State) {
 }
 
 fn ease_out(t: f32) -> f32 {
-    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(2)
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
 }
 // fn ease_in(t: f32) -> f32 { t.clamp(0.0, 1.0).powi(4) }
 
@@ -7515,17 +7515,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
     // ── Results ───────────────────────────────────────────────────────────
     let is_special_mode = s.ai_pending || s.ai_answer.is_some() || s.note_editing || s.chat_input_active;
-    
-    // Skip heavy GDI rendering of the homepage grid when the window is first animating open.
-    // This drops CPU time per frame significantly, ensuring buttery smooth 60/120fps popups.
-    let is_animating_open = p < 1.0 && s.query.is_empty() && matches!(s.anim, Anim::Appearing { .. });
-
-    let n = if is_special_mode || is_animating_open {
+    let n = if is_special_mode {
         0
     } else {
         (s.results.len().saturating_sub(s.scroll_offset)).min(VISIBLE_RESULTS)
     };
-    if !is_special_mode && !is_animating_open {
+    if !is_special_mode {
         let list_w = if s.submenu_active { w - 240 } else { w };
 
         // Draw top separator
