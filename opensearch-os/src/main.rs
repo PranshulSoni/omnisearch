@@ -8582,8 +8582,6 @@ fn result_matches_filter(r: &SearchResult, ftype: FilterType) -> bool {
         FilterType::Settings => {
             src.eq_ignore_ascii_case("settings")
                 || src.eq_ignore_ascii_case("control")
-                || src == "ACTION"
-                || src == "SYSTEM"
                 || cmd.starts_with("ms-settings:")
                 || cmd.starts_with("control")
                 || cmd.contains(".cpl")
@@ -10046,14 +10044,17 @@ mod tests {
             mk("FOLDER", "C:\\Users"),
             mk("CODE", "C:\\main.rs"),
             mk("Settings", "ms-settings:display"),
+            mk("ACTION", "control.exe /name Microsoft.WindowsUpdate"),
+            mk("ACTION", "action:open_settings"),
             mk("OCR", "C:\\screen.png"),
         ];
         let counts = filter_counts_for_results(&results);
-        assert_eq!(counts[filter_index(FilterType::All)], 5);
+        assert_eq!(counts[filter_index(FilterType::All)], 7);
         assert_eq!(counts[filter_index(FilterType::Files)], 1);
         assert_eq!(counts[filter_index(FilterType::Folders)], 1);
         assert_eq!(counts[filter_index(FilterType::Code)], 1);
-        assert_eq!(counts[filter_index(FilterType::Settings)], 1);
+        assert_eq!(counts[filter_index(FilterType::Settings)], 2);
+        assert_eq!(counts[filter_index(FilterType::Commands)], 1);
         assert_eq!(counts[filter_index(FilterType::Images)], 0);
         assert_eq!(counts[filter_index(FilterType::Content)], 1); // OCR counts as content
         assert_eq!(counts[filter_index(FilterType::OCR)], 1);
