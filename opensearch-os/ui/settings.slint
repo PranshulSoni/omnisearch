@@ -1380,11 +1380,14 @@ export component SettingsWindow inherits Window {
                             }
                             
                             for agent in root.available-agents : Rectangle {
-                                height: 60px;
+                                height: 64px;
                                 background: agent-card-ta.has-hover ? root.hover-bg : root.card-bg;
                                 border-radius: 8px;
-                                border-color: root.border-color;
+                                border-color: agent-card-ta.has-hover ? root.accent : root.border-color;
                                 border-width: 1px;
+                                
+                                animate background { duration: 150ms; easing: ease-in-out; }
+                                animate border-color { duration: 150ms; easing: ease-in-out; }
                                 
                                 HorizontalBox {
                                     padding-left: 16px;
@@ -1397,10 +1400,16 @@ export component SettingsWindow inherits Window {
                                         width: 36px;
                                         height: 36px;
                                         border-radius: 18px;
-                                        background: #2b3a42;
-                                        Text {
-                                            text: "🤖";
-                                            font-size: 16px;
+                                        background: #1b262c;
+                                        border-width: 1px;
+                                        border-color: root.border-color;
+                                        clip: true;
+                                        
+                                        Image {
+                                            source: @image-url("../../icons/AgentLogo.png");
+                                            width: 24px;
+                                            height: 24px;
+                                            image-fit: contain;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
                                         }
@@ -1425,13 +1434,28 @@ export component SettingsWindow inherits Window {
                                     
                                     Rectangle { horizontal-stretch: 1; }
                                     
-                                    // Enter / Action badge
-                                    Text {
-                                        text: "Message ➜";
-                                        font-size: 11px;
-                                        font-weight: 600;
-                                        color: root.accent;
-                                        vertical-alignment: center;
+                                    // Premium Message Pill Button
+                                    Rectangle {
+                                        background: agent-card-ta.has-hover ? root.accent : transparent;
+                                        border-radius: 12px;
+                                        border-width: 1px;
+                                        border-color: root.accent;
+                                        height: 24px;
+                                        padding-left: 10px;
+                                        padding-right: 10px;
+                                        
+                                        animate background { duration: 150ms; easing: ease-in-out; }
+                                        
+                                        Text {
+                                            text: "Message ➜";
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                            color: agent-card-ta.has-hover ? #1e1e1e : root.accent;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: center;
+                                            
+                                            animate color { duration: 150ms; easing: ease-in-out; }
+                                        }
                                     }
                                 }
                                 
