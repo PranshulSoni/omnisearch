@@ -451,7 +451,7 @@ impl State {
         if self.note_editing {
             return self.search_h() + 1 + AI_PANEL_H;
         }
-        if self.ai_pending || self.ai_answer.is_some() {
+        if self.ai_pending || self.ai_answer.is_some() || self.chat_input_active {
             return self.search_h() + 1 + AI_PANEL_H;
         }
         if self.form_state != FormState::None {
@@ -1854,7 +1854,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             s.submenu_active = false;
             if let Some(c) = char::from_u32(wp.0 as u32) {
                 if !c.is_control() {
-                    if s.chat_input_active && s.ai_answer.is_some() {
+                    if s.chat_input_active {
                         s.chat_input.insert(s.chat_cursor_pos, c);
                         s.chat_cursor_pos += c.len_utf8();
                         reset_cursor_blink(hwnd, s);
@@ -1979,7 +1979,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 }
             }
 
-            if s.ai_answer.is_some() {
+            if s.ai_answer.is_some() || s.chat_input_active {
                 if s.chat_input_active {
                     if ctrl_down {
                         match vk.0 as u32 {
@@ -3333,8 +3333,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         let new_title = format!("@{}: [New Conversation]", name);
                         let chat_id = store_ai_chat(&s.db_path, "agent", &new_title, "", "");
                         s.ai_pending = false;
-                        s.ai_answer =
-                            Some("Ask me anything! I will execute tasks on your PC using Hermes.".to_string());
+                        s.ai_answer = None;
                         s.ai_title = new_title;
                         s.ai_scroll = 0;
                         s.ai_follow_bottom = true;
@@ -4324,9 +4323,22 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
         if let Ok(ref new_response) = result {
             if let Some(id) = chat_id {
                 if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-                    let updated_prompt = format!("{}\n---\nUser: {}", original_prompt, new_prompt);
-                    let updated_response =
-                        format!("{}\n\n---\n\n{}", original_response, new_response);
+                    let updated_prompt = if original_prompt.is_empty() {
+                        new_prompt.clone()
+                    } else {
+                        format!("{}
+---
+User: {}", original_prompt, new_prompt)
+                    };
+                    let updated_response = if original_response.is_empty() {
+                        new_response.clone()
+                    } else {
+                        format!("{}
+
+---
+
+{}", original_response, new_response)
+                    };
                     let _ = conn.execute(
                         "UPDATE ai_chats SET prompt = ?, response = ? WHERE id = ?",
                         rusqlite::params![updated_prompt, updated_response, id],
@@ -4337,8 +4349,22 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
 
         let payload: (bool, String) = match result {
             Ok(ref new_response) => {
-                let updated_prompt = format!("{}\n---\nUser: {}", original_prompt, new_prompt);
-                let updated_response = format!("{}\n\n---\n\n{}", original_response, new_response);
+                let updated_prompt = if original_prompt.is_empty() {
+                    new_prompt.clone()
+                } else {
+                    format!("{}
+---
+User: {}", original_prompt, new_prompt)
+                };
+                let updated_response = if original_response.is_empty() {
+                    new_response.clone()
+                } else {
+                    format!("{}
+
+---
+
+{}", original_response, new_response)
+                };
                 let full_history_resp = format_conversation(&updated_prompt, &updated_response);
                 (true, full_history_resp)
             }
@@ -4860,8 +4886,7 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 let new_title = format!("@{}: [New Conversation]", name);
                 let chat_id = store_ai_chat(&db_path, "agent", &new_title, "", "");
                 s.ai_pending = false;
-                s.ai_answer =
-                    Some("Ask me anything! I will execute tasks on your PC using Hermes.".to_string());
+                s.ai_answer = None;
                 s.ai_title = new_title;
                 s.ai_scroll = 0;
                 s.ai_follow_bottom = true;
@@ -4880,8 +4905,7 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             let new_title = format!("@{}: [New Conversation]", name);
             let chat_id = store_ai_chat(&db_path, "agent", &new_title, "", "");
             s.ai_pending = false;
-            s.ai_answer =
-                Some("Ask me anything! I will execute tasks on your PC using Hermes.".to_string());
+            s.ai_answer = None;
             s.ai_title = new_title;
             s.ai_scroll = 0;
             s.ai_follow_bottom = true;
@@ -6905,26 +6929,26 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     }
 
     // ── AI answer panel ────────────────────────────────────────────────────
-    if s.ai_pending || s.ai_answer.is_some() {
+    if s.ai_pending || s.ai_answer.is_some() || s.chat_input_active {
         let pad = 24;
         let body_top = y + SEARCH_H + 1;
         fill(mdc, x, y + SEARCH_H, w, 1, s.theme.palette().clr_div);
 
         // Title (the command label)
-        SelectObject(mdc, s.font_n);
+        SelectObject(mdc, s.font_b);
         SetTextColor(mdc, s.theme.palette().clr_white);
         let mut title: Vec<u16> = s.ai_title.encode_utf16().collect();
         let mut title_rc = RECT {
             left: x + pad,
-            top: body_top + 12,
+            top: body_top + 11,
             right: x + w - pad - 116,
-            bottom: body_top + 42,
+            bottom: body_top + 35,
         };
         let _ = DrawTextW(
             mdc,
             &mut title,
             &mut title_rc,
-            DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
         );
 
         if s.ai_pending {
@@ -6987,6 +7011,28 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 &mut th,
                 &mut th_rc,
                 DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX,
+            );
+        } else if s.chat_input_active && !has_answer && !s.ai_pending {
+            // Empty agent chat - show a subtle welcome prompt
+            SelectObject(mdc, s.font_q);
+            SetTextColor(mdc, s.theme.palette().clr_ph);
+            let agent_name = s.ai_title.strip_prefix('@')
+                .and_then(|t| t.split_once(':').map(|(n, _)| n.trim()))
+                .unwrap_or("Agent");
+            let placeholder = format!("Ask {} anything…", agent_name);
+            let mut ph: Vec<u16> = placeholder.encode_utf16().collect();
+            let ph_mid = content_top + (content_bottom - content_top) / 2 - 20;
+            let mut ph_rc = RECT {
+                left: x + pad,
+                top: ph_mid,
+                right: x + w - pad,
+                bottom: ph_mid + 40,
+            };
+            let _ = DrawTextW(
+                mdc,
+                &mut ph,
+                &mut ph_rc,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
             );
         } else if let Some(ans) = &s.ai_answer {
             let parts: Vec<&str> = ans.split("\n\n---\n\n").collect();
@@ -7447,7 +7493,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     }
 
     // ── Results ───────────────────────────────────────────────────────────
-    let is_special_mode = s.ai_pending || s.ai_answer.is_some() || s.note_editing;
+    let is_special_mode = s.ai_pending || s.ai_answer.is_some() || s.note_editing || s.chat_input_active;
     let n = if is_special_mode {
         0
     } else {
