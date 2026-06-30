@@ -594,6 +594,7 @@ impl SearchEngine {
     /// Load the whole `files` table into RAM once, precomputing the lowercase name and the
     /// path score so each search is a pure in-memory scan.
     fn build_file_index(conn: &Connection) -> Vec<FileRow> {
+        let t_build = std::time::Instant::now();
         let mut rows = Vec::new();
         if let Ok(mut stmt) = conn.prepare("SELECT path, name, extension FROM files") {
             if let Ok(it) = stmt.query_map([], |r| {
@@ -616,6 +617,11 @@ impl SearchEngine {
                 }
             }
         }
+        crate::voice::log(&format!(
+            "[perf] file_index built {} rows in {}ms",
+            rows.len(),
+            t_build.elapsed().as_millis()
+        ));
         rows
     }
 

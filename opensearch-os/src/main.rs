@@ -1203,7 +1203,14 @@ unsafe fn run() {
                             }
 
                             // 1. Run Fast Search (with_fts = false)
+                            let t_fast = std::time::Instant::now();
                             let fast_results = engine.search_with_fts(&current_req.query, MAX_RESULTS, false);
+                            voice::log(&format!(
+                                "[perf] fast '{}' -> {} results in {}ms",
+                                current_req.query,
+                                fast_results.len(),
+                                t_fast.elapsed().as_millis()
+                            ));
                             let fast_results_ptr = Box::into_raw(Box::new(fast_results)) as isize;
                             let wparam_fast = (current_req.query_id & 0xFFFF_FFFF) as usize; // is_final = false
                             let _ = PostMessageW(
@@ -1223,7 +1230,14 @@ unsafe fn run() {
                             }
 
                             // 3. Run Slow Search (with_fts = true)
+                            let t_slow = std::time::Instant::now();
                             let slow_results = engine.search_with_fts(&current_req.query, MAX_RESULTS, true);
+                            voice::log(&format!(
+                                "[perf] slow '{}' -> {} results in {}ms",
+                                current_req.query,
+                                slow_results.len(),
+                                t_slow.elapsed().as_millis()
+                            ));
                             let slow_results_ptr = Box::into_raw(Box::new(slow_results)) as isize;
                             let wparam_slow = ((current_req.query_id & 0xFFFF_FFFF) as usize) | (1 << 32); // is_final = true
                             let _ = PostMessageW(
