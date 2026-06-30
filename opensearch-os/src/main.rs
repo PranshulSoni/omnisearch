@@ -7515,12 +7515,17 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
     // ── Results ───────────────────────────────────────────────────────────
     let is_special_mode = s.ai_pending || s.ai_answer.is_some() || s.note_editing || s.chat_input_active;
-    let n = if is_special_mode {
+    
+    // Skip heavy GDI rendering of the homepage grid when the window is first animating open.
+    // This drops CPU time per frame significantly, ensuring buttery smooth 60/120fps popups.
+    let is_animating_open = p < 1.0 && s.query.is_empty() && matches!(s.anim, Anim::Appearing { .. });
+
+    let n = if is_special_mode || is_animating_open {
         0
     } else {
         (s.results.len().saturating_sub(s.scroll_offset)).min(VISIBLE_RESULTS)
     };
-    if !is_special_mode {
+    if !is_special_mode && !is_animating_open {
         let list_w = if s.submenu_active { w - 240 } else { w };
 
         // Draw top separator
