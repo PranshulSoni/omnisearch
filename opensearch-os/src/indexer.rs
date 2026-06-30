@@ -528,6 +528,11 @@ fn run_indexer_folders_inner(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::R
         [],
     )?;
 
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_files_name ON files(name);",
+        [],
+    )?;
+
     // Migrate existing databases that may lack the new columns
     let _ = conn.execute(
         "ALTER TABLE files ADD COLUMN size INTEGER NOT NULL DEFAULT 0",

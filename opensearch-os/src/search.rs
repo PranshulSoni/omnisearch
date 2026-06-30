@@ -369,6 +369,7 @@ impl SearchEngine {
         let conn = Connection::open(&db_path)?;
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_files_name ON files(name);", []);
         // Add columns if they don't exist
         let _ = conn.execute(
             "ALTER TABLE clipboard_history ADD COLUMN is_image INTEGER DEFAULT 0;",
@@ -581,6 +582,31 @@ impl SearchEngine {
         max_results: usize,
     ) -> Option<Vec<SearchResult>> {
         use everything_ipc::wm::{EverythingClient, RequestFlags};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            FindWindowW, SendMessageTimeoutW, SMTO_ABORTIFHUNG,
+        };
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::{LPARAM, WPARAM};
+
+        // Find the Everything IPC window
+        let class_name: Vec<u16> = "Everything_WM_IPC".encode_utf16().chain(std::iter::once(0)).collect();
+        let hwnd = unsafe { FindWindowW(PCWSTR(class_name.as_ptr()), None).ok()? };
+
+        // Check if the Everything window is responsive with a 30ms timeout
+        let ok = unsafe {
+            SendMessageTimeoutW(
+                hwnd,
+                0, // WM_NULL
+                WPARAM(0),
+                LPARAM(0),
+                SMTO_ABORTIFHUNG,
+                30, // 30ms timeout
+                None,
+            )
+        };
+        if ok.0 == 0 {
+            return None; // Everything window is unresponsive
+        }
 
         let client = EverythingClient::new().ok()?;
 
