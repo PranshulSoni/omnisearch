@@ -228,10 +228,58 @@ fn run_git_indexer(db_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn get_git_executable() -> std::ffi::OsString {
+    // 1. Try PATH environment variable
+    if let Ok(paths) = std::env::var("PATH") {
+        for path in std::env::split_paths(&paths) {
+            let git_path = path.join("git.exe");
+            if git_path.exists() {
+                return git_path.into_os_string();
+            }
+        }
+    }
+    // 2. Try standard Windows paths
+    let standard_paths = [
+        "C:\\Program Files\\Git\\cmd\\git.exe",
+        "C:\\Program Files\\Git\\bin\\git.exe",
+        "C:\\Program Files (x86)\\Git\\cmd\\git.exe",
+        "C:\\Program Files (x86)\\Git\\bin\\git.exe",
+    ];
+    for p in &standard_paths {
+        let path = std::path::Path::new(p);
+        if path.exists() {
+            return path.to_path_buf().into_os_string();
+        }
+    }
+    // 3. Try AppData Local
+    if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+        let user_git = std::path::Path::new(&appdata)
+            .join("Programs")
+            .join("Git")
+            .join("cmd")
+            .join("git.exe");
+        if user_git.exists() {
+            return user_git.into_os_string();
+        }
+        let user_git_bin = std::path::Path::new(&appdata)
+            .join("Programs")
+            .join("Git")
+            .join("bin")
+            .join("git.exe");
+        if user_git_bin.exists() {
+            return user_git_bin.into_os_string();
+        }
+    }
+    // Fallback to "git"
+    std::ffi::OsString::from("git")
+}
+
 fn index_single_repo(conn: &mut Connection, repo_id: i64, repo_path: &Path) -> anyhow::Result<()> {
+    let git_exe = get_git_executable();
+
     // 1. Collect branches in memory
     let mut branches = Vec::new();
-    let branch_output = Command::new("git")
+    let branch_output = Command::new(&git_exe)
         .args(["branch", "--no-color"])
         .current_dir(repo_path)
         .creation_flags(0x08000000)
@@ -255,7 +303,7 @@ fn index_single_repo(conn: &mut Connection, repo_id: i64, repo_path: &Path) -> a
 
     // 2. Collect recent commits in memory (up to 100)
     let mut commits = Vec::new();
-    let log_output = Command::new("git")
+    let log_output = Command::new(&git_exe)
         .args(["log", "--max-count=100", "--format=%H%x1F%an%x1F%at%x1F%s"])
         .current_dir(repo_path)
         .creation_flags(0x08000000)
