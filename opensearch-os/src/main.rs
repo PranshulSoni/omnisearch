@@ -6451,7 +6451,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
     // Text / placeholder
     let tx = x + PAD_L + SEARCH_ICON_SIZE + 12;
-    let right_reserve = if s.search_loading { 180 } else { PAD_L + SEARCH_ICON_SIZE };
+    let right_reserve = if s.search_loading { 180 } else { PAD_L };
     let tw = w - (PAD_L + SEARCH_ICON_SIZE + 12) - right_reserve;
     let mut tr = RECT {
         left: tx,
