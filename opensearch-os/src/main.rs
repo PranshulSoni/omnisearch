@@ -12,8 +12,8 @@ mod search;
 mod settings;
 mod settings_startup;
 mod settings_ui;
+mod applog;
 mod uninstall;
-mod voice;
 
 use search::{SearchEngine, SearchResult};
 use std::os::windows::process::CommandExt;
@@ -55,11 +55,8 @@ fn centered_in_result_row(row_y: i32, height: i32, item_h: i32) -> i32 {
 
 // ── Win32 IDs ─────────────────────────────────────────────────────────────────
 const HOTKEY_ID: i32 = 1;
-const HOTKEY_VOICE_ID: i32 = 2;
 const TIMER_DEBOUNCE: usize = 1;
 const TIMER_CURSOR_BLINK: usize = 2;
-const TIMER_VOICE_AUTOEXEC: usize = 3;
-const TIMER_VOICE_ANIM: usize = 4;
 const TIMER_AI_ANIM: usize = 5;
 const TIMER_ICON_BATCH: usize = 6;
 const TIMER_SEARCH_ANIM: usize = 7;
@@ -69,7 +66,6 @@ const WM_ENGINE_READY: u32 = WM_USER + 2;
 const WM_SEARCH_RESULTS: u32 = WM_USER + 3;
 const WM_START_EDITING: u32 = WM_USER + 4;
 const WM_REFRESH_SEARCH: u32 = WM_USER + 5;
-const WM_VOICE_QUERY_READY: u32 = WM_USER + 101;
 const WM_AI_RESULT: u32 = WM_USER + 6;
 // Hermes Runs API: a tool needs approval (lparam = boxed HermesApproval).
 const WM_HERMES_APPROVAL: u32 = WM_USER + 7;
@@ -304,7 +300,6 @@ struct State {
     font_n: HFONT,
     font_c: HFONT,
     font_b: HFONT,
-    font_mic: HFONT,
     font_code: HFONT, // monospace for inline code / code blocks
     font_h: HFONT,    // bold larger font for markdown headings
     icon_settings: HICON,
@@ -322,7 +317,6 @@ struct State {
     icon_edge: HICON,
     icon_brave: HICON,
 
-    icon_new_mic: HICON,
     icon_new_search: HICON,
 
     active_filter: FilterType,
@@ -590,7 +584,6 @@ fn main() {
         None => return,
     };
 
-    accept_speech_privacy();
     register_startup();
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
@@ -606,38 +599,8 @@ fn main() {
     }
 }
 
-// Accept the Windows "Online speech recognition" privacy policy so the Dictation
-// recognizer can run. Without this, RecognizeAsync fails with 0x80045509
-// ("speech privacy policy was not accepted"). This is the same flag the
-// Settings → Privacy → Speech toggle sets; the user can turn it back off there.
-fn accept_speech_privacy() {
-    use windows::core::PCWSTR;
-    use windows::Win32::System::Registry::*;
-    unsafe {
-        let subkey: Vec<u16> =
-            "Software\\Microsoft\\Speech_OneCore\\Settings\\OnlineSpeechPrivacy\0"
-                .encode_utf16()
-                .collect();
-        let value_name: Vec<u16> = "HasAccepted\0".encode_utf16().collect();
-        let mut hkey = HKEY::default();
-        // RegCreateKeyW creates the subkey if missing, or opens it if it exists.
-        let r = RegCreateKeyW(HKEY_CURRENT_USER, PCWSTR(subkey.as_ptr()), &mut hkey);
-        if r.is_ok() {
-            let data: u32 = 1;
-            let _ = RegSetValueExW(
-                hkey,
-                PCWSTR(value_name.as_ptr()),
-                0,
-                REG_DWORD,
-                Some(&data.to_ne_bytes()),
-            );
-            let _ = RegCloseKey(hkey);
-        }
-    }
-}
-
 fn register_startup() {
-    // Add to HKCU Run so it launches on login and listens for wake words
+    // Add to HKCU Run so it launches on login
     if let Ok(exe) = std::env::current_exe() {
         let exe_str = exe.to_string_lossy().to_string();
         let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
@@ -727,24 +690,6 @@ unsafe fn run() {
         )
     };
 
-    let mic_face: Vec<u16> = "Segoe MDL2 Assets\0".encode_utf16().collect();
-    let font_mic = CreateFontW(
-        -20,
-        0,
-        0,
-        0,
-        400,
-        0,
-        0,
-        0,
-        DEFAULT_CHARSET.0 as u32,
-        OUT_DEFAULT_PRECIS.0 as u32,
-        CLIP_DEFAULT_PRECIS.0 as u32,
-        CLEARTYPE_QUALITY.0 as u32,
-        (DEFAULT_PITCH.0 | FF_SWISS.0) as u32,
-        PCWSTR(mic_face.as_ptr()),
-    );
-
     // Monospace + bold fonts for markdown code blocks and headings in the AI panel.
     let mono_face: Vec<u16> = "Consolas\0".encode_utf16().collect();
     let font_code = CreateFontW(
@@ -818,10 +763,6 @@ unsafe fn run() {
 
     // Load at exactly the draw size (from 256² sources via Lanczos) so DrawIconEx never rescales
     // the HICON at paint time — a 36→32 GDI rescale is what made these look soft/low-res.
-    let icon_new_mic = load_png_to_hicon(
-        include_bytes!("../../launcher_source_icons/mic.png"),
-        SEARCH_ICON_SIZE as u32,
-    );
     let icon_new_search = load_png_to_hicon(
         include_bytes!("../../launcher_source_icons/search.png"),
         SEARCH_ICON_SIZE as u32,
@@ -932,7 +873,6 @@ unsafe fn run() {
         font_n,
         font_c,
         font_b: mk_font(-13, 600),
-        font_mic,
         font_code,
         font_h,
         icon_settings,
@@ -949,7 +889,6 @@ unsafe fn run() {
         icon_firefox,
         icon_edge,
         icon_brave,
-        icon_new_mic,
         icon_new_search,
         active_filter: FilterType::All,
         hovered_filter: None,
@@ -1259,12 +1198,12 @@ unsafe fn run() {
     // the low-level hook only for recording a new shortcut in Settings.
     let settings = crate::settings::AppSettings::load();
     if !crate::hotkey::register_hotkey(hwnd, HOTKEY_ID, &settings.global_hotkey) {
-        voice::log(&format!(
+        applog::log(&format!(
             "launcher hotkey {} registration FAILED (already in use?)",
             settings.global_hotkey
         ));
     } else {
-        voice::log(&format!(
+        applog::log(&format!(
             "launcher hotkey {} registered",
             settings.global_hotkey
         ));
@@ -3169,14 +3108,10 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 if !s.icon_new_search.0.is_null() {
                     let _ = DestroyIcon(s.icon_new_search);
                 }
-                if !s.icon_new_mic.0.is_null() {
-                    let _ = DestroyIcon(s.icon_new_mic);
-                }
                 let _ = DeleteObject(s.font_q);
                 let _ = DeleteObject(s.font_n);
                 let _ = DeleteObject(s.font_c);
                 let _ = DeleteObject(s.font_b);
-                let _ = DeleteObject(s.font_mic);
                 let _ = DeleteObject(s.font_code);
                 let _ = DeleteObject(s.font_h);
                 if !s.icon_settings.0.is_null() {
@@ -3321,21 +3256,14 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 }
 
                 if !crate::hotkey::register_hotkey(hwnd, HOTKEY_ID, &s.app_settings.global_hotkey) {
-                    voice::log(&format!(
+                    applog::log(&format!(
                         "launcher hotkey {} registration FAILED (already in use?)",
                         s.app_settings.global_hotkey
                     ));
                 } else {
-                    voice::log(&format!(
+                    applog::log(&format!(
                         "launcher hotkey {} registered",
                         s.app_settings.global_hotkey
-                    ));
-                }
-
-                if !crate::hotkey::register_hotkey(hwnd, HOTKEY_VOICE_ID, &s.app_settings.voice_hotkey) {
-                    voice::log(&format!(
-                        "voice hotkey {} registration FAILED (already in use?)",
-                        s.app_settings.voice_hotkey
                     ));
                 }
 
@@ -3357,7 +3285,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 if wp.0 != 0 {
                     let _ = UnregisterHotKey(hwnd, HOTKEY_ID);
                 } else if !crate::hotkey::register_hotkey(hwnd, HOTKEY_ID, &s.app_settings.global_hotkey) {
-                    voice::log(&format!(
+                    applog::log(&format!(
                         "launcher hotkey {} registration FAILED (already in use?)",
                         s.app_settings.global_hotkey
                     ));
@@ -3546,7 +3474,7 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
         let win_x = work_left + (work_w - WIN_W) / 2;
         let win_y = work_top;
 
-        voice::log(&format!(
+        applog::log(&format!(
             "animate_window: location_mode='{}' last_x={} last_y={} resolved_x={} resolved_y={} work_w={} work_h={}",
             s.app_settings.window_location,
             s.app_settings.last_win_x,

@@ -1,8 +1,6 @@
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
-pub const VOICE_DICTATION_HOTKEY: &str = "Ctrl+Shift+Space";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HotkeyConfig {
     pub ctrl: bool,

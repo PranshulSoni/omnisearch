@@ -74,9 +74,7 @@ pub fn run_settings_window() {
     ui.set_window_location(SharedString::from(settings.window_location.clone()));
     ui.set_theme_mode(SharedString::from(settings.normalized_theme_mode()));
     ui.set_global_hotkey(SharedString::from(settings.global_hotkey.clone()));
-    ui.set_voice_hotkey(SharedString::from(settings.voice_hotkey.clone()));
     ui.set_hotkey_error(SharedString::from(""));
-    ui.set_voice_hotkey_error(SharedString::from(""));
 
     // Populate the four hotkey dropdowns and pre-select the saved combo.
     let (slot1_model, slot2_model, slot34_model) = crate::hotkey::slot_models();
@@ -93,11 +91,6 @@ pub fn run_settings_window() {
     ui.set_slot2_val(SharedString::from(slots[1].clone()));
     ui.set_slot3_val(SharedString::from(slots[2].clone()));
     ui.set_slot4_val(SharedString::from(slots[3].clone()));
-    let voice_slots = crate::hotkey::hotkey_to_slots(&settings.voice_hotkey);
-    ui.set_vslot1_val(SharedString::from(voice_slots[0].clone()));
-    ui.set_vslot2_val(SharedString::from(voice_slots[1].clone()));
-    ui.set_vslot3_val(SharedString::from(voice_slots[2].clone()));
-    ui.set_vslot4_val(SharedString::from(voice_slots[3].clone()));
     ui.set_window_width(settings.window_width as i32);
     ui.set_item_height(settings.item_height as i32);
     ui.set_search_bar_height(settings.search_bar_height as i32);
@@ -197,7 +190,6 @@ pub fn run_settings_window() {
             s.show_placeholder = ui.get_show_placeholder();
             s.save();
             ui.set_hotkey_error(SharedString::from(""));
-            ui.set_voice_hotkey_error(SharedString::from(""));
 
             let run_on_startup = s.run_on_startup;
             let api_key = ui.get_agent_api_key().to_string();
@@ -237,8 +229,7 @@ pub fn run_settings_window() {
         let s4 = ui.get_slot4_val().to_string();
         let settings = AppSettings::load();
         let current = settings.global_hotkey;
-        let other = settings.voice_hotkey;
-        match crate::hotkey::assemble_hotkey(&[&s1, &s2, &s3, &s4], &current, Some(&other)) {
+        match crate::hotkey::assemble_hotkey(&[&s1, &s2, &s3, &s4], &current, None) {
             Ok(combo) => {
                 if combo == current {
                     ui.set_hotkey_error(SharedString::from(""));
@@ -265,8 +256,6 @@ pub fn run_settings_window() {
             }
         }
     });
-
-    ui.on_apply_voice_hotkey(move || {});
 
     let ui_weak_add = ui.as_weak();
     ui.on_add_folder(move || {

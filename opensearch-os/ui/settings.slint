@@ -50,7 +50,6 @@ export component SettingsWindow inherits Window {
     in-out property <string> window-location;
     in-out property <string> theme-mode;
     in-out property <string> global-hotkey;
-    in-out property <string> voice-hotkey;
     in-out property <string> hotkey-error;
     
     in-out property <int> window-width;
@@ -75,11 +74,8 @@ export component SettingsWindow inherits Window {
     callback save-settings();
     // Re-assemble + validate the hotkey from the four dropdown slots, then apply/save it.
     callback apply-hotkey();
-    // Same, for the voice dictation hotkey (must differ from the launcher hotkey).
-    callback apply-voice-hotkey();
 
-    // Hotkey dropdown models + selected values (built in Rust). Models are shared by both
-    // the launcher and voice dropdowns; only the selected values differ.
+    // Hotkey dropdown models + selected values (built in Rust).
     in-out property <[string]> slot1-model;
     in-out property <[string]> slot2-model;
     in-out property <[string]> slot34-model;
@@ -87,12 +83,7 @@ export component SettingsWindow inherits Window {
     in-out property <string> slot2-val;
     in-out property <string> slot3-val: "—";
     in-out property <string> slot4-val: "—";
-    in-out property <string> vslot1-val;
-    in-out property <string> vslot2-val;
-    in-out property <string> vslot3-val: "—";
-    in-out property <string> vslot4-val: "—";
-    in-out property <string> voice-hotkey-error;
-    
+
     // Agent settings properties
     in-out property <string> agent-api-key;
     in-out property <string> agent-endpoint;
