@@ -702,6 +702,9 @@ unsafe fn run() {
         Err(_) => std::path::PathBuf::from("file_index.db"),
     };
 
+    // Ensure agents table exists and has a default Hermes agent
+    ensure_default_agents(&db_path);
+
     // Load the Windows Settings icon from the real Settings UWP app.
     // SHGetFileInfoW with the shell:AppsFolder path returns the actual gear logo.
     let icon_settings = {
@@ -4039,6 +4042,39 @@ fn store_ai_chat(
         return Some(id);
     }
     None
+}
+
+fn ensure_default_agents(db_path: &std::path::Path) {
+    if let Ok(conn) = rusqlite::Connection::open(db_path) {
+        let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+        let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS agents (\
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, goal TEXT, \
+                system_prompt TEXT, ts INTEGER);",
+            [],
+        );
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agents WHERE lower(name) = 'hermes'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if count == 0 {
+            let name = "Hermes";
+            let goal = "Execute commands and run autonomous tasks on this Windows PC";
+            let system_prompt = "You are Hermes, a helpful AI assistant. Be concise and proactive.";
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let _ = conn.execute(
+                "INSERT INTO agents (name, goal, system_prompt, ts) VALUES (?,?,?,?);",
+                rusqlite::params![name, goal, system_prompt, now],
+            );
+        }
+    }
 }
 
 fn create_agent(db_path: &std::path::Path, name: &str, goal: &str) {
