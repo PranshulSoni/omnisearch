@@ -8793,6 +8793,9 @@ fn filter_index(ftype: FilterType) -> usize {
 }
 
 fn apply_sort(results: &mut Vec<SearchResult>, sort_asc: bool, query: &str) {
+    if query.trim().is_empty() {
+        return;
+    }
     if sort_asc {
         results.sort_by(|a, b| {
             a.entry
@@ -8807,8 +8810,9 @@ fn apply_sort(results: &mut Vec<SearchResult>, sort_asc: bool, query: &str) {
 }
 
 fn best_match_cmp(a: &SearchResult, b: &SearchResult, query: &str) -> std::cmp::Ordering {
-    best_match_tuple(b, query)
-        .partial_cmp(&best_match_tuple(a, query))
+    let score_a = calculate_relevance_score(a, query);
+    let score_b = calculate_relevance_score(b, query);
+    score_b.partial_cmp(&score_a)
         .unwrap_or(std::cmp::Ordering::Equal)
         .then_with(|| {
             a.entry
@@ -8818,48 +8822,80 @@ fn best_match_cmp(a: &SearchResult, b: &SearchResult, query: &str) -> std::cmp::
         })
 }
 
-fn best_match_tuple(result: &SearchResult, query: &str) -> (f32, f32, f32) {
-    (
-        title_match_rank(&result.entry.control_name, query),
-        source_priority(&result.entry.source, &result.entry.launch_command),
-        result.score,
-    )
-}
-
-fn title_match_rank(title: &str, query: &str) -> f32 {
-    let q = query.trim();
+fn calculate_relevance_score(result: &SearchResult, query: &str) -> f32 {
+    let q = query.trim().to_lowercase();
     if q.is_empty() {
-        return 0.0;
+        return result.score;
     }
-    let title_lower = title.to_lowercase();
-    let stem_lower = title_lower
+
+    let title = result.entry.control_name.to_lowercase();
+    let stem = title
         .rsplit_once('.')
-        .map(|(stem, _)| stem)
-        .unwrap_or(title_lower.as_str());
-    if title_lower == q || stem_lower == q {
-        100.0
-    } else if title_lower.starts_with(q) || stem_lower.starts_with(q) {
-        90.0
-    } else if title_lower.contains(q) || stem_lower.contains(q) {
-        70.0
+        .map(|(s, _)| s)
+        .unwrap_or(&title);
+
+    let mut score = 0.0;
+
+    // 1. Title matching
+    if title == q || stem == q {
+        score += 1000.0;
+    } else if title.starts_with(&q) || stem.starts_with(&q) {
+        score += 800.0;
     } else {
-        let words: Vec<&str> = stem_lower
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|word| !word.is_empty())
-            .collect();
-        let q_words: Vec<&str> = q.split_whitespace().collect();
-        if q_words.is_empty() {
-            0.0
+        let mut word_prefix_match = false;
+        for word in title.split(|c: char| !c.is_alphanumeric()) {
+            if word.starts_with(&q) && !word.is_empty() {
+                word_prefix_match = true;
+                break;
+            }
+        }
+        if word_prefix_match {
+            score += 600.0;
+        } else if title.contains(&q) || stem.contains(&q) {
+            score += 400.0;
         } else {
-            let matched = q_words.iter().filter(|word| words.contains(word)).count();
-            if matched == 0 {
-                0.0
-            } else {
-                40.0 + 20.0 * matched as f32 / q_words.len() as f32
+            let words: Vec<&str> = stem
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .collect();
+            let q_words: Vec<&str> = q.split_whitespace().collect();
+            if !q_words.is_empty() {
+                let matched = q_words.iter().filter(|qw| words.contains(qw)).count();
+                if matched > 0 {
+                    score += 200.0 * (matched as f32 / q_words.len() as f32);
+                }
             }
         }
     }
+
+    // Acronym / abbreviation match
+    if q.len() >= 2 {
+        let first_letters: String = title
+            .split(|c: char| !c.is_alphanumeric())
+            .filter_map(|w| w.chars().next())
+            .collect();
+        if first_letters.starts_with(&q) {
+            score += 300.0;
+        }
+    }
+
+    // 2. Path / Command matching
+    let path = result.entry.launch_command.to_lowercase();
+    if path.contains(&q) {
+        score += 100.0;
+    }
+
+    // 3. Source priority weight
+    let src_priority = source_priority(&result.entry.source, &result.entry.launch_command);
+    score += src_priority * 2.0;
+
+    // 4. Base score
+    score += result.score.clamp(0.0, 500.0);
+
+    score
 }
+
+
 
 fn source_priority(source: &str, command: &str) -> f32 {
     if source == "app" {
