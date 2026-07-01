@@ -12,7 +12,7 @@ use std::sync::Mutex;
 static UPDATE_URL: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 static DOWNLOADED_PATH: Lazy<Mutex<Option<std::path::PathBuf>>> = Lazy::new(|| Mutex::new(None));
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const DISPLAY_VERSION: &str = "1.01";
+const DISPLAY_VERSION: &str = "1.02";
 
 fn is_newer_version(current: &str, latest: &str) -> bool {
     let parse = |v: &str| -> Vec<u32> {
@@ -665,16 +665,9 @@ pub fn run_settings_window() {
         }
 
         // The downloaded file is the Inno setup installer, not the app executable.
-        // Delay through cmd so this settings process can exit before setup replaces files.
-        let installer = downloaded_path.to_string_lossy().replace('"', "");
-        let _ = std::process::Command::new("cmd")
-            .args([
-                "/C",
-                &format!(
-                    "timeout /t 1 /nobreak >nul & \"{}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
-                    installer
-                ),
-            ])
+        // Launch the normal installer UI, then exit so setup can replace this process cleanly.
+        let _ = std::process::Command::new(&downloaded_path)
+            .args(["/SUPPRESSMSGBOXES", "/NORESTART"])
             .spawn();
 
         std::process::exit(0);

@@ -1,6 +1,6 @@
 [Setup]
 AppName=omnisearch
-AppVersion=1.0.1
+AppVersion=1.0.2
 DefaultDirName={localappdata}\Programs\omnisearch
 DefaultGroupName=omnisearch
 UninstallDisplayIcon={app}\omnisearch.exe
@@ -10,6 +10,8 @@ SolidCompression=yes
 OutputDir=setup
 OutputBaseFilename=omnisearchsetup
 PrivilegesRequired=lowest
+CloseApplications=yes
+RestartApplications=no
 
 [Files]
 Source: "target\release\omnisearch.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -29,13 +31,3 @@ Filename: "taskkill"; Parameters: "/F /IM hermes.exe"; Flags: runhidden; RunOnce
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{userappdata}\omnisearch"
-
-[Code]
-function InitializeSetup(): Boolean;
-var
-  ResultCode: Integer;
-begin
-  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM omnisearch.exe /T >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM hermes.exe /T >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Result := True;
-end;
