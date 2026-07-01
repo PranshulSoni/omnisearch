@@ -6,6 +6,33 @@ use std::sync::atomic::Ordering;
 use windows::Win32::Foundation::{GetLastError, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
+
+static UPDATE_URL: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+static DOWNLOADED_PATH: Lazy<Mutex<Option<std::path::PathBuf>>> = Lazy::new(|| Mutex::new(None));
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn is_newer_version(current: &str, latest: &str) -> bool {
+    let parse = |v: &str| -> Vec<u32> {
+        v.split('.')
+            .map(|s| s.parse::<u32>().unwrap_or(0))
+            .collect()
+    };
+    let cur_parts = parse(current);
+    let lat_parts = parse(latest);
+    for i in 0..cur_parts.len().max(lat_parts.len()) {
+        let cur_val = cur_parts.get(i).cloned().unwrap_or(0);
+        let lat_val = lat_parts.get(i).cloned().unwrap_or(0);
+        if lat_val > cur_val {
+            return true;
+        } else if cur_val > lat_val {
+            return false;
+        }
+    }
+    false
+}
+
 thread_local! {
     static SETTINGS_WINDOW: std::cell::RefCell<Option<std::rc::Rc<SettingsWindow>>> = std::cell::RefCell::new(None);
 }
@@ -71,6 +98,14 @@ pub fn run_settings_window() {
                 let _ = windows::Win32::Foundation::CloseHandle(h);
                 return; // Settings already open
             }
+        }
+    }
+
+    // Clean up .bak files on startup
+    if let Ok(current_exe) = std::env::current_exe() {
+        let backup_exe = current_exe.with_extension("bak");
+        if backup_exe.exists() {
+            let _ = std::fs::remove_file(backup_exe);
         }
     }
 
@@ -439,6 +474,205 @@ pub fn run_settings_window() {
                 windows::Win32::System::Com::CoUninitialize();
             }
         });
+    });
+
+    let ui_weak_check = ui.as_weak();
+    ui.on_check_for_updates(move || {
+        let ui_weak = ui_weak_check.clone();
+        if let Some(ui) = ui_weak.upgrade() {
+            ui.set_update_status("checking".into());
+        }
+
+        std::thread::spawn(move || {
+            let res = ureq::get("https://raw.githubusercontent.com/PranshulSoni/omnisearch/main/update.json")
+                .timeout(std::time::Duration::from_secs(10))
+                .call();
+            
+            let status = match res {
+                Ok(response) => {
+                    match response.into_json::<serde_json::Value>() {
+                        Ok(json) => {
+                            let latest_version = json["version"].as_str().unwrap_or("0.0.0");
+                            let download_url = json["url"].as_str().unwrap_or("");
+                            
+                            if is_newer_version(CURRENT_VERSION, latest_version) && !download_url.is_empty() {
+                                if let Ok(mut url_lock) = UPDATE_URL.lock() {
+                                    *url_lock = Some(download_url.to_string());
+                                }
+                                let ver = latest_version.to_string();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(ui) = ui_weak.upgrade() {
+                                        ui.set_update_status("available".into());
+                                        ui.set_update_version(ver.into());
+                                    }
+                                });
+                                return;
+                            } else {
+                                "uptodate"
+                            }
+                        }
+                        Err(_) => "error",
+                    }
+                }
+                Err(_) => "error",
+            };
+
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_update_status(status.into());
+                }
+            });
+        });
+    });
+
+    let ui_weak_download = ui.as_weak();
+    ui.on_download_update(move || {
+        let ui_weak = ui_weak_download.clone();
+        let url = match UPDATE_URL.lock().unwrap().clone() {
+            Some(u) => u,
+            None => return,
+        };
+
+        std::thread::spawn(move || {
+            let _ = slint::invoke_from_event_loop({
+                let ui_weak = ui_weak.clone();
+                move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_update_status("downloading".into());
+                        ui.set_update_progress(0);
+                    }
+                }
+            });
+
+            let res = match ureq::get(&url).timeout(std::time::Duration::from_secs(60)).call() {
+                Ok(r) => r,
+                Err(_) => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_update_status("error".into());
+                        }
+                    });
+                    return;
+                }
+            };
+
+            let total_size = res.header("Content-Length")
+                .and_then(|len| len.parse::<u64>().ok())
+                .unwrap_or(0);
+
+            let temp_dir = std::env::temp_dir();
+            let temp_path = temp_dir.join("omnisearch_update.exe");
+            
+            let mut file = match std::fs::File::create(&temp_path) {
+                Ok(f) => f,
+                Err(_) => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_update_status("error".into());
+                        }
+                    });
+                    return;
+                }
+            };
+
+            let mut reader = res.into_reader();
+            let mut buffer = [0; 16384];
+            let mut downloaded = 0u64;
+
+            loop {
+                use std::io::{Read, Write};
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if file.write_all(&buffer[..n]).is_err() {
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_weak.upgrade() {
+                                    ui.set_update_status("error".into());
+                                }
+                            });
+                            return;
+                        }
+                        downloaded += n as u64;
+                        if total_size > 0 {
+                            let percent = ((downloaded as f32 / total_size as f32) * 100.0) as i32;
+                            let ui_weak = ui_weak.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_weak.upgrade() {
+                                    ui.set_update_progress(percent);
+                                }
+                            });
+                        }
+                    }
+                    Err(_) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                    ui.set_update_status("error".into());
+                            }
+                        });
+                        return;
+                    }
+                }
+            }
+
+            if let Ok(mut path_lock) = DOWNLOADED_PATH.lock() {
+                *path_lock = Some(temp_path);
+            }
+
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_update_status("ready".into());
+                }
+            });
+        });
+    });
+
+    ui.on_install_update(move || {
+        let downloaded_path = match DOWNLOADED_PATH.lock().unwrap().clone() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let current_exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+
+        let class_name: Vec<u16> = "omnisearch\0".encode_utf16().collect();
+        if let Ok(hwnd) = unsafe { windows::Win32::UI::WindowsAndMessaging::FindWindowW(windows::core::PCWSTR(class_name.as_ptr()), None) } {
+            if !hwnd.0.is_null() {
+                unsafe {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                        hwnd,
+                        windows::Win32::UI::WindowsAndMessaging::WM_CLOSE,
+                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
+                }
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let backup_exe = current_exe.with_extension("bak");
+        
+        if backup_exe.exists() {
+            let _ = std::fs::remove_file(&backup_exe);
+        }
+
+        if std::fs::rename(&current_exe, &backup_exe).is_err() {
+            return;
+        }
+
+        if std::fs::copy(&downloaded_path, &current_exe).is_err() {
+            let _ = std::fs::rename(&backup_exe, &current_exe);
+            return;
+        }
+
+        let _ = std::process::Command::new(&current_exe)
+            .arg("--settings")
+            .spawn();
+
+        std::process::exit(0);
     });
 
     let ui_weak_status = ui.as_weak();

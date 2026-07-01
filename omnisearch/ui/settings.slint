@@ -115,6 +115,16 @@ export component SettingsWindow inherits Window {
     callback remove-folder(int);
     callback rebuild-index();
 
+    // Update settings properties
+    in-out property <string> update-status: "idle"; // "idle", "checking", "available", "downloading", "ready", "uptodate", "error"
+    in-out property <string> update-version: "";
+    in-out property <int> update-progress: 0;
+
+    // Update callbacks
+    callback check-for-updates();
+    callback download-update();
+    callback install-update();
+
 
     
     property <int> current-page: 0;
@@ -1680,7 +1690,26 @@ export component SettingsWindow inherits Window {
                                     VerticalLayout {
                                         alignment: center;
                                         Button {
-                                            text: "Check for Updates";
+                                             text: root.update-status == "idle" ? "Check for Updates" :
+                                                   root.update-status == "checking" ? "Checking..." :
+                                                   root.update-status == "available" ? "Download Update (v" + root.update-version + ")" :
+                                                   root.update-status == "downloading" ? "Downloading... (" + root.update-progress + "%)" :
+                                                   root.update-status == "ready" ? "Install Update" :
+                                                   root.update-status == "uptodate" ? "Up to Date" :
+                                                   "Error - Retry";
+                                             enabled: root.update-status == "idle" ||
+                                                      root.update-status == "available" ||
+                                                      root.update-status == "ready" ||
+                                                      root.update-status == "error";
+                                             clicked => {
+                                                 if (root.update-status == "idle" || root.update-status == "error") {
+                                                     root.check-for-updates();
+                                                 } else if (root.update-status == "available") {
+                                                     root.download-update();
+                                                 } else if (root.update-status == "ready") {
+                                                     root.install-update();
+                                                 }
+                                             }
                                         }
                                     }
                                     VerticalLayout {

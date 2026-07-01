@@ -571,6 +571,15 @@ fn enforce_single_instance() -> Option<windows::Win32::Foundation::HANDLE> {
 // ── Entry point ───────────────────────────────────────────────────────────────
 fn main() {
     install_panic_logger();
+    
+    // Clean up .bak files from previous updates on startup
+    if let Ok(current_exe) = std::env::current_exe() {
+        let backup_exe = current_exe.with_extension("bak");
+        if backup_exe.exists() {
+            let _ = std::fs::remove_file(backup_exe);
+        }
+    }
+
     let args: Vec<String> = std::env::args().collect();
     // Out-of-process document extraction: run pdf_extract/docx_lite in a throwaway child so
     // a stack overflow on a malformed file (an abort that catch_unwind CANNOT catch) kills
