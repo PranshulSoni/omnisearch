@@ -650,11 +650,6 @@ pub fn run_settings_window() {
             None => return,
         };
 
-        let current_exe = match std::env::current_exe() {
-            Ok(p) => p,
-            Err(_) => return,
-        };
-
         let class_name: Vec<u16> = "omnisearch\0".encode_utf16().collect();
         if let Ok(hwnd) = unsafe { windows::Win32::UI::WindowsAndMessaging::FindWindowW(windows::core::PCWSTR(class_name.as_ptr()), None) } {
             if !hwnd.0.is_null() {
@@ -669,25 +664,17 @@ pub fn run_settings_window() {
             }
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(200));
-
-        let backup_exe = current_exe.with_extension("bak");
-        
-        if backup_exe.exists() {
-            let _ = std::fs::remove_file(&backup_exe);
-        }
-
-        if std::fs::rename(&current_exe, &backup_exe).is_err() {
-            return;
-        }
-
-        if std::fs::copy(&downloaded_path, &current_exe).is_err() {
-            let _ = std::fs::rename(&backup_exe, &current_exe);
-            return;
-        }
-
-        let _ = std::process::Command::new(&current_exe)
-            .arg("--settings")
+        // The downloaded file is the Inno setup installer, not the app executable.
+        // Delay through cmd so this settings process can exit before setup replaces files.
+        let installer = downloaded_path.to_string_lossy().replace('"', "");
+        let _ = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                &format!(
+                    "timeout /t 1 /nobreak >nul & \"{}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
+                    installer
+                ),
+            ])
             .spawn();
 
         std::process::exit(0);

@@ -29,3 +29,13 @@ Filename: "taskkill"; Parameters: "/F /IM hermes.exe"; Flags: runhidden; RunOnce
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{userappdata}\omnisearch"
+
+[Code]
+function InitializeSetup(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM omnisearch.exe /T >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM hermes.exe /T >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := True;
+end;
