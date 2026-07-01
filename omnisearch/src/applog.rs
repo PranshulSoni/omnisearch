@@ -4,17 +4,16 @@ pub fn log(msg: &str) {
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("app_log.txt")))
         .unwrap_or_else(|| std::path::PathBuf::from("app_log.txt"));
-    if let Ok(meta) = std::fs::metadata(&path) {
-        if meta.len() > 1024 * 1024 {
-            let _ = std::fs::remove_file(&path);
-        }
-    }
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
     {
         use std::io::Write;
+        // Truncate in-place if file exceeds 1MB (atomic: no TOCTOU race)
+        if file.metadata().map(|m| m.len() > 1024 * 1024).unwrap_or(false) {
+            let _ = file.set_len(0);
+        }
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
