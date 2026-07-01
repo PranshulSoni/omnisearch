@@ -201,12 +201,10 @@ fn log_indexer(msg: &str) {
     };
     let _ = std::fs::create_dir_all(&log_dir);
     let log_path = log_dir.join("indexer.log");
-    if let Ok(meta) = std::fs::metadata(&log_path) {
-        if meta.len() > 1024 * 1024 {
-            let _ = std::fs::remove_file(&log_path);
-        }
-    }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
+        if file.metadata().map(|m| m.len() > 1024 * 1024).unwrap_or(false) {
+            let _ = file.set_len(0);
+        }
         let _ = writeln!(file, "{}", msg);
     }
 }
