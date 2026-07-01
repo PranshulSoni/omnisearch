@@ -101,11 +101,8 @@ Prefixes are optional, but useful when you want to search one source directly.
 | `history:` | Browser history |
 | `clip:` or `clipboard:` | Clipboard history |
 | `commits:` | Git commits |
-| `todos:` | TODO/FIXME comments in code |
 | `agents:` | Available AI agents |
 | `agentchats:` | Agent chat history |
-| `chats:` | AI chat history |
-| `switch:` or `window:` | Open windows and running apps |
 
 ## Settings App
 

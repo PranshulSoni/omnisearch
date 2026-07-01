@@ -91,3 +91,4 @@ strip = true
 
 [build-dependencies]
 slint-build = "1.17.0"
+winres = "0.1"

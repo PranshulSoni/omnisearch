@@ -4,6 +4,7 @@ AppVersion=1.0.0
 DefaultDirName={localappdata}\Programs\omnisearch
 DefaultGroupName=omnisearch
 UninstallDisplayIcon={app}\omnisearch.exe
+SetupIconFile=..\icons\OmniSearchTrans.ico
 Compression=lzma2
 SolidCompression=yes
 OutputDir=setup
