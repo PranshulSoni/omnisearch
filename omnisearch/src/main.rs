@@ -538,7 +538,15 @@ impl State {
     }
 }
 
-fn enforce_single_instance() -> Option<windows::Win32::Foundation::HANDLE> {
+/// A named mutex handle that calls CloseHandle on drop.
+struct MutexHandle(windows::Win32::Foundation::HANDLE);
+impl Drop for MutexHandle {
+    fn drop(&mut self) {
+        let _ = unsafe { windows::Win32::Foundation::CloseHandle(self.0) };
+    }
+}
+
+fn enforce_single_instance() -> Option<MutexHandle> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::GetLastError;
     use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
@@ -562,7 +570,7 @@ fn enforce_single_instance() -> Option<windows::Win32::Foundation::HANDLE> {
                 let _ = windows::Win32::Foundation::CloseHandle(h);
                 return None;
             }
-            return Some(h);
+            return Some(MutexHandle(h));
         }
     }
     None
