@@ -45,7 +45,9 @@ OmniSearch brings all of it into one fast, keyboard-first command center. Press 
 
 ## Demo Video
 
-Demo video link will be added here after the release video is uploaded.
+<video src="https://github.com/PranshulSoni/omnisearch/releases/download/v1.0.0/demo.mp4" controls width="100%"></video>
+
+[Watch the demo video](https://github.com/PranshulSoni/omnisearch/releases/download/v1.0.0/demo.mp4)
 
 ## Star On GitHub
 
