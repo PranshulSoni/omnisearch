@@ -117,11 +117,15 @@ unsafe fn setup_tray_icon(
     }
     let res = Shell_NotifyIconW(NIM_ADD, &nid);
 
-    if let Ok(mut log_file) = std::fs::OpenOptions::new().create(true).append(true).open("C:\\Users\\Pranshul Soni\\Documents\\Projects\\Backend\\Project-Raycast\\omnisearch\\tray_debug.log") {
-        use std::io::Write;
-        let _ = writeln!(log_file, "setup_tray_icon: hwnd={:?}, hicon={:?}, NIM_ADD res={:?}, last_error={:?}",
-            hwnd, hicon, res, std::io::Error::last_os_error()
-        );
+    #[cfg(debug_assertions)]
+    if let Some(appdata) = std::env::var("APPDATA").ok() {
+        let log_path = std::path::PathBuf::from(appdata).join("omnisearch").join("tray_debug.log");
+        if let Ok(mut log_file) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+            use std::io::Write;
+            let _ = writeln!(log_file, "setup_tray_icon: hwnd={:?}, hicon={:?}, NIM_ADD res={:?}, last_error={:?}",
+                hwnd, hicon, res, std::io::Error::last_os_error()
+            );
+        }
     }
 }
 
@@ -133,11 +137,15 @@ unsafe fn remove_tray_icon(hwnd: windows::Win32::Foundation::HWND) {
     nid.uID = 1;
     let res = Shell_NotifyIconW(NIM_DELETE, &nid);
 
-    if let Ok(mut log_file) = std::fs::OpenOptions::new().create(true).append(true).open("C:\\Users\\Pranshul Soni\\Documents\\Projects\\Backend\\Project-Raycast\\omnisearch\\tray_debug.log") {
-        use std::io::Write;
-        let _ = writeln!(log_file, "remove_tray_icon: hwnd={:?}, NIM_DELETE res={:?}, last_error={:?}",
-            hwnd, res, std::io::Error::last_os_error()
-        );
+    #[cfg(debug_assertions)]
+    if let Some(appdata) = std::env::var("APPDATA").ok() {
+        let log_path = std::path::PathBuf::from(appdata).join("omnisearch").join("tray_debug.log");
+        if let Ok(mut log_file) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+            use std::io::Write;
+            let _ = writeln!(log_file, "remove_tray_icon: hwnd={:?}, NIM_DELETE res={:?}, last_error={:?}",
+                hwnd, res, std::io::Error::last_os_error()
+            );
+        }
     }
 }
 
