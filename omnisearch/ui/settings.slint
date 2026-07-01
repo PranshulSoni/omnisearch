@@ -1692,7 +1692,7 @@ export component SettingsWindow inherits Window {
                                                    root.update-status == "available" ? "Download Update (v" + root.update-version + ")" :
                                                    root.update-status == "downloading" ? "Downloading... (" + root.update-progress + "%)" :
                                                    root.update-status == "ready" ? "Install Update" :
-                                                   root.update-status == "uptodate" ? "Up to Date" :
+                                                   root.update-status == "uptodate" ? "No Update Available" :
                                                    "Error - Retry";
                                              enabled: root.update-status == "idle" ||
                                                       root.update-status == "available" ||

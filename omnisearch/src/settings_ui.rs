@@ -514,6 +514,7 @@ pub fn run_settings_window() {
                         Err(_) => "error",
                     }
                 }
+                Err(ureq::Error::Status(404, _)) => "uptodate", // 404 means no updates published yet!
                 Err(_) => "error",
             };
 
