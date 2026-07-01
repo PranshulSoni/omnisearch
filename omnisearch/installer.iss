@@ -1,31 +1,30 @@
 [Setup]
-AppName=OpenSearch OS
-AppVersion=0.1.0
-DefaultDirName={localappdata}\Programs\OpenSearch OS
-DefaultGroupName=OpenSearch OS
-UninstallDisplayIcon={app}\opensearch-os.exe
+AppName=omnisearch
+AppVersion=1.0.0
+DefaultDirName={localappdata}\Programs\omnisearch
+DefaultGroupName=omnisearch
+UninstallDisplayIcon={app}\omnisearch.exe
 Compression=lzma2
 SolidCompression=yes
 OutputDir=setup
-OutputBaseFilename=OpenSearchOSSetup
+OutputBaseFilename=omnisearchsetup
 PrivilegesRequired=lowest
 
 [Files]
-Source: "target\release\opensearch-os.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "target\release\omnisearch.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "target\release\uninstall.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\OpenSearch OS"; Filename: "{app}\opensearch-os.exe"
-Name: "{userdesktop}\OpenSearch OS"; Filename: "{app}\opensearch-os.exe"
-Name: "{group}\Uninstall OpenSearch OS"; Filename: "{app}\uninstall.exe"
-
+Name: "{group}\omnisearch"; Filename: "{app}\omnisearch.exe"
+Name: "{userdesktop}\omnisearch"; Filename: "{app}\omnisearch.exe"
+Name: "{group}\Uninstall omnisearch"; Filename: "{app}\uninstall.exe"
 
 [Run]
-Filename: "{app}\opensearch-os.exe"; Description: "Launch OpenSearch OS"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\omnisearch.exe"; Description: "Launch omnisearch"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "taskkill"; Parameters: "/F /IM opensearch-os.exe"; Flags: runhidden; RunOnceId: "KillApp"
+Filename: "taskkill"; Parameters: "/F /IM omnisearch.exe"; Flags: runhidden; RunOnceId: "KillApp"
 Filename: "taskkill"; Parameters: "/F /IM hermes.exe"; Flags: runhidden; RunOnceId: "KillHermes"
 
 [UninstallDelete]
-Type: filesandordirs; Name: "{userappdata}\opensearch-os"
+Type: filesandordirs; Name: "{userappdata}\omnisearch"
