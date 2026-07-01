@@ -14,10 +14,10 @@ const DEFAULT_ENDPOINT: &str = "https://api.deepseek.com/chat/completions";
 const DEFAULT_MODEL: &str = "deepseek-chat";
 
 // ── API key resolution ────────────────────────────────────────────────────────
-// Order: env var → %APPDATA%/omnisearch/ai_key.txt → hardcoded constant below.
-// Leave the constant empty in source (never commit a real key); the user pastes
-// their DeepSeek key into the file or env var.
-const HARDCODED_KEY: &str = "sk-HrvSzHIYBPsbF4NMpG7S0RvLhZKFHmPV153k1kitFrdV4uSdyLvd9EbftDXwkkpb";
+// Order: env var → %APPDATA%/omnisearch/ai_key.txt.
+// Never commit a real key; the user pastes their DeepSeek key into the file or
+// env var. The hardcoded fallback is intentionally left empty.
+const HARDCODED_KEY: &str = "";
 
 pub struct AiConfig {
     pub endpoint: String,
