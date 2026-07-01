@@ -45,10 +45,10 @@ struct SlintAgent {
 export component SettingsWindow inherits Window {
     title: "OmniSearch Settings";
     icon: @image-url("../../icons/OmniSearchTrans.png");
-    min-width: 950px;
-    min-height: 600px;
-    preferred-width: 950px;
-    preferred-height: 600px;
+    min-width: 860px;
+    min-height: 560px;
+    preferred-width: 900px;
+    preferred-height: 580px;
 
     in-out property <[SlintAgent]> available-agents;
     callback launch-agent(int);
@@ -119,7 +119,7 @@ export component SettingsWindow inherits Window {
     in-out property <string> update-status: "idle"; // "idle", "checking", "available", "downloading", "ready", "uptodate", "error"
     in-out property <string> update-version: "";
     in-out property <int> update-progress: 0;
-    in-out property <string> app-version: "1.0.0";
+    in-out property <string> app-version: "1.01";
 
     // Update callbacks
     callback check-for-updates();

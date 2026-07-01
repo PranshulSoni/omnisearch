@@ -1,6 +1,6 @@
 [Setup]
 AppName=omnisearch
-AppVersion=1.0.0
+AppVersion=1.0.1
 DefaultDirName={localappdata}\Programs\omnisearch
 DefaultGroupName=omnisearch
 UninstallDisplayIcon={app}\omnisearch.exe

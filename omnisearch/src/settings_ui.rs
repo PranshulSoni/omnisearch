@@ -12,6 +12,7 @@ use std::sync::Mutex;
 static UPDATE_URL: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 static DOWNLOADED_PATH: Lazy<Mutex<Option<std::path::PathBuf>>> = Lazy::new(|| Mutex::new(None));
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const DISPLAY_VERSION: &str = "1.01";
 
 fn is_newer_version(current: &str, latest: &str) -> bool {
     let parse = |v: &str| -> Vec<u32> {
@@ -125,7 +126,8 @@ pub fn run_settings_window() {
     let settings = AppSettings::load();
     let (api_key, endpoint, model, always_approve) = load_ai_settings();
 
-    ui.set_app_version(CURRENT_VERSION.into());
+    // Keep the public About label compact while Cargo uses semver for update comparisons.
+    ui.set_app_version(DISPLAY_VERSION.into());
     ui.set_run_on_startup(settings.run_on_startup);
     ui.set_hide_on_lose_focus(settings.hide_on_lose_focus);
     ui.set_show_taskbar(settings.show_taskbar);
