@@ -187,7 +187,7 @@ fn parse_bookmarks(path: &Path, source_type: &str, conn: &Connection) -> anyhow:
     let mut bookmarks = Vec::new();
     if let Some(roots) = json.get("roots").and_then(|v| v.as_object()) {
         for (_, root_val) in roots {
-            traverse_bookmarks(root_val, &mut bookmarks);
+            traverse_bookmarks(root_val, &mut bookmarks, 0);
         }
     }
 
@@ -219,7 +219,12 @@ fn parse_bookmarks(path: &Path, source_type: &str, conn: &Connection) -> anyhow:
     Ok(())
 }
 
-fn traverse_bookmarks(val: &serde_json::Value, list: &mut Vec<(String, String)>) {
+fn traverse_bookmarks(val: &serde_json::Value, list: &mut Vec<(String, String)>, depth: usize) {
+    // Guard the recursion against a stack overflow on pathological/deeply nested bookmark
+    // JSON (this runs on the browser-indexer worker thread).
+    if depth > 200 {
+        return;
+    }
     if let Some(obj) = val.as_object() {
         let name = obj
             .get("name")
@@ -233,7 +238,7 @@ fn traverse_bookmarks(val: &serde_json::Value, list: &mut Vec<(String, String)>)
             }
         } else if let Some(children) = obj.get("children").and_then(|v| v.as_array()) {
             for child in children {
-                traverse_bookmarks(child, list);
+                traverse_bookmarks(child, list, depth + 1);
             }
         }
     }

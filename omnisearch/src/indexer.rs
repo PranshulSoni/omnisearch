@@ -771,46 +771,94 @@ pub fn get_default_scan_folders() -> Vec<PathBuf> {
 }
 
 fn safe_extract_pdf_text(path: &Path) -> Option<String> {
-    let path_buf = path.to_path_buf();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-        pdf_extract::extract_text(&path_buf)
-    }));
-    match result {
-        Ok(Ok(text)) => {
-            let mut truncated = text;
-            truncated.truncate(50 * 1024);
-            Some(truncated)
-        }
-        Ok(Err(e)) => {
-            log_indexer(&format!("PDF extract error for {:?}: {:?}", path, e));
-            None
-        }
-        Err(_) => {
-            log_indexer(&format!("PDF extract PANICKED (caught) for {:?}", path));
-            None
-        }
-    }
+    extract_via_subprocess(path, "PDF")
 }
 
 fn safe_extract_docx_text(path: &Path) -> Option<String> {
-    let path_buf = path.to_path_buf();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-        docx_lite::extract_text(&path_buf)
-    }));
-    match result {
-        Ok(Ok(text)) => {
-            let mut truncated = text;
-            truncated.truncate(50 * 1024);
-            Some(truncated)
+    extract_via_subprocess(path, "DOCX")
+}
+
+/// Child-process entry (`--extract-content <path>`): print the document's extracted text to
+/// stdout, then exit. pdf_extract/docx_lite can stack-overflow on malformed files, and a
+/// stack overflow is an abort that `catch_unwind` cannot catch — so we run them here, in a
+/// throwaway process. If it overflows, this child dies and the parent just skips the content.
+pub fn extract_content_subprocess(path_str: &str) {
+    let path = Path::new(path_str);
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let text = match ext.as_str() {
+        "pdf" => pdf_extract::extract_text(path).ok(),
+        "docx" => docx_lite::extract_text(path).ok(),
+        _ => None,
+    };
+    if let Some(mut t) = text {
+        t.truncate(50 * 1024);
+        use std::io::Write;
+        let _ = std::io::stdout().write_all(t.as_bytes());
+        let _ = std::io::stdout().flush();
+    }
+}
+
+/// Extract document text in a child process so a parser stack overflow can't crash the
+/// indexer. Drains stdout on a helper thread (no pipe deadlock) and kills a child that runs
+/// too long. Returns None on spawn failure / timeout / child crash / empty output — the file
+/// is still indexed by name, just without full-text content.
+/// ponytail: one process spawn per PDF/DOCX — fine for the low-priority background crawl.
+/// If it ever dominates indexing time, switch to a single persistent extractor process.
+fn extract_via_subprocess(path: &Path, kind: &str) -> Option<String> {
+    use std::io::Read;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let exe = std::env::current_exe().ok()?;
+    let mut child = Command::new(exe)
+        .arg("--extract-content")
+        .arg(path)
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    // Drain stdout on a helper thread so a large document can't deadlock the pipe.
+    let mut out = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = out.read_to_string(&mut s);
+        s
+    });
+    // Watchdog: kill a child that runs too long (hang or pathological input).
+    let start = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break Some(s),
+            Ok(None) => {
+                if start.elapsed() > std::time::Duration::from_secs(30) {
+                    let _ = child.kill();
+                    log_indexer(&format!("{kind} extract TIMEOUT for {:?}", path));
+                    break child.wait().ok();
+                }
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                break child.wait().ok();
+            }
         }
-        Ok(Err(e)) => {
-            log_indexer(&format!("DOCX extract error for {:?}: {:?}", path, e));
-            None
+    };
+    let text = reader.join().unwrap_or_default();
+    if text.is_empty() {
+        if !status.map(|s| s.success()).unwrap_or(false) {
+            log_indexer(&format!(
+                "{kind} extract produced no content (child crashed?) for {:?}",
+                path
+            ));
         }
-        Err(_) => {
-            log_indexer(&format!("DOCX extract PANICKED (caught) for {:?}", path));
-            None
-        }
+        None
+    } else {
+        Some(text)
     }
 }
 

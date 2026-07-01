@@ -8487,6 +8487,24 @@ pub fn try_calc(input: &str) -> Option<f64> {
     };
 
     let tokens = tokenize(&s)?;
+    // Guard the recursive-descent parser against a stack overflow on pathological input:
+    // deeply nested parentheses recurse one frame per level, and search runs on a worker
+    // thread. No real calculation nests anywhere near this deep.
+    let mut depth = 0i32;
+    let mut max_depth = 0i32;
+    for t in &tokens {
+        match t {
+            Token::LParen => {
+                depth += 1;
+                max_depth = max_depth.max(depth);
+            }
+            Token::RParen => depth -= 1,
+            _ => {}
+        }
+    }
+    if max_depth > 128 {
+        return None;
+    }
     let mut pos = 0usize;
     let result = parse_expr(&tokens, &mut pos)?;
     // Consume any trailing whitespace tokens

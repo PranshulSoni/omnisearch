@@ -572,6 +572,15 @@ fn enforce_single_instance() -> Option<windows::Win32::Foundation::HANDLE> {
 fn main() {
     install_panic_logger();
     let args: Vec<String> = std::env::args().collect();
+    // Out-of-process document extraction: run pdf_extract/docx_lite in a throwaway child so
+    // a stack overflow on a malformed file (an abort that catch_unwind CANNOT catch) kills
+    // only this child, never the launcher. See indexer::extract_via_subprocess.
+    if let Some(pos) = args.iter().position(|a| a == "--extract-content") {
+        if let Some(path) = args.get(pos + 1) {
+            indexer::extract_content_subprocess(path);
+        }
+        return;
+    }
     if args.iter().any(|arg| arg == "--settings") {
         unsafe {
             let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
