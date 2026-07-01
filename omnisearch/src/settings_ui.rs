@@ -521,6 +521,20 @@ pub fn run_settings_window() {
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
                     ui.set_update_status(status.into());
+                    
+                    if status == "uptodate" {
+                        let ui_weak_reset = ui_weak.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_secs(4));
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_weak_reset.upgrade() {
+                                    if ui.get_update_status() == "uptodate" {
+                                        ui.set_update_status("idle".into());
+                                    }
+                                }
+                            });
+                        });
+                    }
                 }
             });
         });
