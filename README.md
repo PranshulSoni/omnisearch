@@ -5,7 +5,7 @@
 <h1 align="center">OmniSearch</h1>
 
 <p align="center">
-  <em>Deep search for everything already on your Windows PC.</em>
+  <em>Find everything on your PC. From one shortcut.</em>
 </p>
 
 <p align="center">
@@ -17,24 +17,27 @@
   <img alt="views" src="https://img.shields.io/badge/views-184-brightgreen?style=flat-square" />
 </p>
 
-OmniSearch is a fast Windows launcher for finding what is already on your PC.
+OmniSearch is a fast, local-first Windows launcher that helps users find and open anything already on their PC from one keyboard shortcut.
 
-Press `Alt + Space`, type what you remember, and open the right app, file, folder, browser page, clipboard item, Windows setting, command, image text, code result, or agent chat from one place.
+A fast, local-first Windows launcher to search apps, files, browser history, clipboard, OCR text, Git activity, settings, commands, and AI chats from one shortcut.
 
-It is built for people who lose time jumping between Start Menu, File Explorer, browser history, Settings, screenshots, copied text, Git repos, and AI chats just to find one thing.
+## Why OmniSearch?
 
-## What OmniSearch Solves
+Your work is already on your PC, but Windows spreads it across too many places.
 
-Windows already has your work, but it is scattered across too many places:
+Apps are in Start Menu. Files are in Explorer. Browser pages are hidden in history. Clipboard items disappear. Screenshots need OCR. Git activity lives somewhere else. AI chats become another place to manually search.
 
-- Start Menu knows apps, but not your document content.
-- File Explorer can find file names, but not always PDF text, OCR text, browser history, clipboard history, or Git activity.
-- Browser search only knows browser data.
-- Windows Settings and Control Panel are split across old and new interfaces.
-- Clipboard content disappears unless you saved it.
-- AI and agent chats become another place to search manually.
+OmniSearch brings all of it into one fast, keyboard-first command center. Press `Alt + Space`, type what you remember, and open the right thing instantly.
 
-OmniSearch puts those sources behind one keyboard-first search box.
+## What Makes It Different?
+
+- **One search box for everything** — apps, files, folders, browser history, clipboard, OCR text, Git activity, settings, commands, and AI chats.
+- **Local-first by design** — your indexed data stays on your PC.
+- **Built for speed** — native Rust/Win32 app with SQLite FTS5 search.
+- **Keyboard-first workflow** — open with `Alt + Space`, search naturally, press `Enter`.
+- **More than app launching** — search document content, screenshots, clipboard history, code, commits, TODOs, agents, and chats.
+- **Hermes agent support** — use Hermes to run autonomous tasks, execute approved commands, and help control your PC from the launcher.
+- **Made for Windows power users** — replaces the friction of jumping between Start Menu, File Explorer, browser history, Settings, and AI tools.
 
 ## What You Can Search
 
@@ -50,6 +53,12 @@ OmniSearch puts those sources behind one keyboard-first search box.
 | Windows Settings | Modern Windows Settings pages and classic Control Panel pages |
 | Commands | Local OmniSearch actions like clipboard, agents, windows, settings, and system actions |
 | Agents | Saved AI agents, agent chats, and AI chat history |
+
+## Hermes Agents
+
+OmniSearch includes Hermes agent integration for users who want more than search.
+
+Hermes can help with autonomous workflows such as running local tasks, executing approved commands, managing agent chats, and assisting with PC control from inside the launcher. It gives OmniSearch an agent layer without turning the search bar into a chatbot first.
 
 ## Daily Use
 
@@ -130,10 +139,6 @@ Current implementation details:
 - SQLite FTS5 for fast full-text search.
 - Debounced search input to avoid doing heavy work on every keystroke.
 - Background indexing for files, browser data, Git activity, clipboard, and OCR.
-- Async icon loading so search results do not block on slow shell icon extraction.
-- Clipboard retention is capped, with pinned items preserved.
-- Browser imports are capped to avoid pulling huge locked profile databases into memory.
-- Document text extraction is capped per file to keep the database compact.
 
 The goal is simple: open fast, search fast, and stay light enough to leave running all day.
 
@@ -150,41 +155,6 @@ After installation:
 5. Start searching.
 
 If `Alt + Space` is already used by another app, change the launcher hotkey in Settings > Hotkeys.
-
-## Build From Source
-
-Most users do not need this section. It is only for contributors or local builds.
-
-Requirements:
-
-- Windows
-- Rust stable toolchain
-- MSVC build tools
-
-Build:
-
-```powershell
-cd omnisearch
-cargo build --release --bin omnisearch
-```
-
-Run:
-
-```powershell
-.\target\release\omnisearch.exe
-```
-
-Run tests:
-
-```powershell
-cargo test --bin omnisearch -- --test-threads=1
-```
-
-If Windows locks the executable during rebuild, close OmniSearch from the tray or run:
-
-```powershell
-taskkill /F /IM omnisearch.exe
-```
 
 ## Tech Stack
 
