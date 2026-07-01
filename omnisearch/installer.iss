@@ -44,36 +44,72 @@ var
   BackupPath: String;
   HermesPath: String;
   HermesBackupPath: String;
+  I: Integer;
+  Renamed: Boolean;
 begin
-  // Force kill processes using full path to taskkill
+  // Force kill all possible process names using full path to taskkill
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM omnisearch.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM omnisearch.bak', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM opensearch-os.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM opensearch.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM hermes.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM hermes.bak', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   
   Sleep(500); // let processes terminate
 
   // Rename fallback for omnisearch.exe
   AppPath := ExpandConstant('{app}\omnisearch.exe');
-  BackupPath := ExpandConstant('{app}\omnisearch.bak');
   if FileExists(AppPath) then
   begin
-    // Attempt to delete any old backup first
+    Renamed := False;
+    // Try standard .bak first
+    BackupPath := ExpandConstant('{app}\omnisearch.bak');
     DeleteFile(BackupPath);
-    // Rename the locked file to .bak so the installer can write a new omnisearch.exe
     if RenameFile(AppPath, BackupPath) then
     begin
-      Log('Successfully renamed locked omnisearch.exe to omnisearch.bak');
+      Renamed := True;
     end else begin
-      Log('Failed to rename locked omnisearch.exe');
+      // Try unique names .bak1, .bak2 ... if standard .bak is locked
+      for I := 1 to 5 do
+      begin
+        BackupPath := ExpandConstant('{app}\omnisearch.bak' + IntToStr(I));
+        DeleteFile(BackupPath);
+        if RenameFile(AppPath, BackupPath) then
+        begin
+          Renamed := True;
+          Break;
+        end;
+      end;
     end;
+    
+    if Renamed then
+      Log('Successfully renamed locked omnisearch.exe')
+    else
+      Log('Failed to rename locked omnisearch.exe');
   end;
 
   // Rename fallback for hermes.exe
   HermesPath := ExpandConstant('{app}\hermes.exe');
-  HermesBackupPath := ExpandConstant('{app}\hermes.bak');
   if FileExists(HermesPath) then
   begin
+    Renamed := False;
+    HermesBackupPath := ExpandConstant('{app}\hermes.bak');
     DeleteFile(HermesBackupPath);
-    RenameFile(HermesPath, HermesBackupPath);
+    if RenameFile(HermesPath, HermesBackupPath) then
+    begin
+      Renamed := True;
+    end else begin
+      for I := 1 to 5 do
+      begin
+        HermesBackupPath := ExpandConstant('{app}\hermes.bak' + IntToStr(I));
+        DeleteFile(HermesBackupPath);
+        if RenameFile(HermesPath, HermesBackupPath) then
+        begin
+          Renamed := True;
+          Break;
+        end;
+      end;
+    end;
   end;
 end;
 
