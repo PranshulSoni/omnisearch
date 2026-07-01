@@ -355,7 +355,12 @@ unsafe extern "system" fn subclass_proc(
         _ => {}
     }
 
-    let old: WNDPROC = std::mem::transmute::<isize, WNDPROC>(OLD_WNDPROC.load(Ordering::SeqCst));
+    let old_val = OLD_WNDPROC.load(Ordering::SeqCst);
+    if old_val == 0 {
+        use windows::Win32::UI::WindowsAndMessaging::DefWindowProcW;
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let old: WNDPROC = std::mem::transmute::<isize, WNDPROC>(old_val);
     CallWindowProcW(old, hwnd, msg, wparam, lparam)
 }
 
@@ -367,13 +372,25 @@ unsafe fn install_glue(hwnd: HWND) {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetWindowLongPtrW, ShowWindow, GWLP_WNDPROC, GWL_EXSTYLE, SW_HIDE,
-        WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+        WS_EX_TOOLWINDOW, WS_EX_TOPMOST, SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+        SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
     };
 
     // No taskbar button / Alt-Tab entry (launcher semantics).
     let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
     let want = ex | (WS_EX_TOOLWINDOW.0 as isize) | (WS_EX_TOPMOST.0 as isize);
     let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want);
+
+    // Force frame change so ex-style changes take effect.
+    let _ = SetWindowPos(
+        hwnd,
+        HWND(core::ptr::null_mut()),
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+    );
 
     // Chain our proc ahead of winit's.
     let old = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, subclass_proc as *const () as isize);
