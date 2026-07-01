@@ -64,30 +64,6 @@ OmniSearch includes Hermes agent integration for users who want more than search
 
 Hermes can help with autonomous workflows such as running local tasks, executing approved commands, managing agent chats, and assisting with PC control from inside the launcher. It gives OmniSearch an agent layer without turning the search bar into a chatbot first.
 
-## Daily Use
-
-Open OmniSearch with:
-
-```text
-Alt + Space
-```
-
-Then type naturally:
-
-```text
-chrome
-search settings
-my resume pdf
-history: chatgpt
-clip: api key
-img: invoice number
-code: build index
-commits: readme
-agents:
-```
-
-Press `Enter` to open the selected result.
-
 ## Search Prefixes
 
 Prefixes are optional, but useful when you want to search one source directly.
@@ -146,9 +122,11 @@ Current implementation details:
 
 The goal is simple: open fast, search fast, and stay light enough to leave running all day.
 
-## Install
+## Install, Demo, Star
 
-Download the latest Windows build from the project release page, then run the installer.
+### Install
+
+Download the latest Windows build from the [OmniSearch releases page](https://github.com/PranshulSoni/omnisearch/releases), then run the installer.
 
 After installation:
 
@@ -160,19 +138,12 @@ After installation:
 
 If `Alt + Space` is already used by another app, change the launcher hotkey in Settings > Hotkeys.
 
-## Tech Stack
+### Demo Video
 
-- Rust
-- Win32 API
-- GDI custom rendering
-- SQLite and FTS5
-- Windows shell APIs
-- Windows OCR APIs
-- Browser profile indexing
-- Local SQLite-backed agents and chat history
+Demo video link will be added here after the release video is uploaded.
 
-## Product Focus
+### Star On GitHub
 
-OmniSearch is not trying to be another note app, browser, or file manager.
+If OmniSearch looks useful, star the repo so more Windows users can find it:
 
-It is a command center for finding and opening the things already on your Windows PC.
+[Star OmniSearch on GitHub](https://github.com/PranshulSoni/omnisearch/stargazers)
