@@ -1507,6 +1507,26 @@ unsafe fn hide_preview_window(s: &State) {
 }
 
 // ── WndProc ───────────────────────────────────────────────────────────────────
+const WM_NEXT_ANIM_FRAME: u32 = WM_USER + 50;
+
+thread_local! {
+    static ANIM_LOOP_ACTIVE: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+unsafe fn trigger_anim_loop(hwnd: HWND) {
+    ANIM_LOOP_ACTIVE.with(|f| {
+        if !f.get() {
+            f.set(true);
+            let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                hwnd,
+                WM_NEXT_ANIM_FRAME,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
+    });
+}
+
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     // A panic must never unwind across this `extern "system"` boundary — that is UB and
     // Windows tears the process down with STATUS_FATAL_USER_CALLBACK_EXCEPTION (0xC000041D).
@@ -1539,6 +1559,44 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
     };
 
     match msg {
+        WM_NEXT_ANIM_FRAME => {
+            if !sp.is_null() {
+                let s = &mut *sp;
+                s.search_anim_tick = (s.search_anim_tick + 1) % 8;
+                let window_anim_active = tick_window_animation(hwnd, s);
+                let next_h = animated_height(s);
+                let height_changed = next_h != s.shown_h;
+                if height_changed {
+                    s.shown_h = next_h;
+                }
+                let height_done = s.shown_h == s.target_h;
+                let animating = !height_done || window_anim_active;
+
+                if window_anim_active || height_changed {
+                    let _ = InvalidateRect(hwnd, None, FALSE);
+                    unsafe {
+                        let _ = windows::Win32::Graphics::Dwm::DwmFlush();
+                        let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+                    }
+                } else if s.search_loading {
+                    invalidate_search_row(hwnd, s);
+                    unsafe {
+                        let _ = windows::Win32::Graphics::Dwm::DwmFlush();
+                        let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+                    }
+                }
+
+                if animating {
+                    let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::PostMessageW(hwnd, WM_NEXT_ANIM_FRAME, WPARAM(0), LPARAM(0)) };
+                } else {
+                    ANIM_LOOP_ACTIVE.with(|f| f.set(false));
+                }
+            } else {
+                ANIM_LOOP_ACTIVE.with(|f| f.set(false));
+            }
+            LRESULT(0)
+        }
+
         WM_CREATE => {
             let cs = &*(lp.0 as *const CREATESTRUCTW);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, cs.lpCreateParams as _);
@@ -3681,6 +3739,7 @@ unsafe fn animate_window(hwnd: HWND, appearing: bool) {
 
     let _ = InvalidateRect(hwnd, None, FALSE);
     let _ = SetTimer(hwnd, TIMER_SEARCH_ANIM, 3, None);
+    unsafe { trigger_anim_loop(hwnd); }
 }
 
 // AttachThreadInput trick: allows SetForegroundWindow to succeed even from background context.
@@ -5331,6 +5390,7 @@ unsafe fn sync_height_animation(hwnd: HWND, s: &mut State) {
         s.target_h = target;
         s.height_anim_started = std::time::Instant::now();
         let _ = SetTimer(hwnd, TIMER_SEARCH_ANIM, 3, None);
+        unsafe { trigger_anim_loop(hwnd); }
         let _ = InvalidateRect(hwnd, None, FALSE);
     } else if s.shown_h == 0 {
         s.shown_h = target;
@@ -5505,6 +5565,7 @@ unsafe fn trigger_search(_hwnd: HWND, s: &mut State) {
     // grow at ~12fps and made navigation feel choppy. The WM_TIMER handler drops back
     // to a gentle 80ms once the grow finishes and only the loading spinner remains.
     let _ = SetTimer(_hwnd, TIMER_SEARCH_ANIM, 8, None);
+    unsafe { trigger_anim_loop(_hwnd); }
     let req = SearchRequest {
         query: s.query.clone(),
         query_id: s.current_query_id,
