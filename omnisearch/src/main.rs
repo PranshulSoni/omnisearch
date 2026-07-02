@@ -1069,51 +1069,81 @@ unsafe fn run(first_settings_run: bool) {
     setup_tray_icon(hwnd, hinst);
 
     let hwnd_icon = SendHwnd(hwnd);
-    std::thread::spawn(move || {
-        let hwnd_raw = hwnd_icon;
-        let _ = unsafe {
-            windows::Win32::System::Com::CoInitializeEx(
-                None,
-                windows::Win32::System::Com::COINIT_APARTMENTTHREADED
-                    | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
-            )
-        };
-        while let Ok(req) = icon_rx.recv() {
-            unsafe {
-                let file_icon_path = icon_file_path(&req.source, &req.key);
-                let hicon = if let Some(path) = file_icon_path {
-                    get_file_icon(&path)
-                } else if req.source == "ACTION" && req.key.starts_with("kill:") {
-                    let pid_str = req.key.strip_prefix("kill:").unwrap_or("");
-                    if let Ok(pid) = pid_str.parse::<u32>() {
-                        if let Some(path) = get_process_path(pid) {
-                            get_app_icon(&path)
-                        } else {
-                            get_app_icon("C:\\Windows\\System32\\cmd.exe")
+
+    // Icon loading thread with auto-restart on panic.
+    // If the COM-heavy icon loading code panics (common with shell extensions),
+    // the thread would die silently and all future icons would stop loading.
+    // This wrapper catches panics, logs them, and restarts the thread.
+    fn spawn_icon_loader(hwnd: HWND, icon_rx: std::sync::mpsc::Receiver<IconRequest>) {
+        std::thread::spawn(move || {
+            loop {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let hwnd_raw = SendHwnd(hwnd);
+                    let _ = unsafe {
+                        windows::Win32::System::Com::CoInitializeEx(
+                            None,
+                            windows::Win32::System::Com::COINIT_APARTMENTTHREADED
+                                | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
+                        )
+                    };
+                    while let Ok(req) = icon_rx.recv() {
+                        unsafe {
+                            let file_icon_path = icon_file_path(&req.source, &req.key);
+                            let hicon = if let Some(path) = file_icon_path {
+                                get_file_icon(&path)
+                            } else if req.source == "ACTION" && req.key.starts_with("kill:") {
+                                let pid_str = req.key.strip_prefix("kill:").unwrap_or("");
+                                if let Ok(pid) = pid_str.parse::<u32>() {
+                                    if let Some(path) = get_process_path(pid) {
+                                        get_app_icon(&path)
+                                    } else {
+                                        get_app_icon("C:\\Windows\\System32\\cmd.exe")
+                                    }
+                                } else {
+                                    HICON(std::ptr::null_mut())
+                                }
+                            } else {
+                                get_app_icon(&req.key)
+                            };
+                            if !hicon.0.is_null() {
+                                let key_ptr = Box::into_raw(Box::new(req.key));
+                                if PostMessageW(
+                                    hwnd_raw.0,
+                                    WM_ICON_LOADED,
+                                    WPARAM(hicon.0 as usize),
+                                    LPARAM(key_ptr as isize),
+                                )
+                                .is_err()
+                                {
+                                    let _ = Box::from_raw(key_ptr);
+                                    let _ = DestroyIcon(hicon);
+                                }
+                            }
                         }
+                    }
+                }));
+
+                if let Err(payload) = result {
+                    // Thread panicked - log and restart after a short delay
+                    let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                        format!("icon thread panicked: {}", s)
+                    } else if let Some(s) = payload.downcast_ref::<String>() {
+                        format!("icon thread panicked: {}", s)
                     } else {
-                        HICON(std::ptr::null_mut())
-                    }
+                        "icon thread panicked with unknown payload".to_string()
+                    };
+                    applog::log(&msg);
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    // Loop continues - thread restarts with same channel
                 } else {
-                    get_app_icon(&req.key)
-                };
-                if !hicon.0.is_null() {
-                    let key_ptr = Box::into_raw(Box::new(req.key));
-                    if PostMessageW(
-                        hwnd_raw.0,
-                        WM_ICON_LOADED,
-                        WPARAM(hicon.0 as usize),
-                        LPARAM(key_ptr as isize),
-                    )
-                    .is_err()
-                    {
-                        let _ = Box::from_raw(key_ptr);
-                        let _ = DestroyIcon(hicon);
-                    }
+                    // Channel closed (sender dropped) - normal shutdown
+                    break;
                 }
             }
-        }
-    });
+        });
+    }
+
+    spawn_icon_loader(hwnd, icon_rx);
 
     let _ = unsafe { windows::Win32::System::DataExchange::AddClipboardFormatListener(hwnd) };
 
@@ -6532,13 +6562,16 @@ unsafe fn trigger_icon_loading(_hwnd: HWND, s: &mut State) {
         let (source, key) = (res.entry.source.as_str(), res.entry.launch_command.clone());
         // For WINDOW source: fetch icon synchronously on the UI thread (fast, only called once
         // when results arrive — not on every paint frame) and cache it in app_icons.
+        // Wrap in catch_unwind to prevent UI crash if target window handle is invalid
+        // or shell extension panics during icon extraction.
         if source == "WINDOW" && !s.app_icons.contains_key(&key) {
             let hwnd_val = key
                 .strip_prefix("window:")
                 .and_then(|h| h.parse::<isize>().ok())
                 .unwrap_or(0);
             let win_hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
-            let hicon = get_window_icon(win_hwnd);
+            let hicon = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| get_window_icon(win_hwnd)))
+                .unwrap_or(HICON(std::ptr::null_mut()));
             s.app_icons.insert(key.clone(), hicon);
             continue;
         }
@@ -11342,8 +11375,15 @@ fn get_app_path(launch_command: &str) -> String {
 unsafe fn get_window_icon(hwnd: HWND) -> HICON {
     use windows::Win32::Foundation::WPARAM;
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetClassLongPtrW, SendMessageW, GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL, WM_GETICON,
+        GetClassLongPtrW, IsWindow, SendMessageW, GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL,
+        WM_GETICON,
     };
+
+    // Validate window handle before attempting to get icon.
+    // Stale handles from closed windows may return garbage or cause crashes.
+    if !IsWindow(hwnd).as_bool() {
+        return HICON(std::ptr::null_mut());
+    }
 
     let mut hicon = HICON(
         SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_BIG as usize), None).0 as *mut std::ffi::c_void,
