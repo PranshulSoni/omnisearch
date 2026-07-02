@@ -12,7 +12,7 @@
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows-0078D4?style=flat-square" />
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green?style=flat-square" /></a>
   <a href="https://github.com/PranshulSoni/omnisearch/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/PranshulSoni/omnisearch?style=flat-square&label=stars&color=yellow" /></a>
-  <a href="https://github.com/PranshulSoni/omnisearch/releases"><img alt="release" src="https://img.shields.io/badge/release-v1.0.0-blue?style=flat-square" /></a>
+  <a href="https://github.com/PranshulSoni/omnisearch/releases"><img src="https://badgen.net/github/release/PranshulSoni/omnisearch" alt="Release"/></a>
   <a href="https://github.com/PranshulSoni/omnisearch/releases"><img alt="downloads" src="https://img.shields.io/github/downloads/PranshulSoni/omnisearch/total?style=flat-square&label=downloads&color=brightgreen" /></a>
 </p>
 
@@ -50,17 +50,25 @@ OmniSearch brings all of it into one fast, keyboard-first command center. Press 
   Your browser does not support the video tag.
 </video>
 
-[Watch the demo video](https://raw.githubusercontent.com/PranshulSoni/omnisearch/lean-build/icons/preview-images/demo-github.mp4)
-
 ## Star On GitHub
 
 If OmniSearch looks useful, star the repo so more Windows users can find it:
 
-[Star OmniSearch on GitHub](https://github.com/PranshulSoni/omnisearch/stargazers)
+[Star OmniSearch on GitHub](https://github.com/PranshulSoni/omnisearch)
 
 ## Installation
 
-Download the latest Windows build from the [OmniSearch releases page](https://github.com/PranshulSoni/omnisearch/releases), then run the installer.
+> **Recommended install**
+>
+> Run this in Windows PowerShell:
+>
+> ```powershell
+> curl.exe -fsSL https://raw.githubusercontent.com/PranshulSoni/omnisearch/lean-build/scripts/install.ps1 | powershell -NoProfile -ExecutionPolicy Bypass -
+> ```
+>
+> This downloads the latest OmniSearch release from GitHub and opens the Windows installer.
+
+Manual download: get the latest Windows build from the [OmniSearch releases page](https://github.com/PranshulSoni/omnisearch/releases), then run the installer.
 
 After installation:
 

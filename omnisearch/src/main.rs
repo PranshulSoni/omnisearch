@@ -355,6 +355,7 @@ struct State {
     last_mouse_x: i32,
     last_mouse_y: i32,
     app_icons: std::collections::HashMap<String, HICON>,
+    pending_icons: std::collections::HashSet<String>,
     clipboard_thumbnails: std::cell::RefCell<std::collections::HashMap<String, HBITMAP>>,
     selected_clip_ids: std::collections::HashSet<String>,
     delete_confirm: bool,
@@ -538,7 +539,15 @@ impl State {
     }
 }
 
-fn enforce_single_instance() -> Option<windows::Win32::Foundation::HANDLE> {
+/// A named mutex handle that calls CloseHandle on drop.
+struct MutexHandle(windows::Win32::Foundation::HANDLE);
+impl Drop for MutexHandle {
+    fn drop(&mut self) {
+        let _ = unsafe { windows::Win32::Foundation::CloseHandle(self.0) };
+    }
+}
+
+fn enforce_single_instance() -> Option<MutexHandle> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::GetLastError;
     use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
@@ -562,7 +571,7 @@ fn enforce_single_instance() -> Option<windows::Win32::Foundation::HANDLE> {
                 let _ = windows::Win32::Foundation::CloseHandle(h);
                 return None;
             }
-            return Some(h);
+            return Some(MutexHandle(h));
         }
     }
     None
@@ -938,6 +947,7 @@ unsafe fn run(first_settings_run: bool) {
         last_mouse_x: -1,
         last_mouse_y: -1,
         app_icons: std::collections::HashMap::new(),
+        pending_icons: std::collections::HashSet::new(),
         clipboard_thumbnails: std::cell::RefCell::new(std::collections::HashMap::new()),
         selected_clip_ids: std::collections::HashSet::new(),
         delete_confirm: false,
@@ -994,7 +1004,7 @@ unsafe fn run(first_settings_run: bool) {
                 std::time::Duration::from_millis(500),
             )
             .is_ok();
-            ai::HERMES_GATEWAY_RUNNING.store(running, std::sync::atomic::Ordering::Relaxed);
+            ai::HERMES_GATEWAY_RUNNING.store(running, std::sync::atomic::Ordering::SeqCst);
             std::thread::sleep(std::time::Duration::from_secs(3));
         }
     });
@@ -1067,51 +1077,81 @@ unsafe fn run(first_settings_run: bool) {
     setup_tray_icon(hwnd, hinst);
 
     let hwnd_icon = SendHwnd(hwnd);
-    std::thread::spawn(move || {
-        let hwnd_raw = hwnd_icon;
-        let _ = unsafe {
-            windows::Win32::System::Com::CoInitializeEx(
-                None,
-                windows::Win32::System::Com::COINIT_APARTMENTTHREADED
-                    | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
-            )
-        };
-        while let Ok(req) = icon_rx.recv() {
-            unsafe {
-                let file_icon_path = icon_file_path(&req.source, &req.key);
-                let hicon = if let Some(path) = file_icon_path {
-                    get_file_icon(&path)
-                } else if req.source == "ACTION" && req.key.starts_with("kill:") {
-                    let pid_str = req.key.strip_prefix("kill:").unwrap_or("");
-                    if let Ok(pid) = pid_str.parse::<u32>() {
-                        if let Some(path) = get_process_path(pid) {
-                            get_app_icon(&path)
-                        } else {
-                            get_app_icon("C:\\Windows\\System32\\cmd.exe")
+
+    // Icon loading thread with auto-restart on panic.
+    // If the COM-heavy icon loading code panics (common with shell extensions),
+    // the thread would die silently and all future icons would stop loading.
+    // This wrapper catches panics, logs them, and restarts the thread.
+    fn spawn_icon_loader(hwnd: HWND, icon_rx: std::sync::mpsc::Receiver<IconRequest>) {
+        std::thread::spawn(move || {
+            loop {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let hwnd_raw = SendHwnd(hwnd);
+                    let _ = unsafe {
+                        windows::Win32::System::Com::CoInitializeEx(
+                            None,
+                            windows::Win32::System::Com::COINIT_APARTMENTTHREADED
+                                | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
+                        )
+                    };
+                    while let Ok(req) = icon_rx.recv() {
+                        unsafe {
+                            let file_icon_path = icon_file_path(&req.source, &req.key);
+                            let hicon = if let Some(path) = file_icon_path {
+                                get_file_icon(&path)
+                            } else if req.source == "ACTION" && req.key.starts_with("kill:") {
+                                let pid_str = req.key.strip_prefix("kill:").unwrap_or("");
+                                if let Ok(pid) = pid_str.parse::<u32>() {
+                                    if let Some(path) = get_process_path(pid) {
+                                        get_app_icon(&path)
+                                    } else {
+                                        get_app_icon("C:\\Windows\\System32\\cmd.exe")
+                                    }
+                                } else {
+                                    HICON(std::ptr::null_mut())
+                                }
+                            } else {
+                                get_app_icon(&req.key)
+                            };
+                            if !hicon.0.is_null() {
+                                let key_ptr = Box::into_raw(Box::new(req.key));
+                                if PostMessageW(
+                                    hwnd_raw.0,
+                                    WM_ICON_LOADED,
+                                    WPARAM(hicon.0 as usize),
+                                    LPARAM(key_ptr as isize),
+                                )
+                                .is_err()
+                                {
+                                    let _ = Box::from_raw(key_ptr);
+                                    let _ = DestroyIcon(hicon);
+                                }
+                            }
                         }
+                    }
+                }));
+
+                if let Err(payload) = result {
+                    // Thread panicked - log and restart after a short delay
+                    let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                        format!("icon thread panicked: {}", s)
+                    } else if let Some(s) = payload.downcast_ref::<String>() {
+                        format!("icon thread panicked: {}", s)
                     } else {
-                        HICON(std::ptr::null_mut())
-                    }
+                        "icon thread panicked with unknown payload".to_string()
+                    };
+                    applog::log(&msg);
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    // Loop continues - thread restarts with same channel
                 } else {
-                    get_app_icon(&req.key)
-                };
-                if !hicon.0.is_null() {
-                    let key_ptr = Box::into_raw(Box::new(req.key));
-                    if PostMessageW(
-                        hwnd_raw.0,
-                        WM_ICON_LOADED,
-                        WPARAM(hicon.0 as usize),
-                        LPARAM(key_ptr as isize),
-                    )
-                    .is_err()
-                    {
-                        let _ = Box::from_raw(key_ptr);
-                        let _ = DestroyIcon(hicon);
-                    }
+                    // Channel closed (sender dropped) - normal shutdown
+                    break;
                 }
             }
-        }
-    });
+        });
+    }
+
+    spawn_icon_loader(hwnd, icon_rx);
 
     let _ = unsafe { windows::Win32::System::DataExchange::AddClipboardFormatListener(hwnd) };
 
@@ -1407,13 +1447,12 @@ unsafe extern "system" fn preview_wnd_proc(
     }
 }
 
-unsafe fn show_preview_window(hwnd_parent: HWND, s: &mut State) {
-    #[allow(non_snake_case)]
-    let SEARCH_H = s.search_h();
+unsafe fn show_preview_window(hwnd_parent: HWND, s: *mut State) {
     use windows::Win32::Graphics::Gdi::{GetObjectW, InvalidateRect, BITMAP};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, GetWindowRect, SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE,
-        SW_SHOWNOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+        CreateWindowExW, GetWindowRect, SetWindowPos, ShowWindow, GWLP_USERDATA,
+        HWND_TOPMOST, SetWindowLongPtrW, SWP_NOACTIVATE, SW_SHOWNOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST, WS_POPUP,
     };
 
     let mut parent_rect = RECT::default();
@@ -1422,12 +1461,12 @@ unsafe fn show_preview_window(hwnd_parent: HWND, s: &mut State) {
     let mut p_w = 260;
     let mut p_h = parent_rect.bottom - parent_rect.top;
 
-    if let Some((_result, path)) = s
+    if let Some((_result, path)) = (*s)
         .results
-        .get(s.selected)
+        .get((*s).selected)
         .and_then(|result| image_path_for_result(result).map(|path| (result, path)))
     {
-        let mut cache = s.clipboard_thumbnails.borrow_mut();
+        let mut cache = (*s).clipboard_thumbnails.borrow_mut();
         let hbitmap = cache.get(path).copied().or_else(|| {
             load_shell_thumbnail(path, 256).inspect(|h| {
                 cache.insert(path.to_string(), *h);
@@ -1447,7 +1486,6 @@ unsafe fn show_preview_window(hwnd_parent: HWND, s: &mut State) {
                 let draw_w = (img_w as f32 * scale).round() as i32;
                 let draw_h = (img_h as f32 * scale).round() as i32;
 
-                // Maximum space occupied by image (small 8px padding on all sides)
                 p_w = draw_w + 16;
                 p_h = draw_h + 16;
             }
@@ -1456,13 +1494,11 @@ unsafe fn show_preview_window(hwnd_parent: HWND, s: &mut State) {
 
     let p_x = parent_rect.right + 8;
 
-    // Align vertically with the selected item
-    let visual_idx = s.selected - s.scroll_offset;
-    let item_y = s.result_row_y(visual_idx);
-    let item_center = item_y + (s.app_settings.item_height as i32) / 2;
+    let visual_idx = (*s).selected - (*s).scroll_offset;
+    let item_y = (*s).result_row_y(visual_idx);
+    let item_center = item_y + ((*s).app_settings.item_height as i32) / 2;
     let mut p_y = parent_rect.top + item_center - (p_h / 2);
 
-    // Keep it within the screen/parent bounds
     if p_y + p_h > parent_rect.bottom {
         p_y = parent_rect.bottom - p_h;
     }
@@ -1470,7 +1506,7 @@ unsafe fn show_preview_window(hwnd_parent: HWND, s: &mut State) {
         p_y = parent_rect.top;
     }
 
-    if s.hwnd_preview.is_none() {
+    if (*s).hwnd_preview.is_none() {
         let preview_class: Vec<u16> = "omnisearch-preview\0".encode_utf16().collect();
         let hinst = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap();
 
@@ -1486,14 +1522,15 @@ unsafe fn show_preview_window(hwnd_parent: HWND, s: &mut State) {
             hwnd_parent,
             HMENU(null_mut()),
             hinst,
-            Some(s as *mut State as _),
+            None,
         );
         if let Ok(h) = hwnd_preview {
+            SetWindowLongPtrW(h, GWLP_USERDATA, s as isize);
             let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
-            s.hwnd_preview = Some(h);
+            (*s).hwnd_preview = Some(h);
         }
     } else {
-        let hwnd_preview = s.hwnd_preview.unwrap();
+        let hwnd_preview = (*s).hwnd_preview.unwrap();
         let _ = SetWindowPos(
             hwnd_preview,
             HWND_TOPMOST,
@@ -1520,6 +1557,13 @@ const WM_NEXT_ANIM_FRAME: u32 = WM_USER + 50;
 
 thread_local! {
     static ANIM_LOOP_ACTIVE: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+/// Guards clipboard access across threads; only one thread may hold
+/// the Windows clipboard open at a time.
+static CLIPBOARD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+pub fn clipboard_lock() -> &'static std::sync::Mutex<()> {
+    CLIPBOARD_LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
 
 unsafe fn trigger_anim_loop(hwnd: HWND) {
@@ -1714,11 +1758,16 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
             let key_box = unsafe { Box::from_raw(lp.0 as *mut String) };
             let key = *key_box;
 
-            // Insert the loaded HICON into the map
-            if let Some(old_hicon) = s.app_icons.insert(key, hicon) {
-                if !old_hicon.0.is_null() && old_hicon != hicon {
-                    unsafe {
-                        let _ = DestroyIcon(old_hicon);
+            // Remove from pending set so the icon can be retried on next search
+            s.pending_icons.remove(&key);
+
+            if !hicon.0.is_null() {
+                // Insert the loaded HICON into the map
+                if let Some(old_hicon) = s.app_icons.insert(key, hicon) {
+                    if !old_hicon.0.is_null() && old_hicon != hicon {
+                        unsafe {
+                            let _ = DestroyIcon(old_hicon);
+                        }
                     }
                 }
             }
@@ -1742,6 +1791,9 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
 
             let db_path = s.db_path.clone();
             let app_name = unsafe { get_active_app_name() };
+
+            // Serialize clipboard access with the background thread (paste_sequentially)
+            let _clip_guard = clipboard_lock().lock().unwrap();
 
             // Try text format
             if let Some(text) = unsafe { paste_from_clipboard(hwnd) } {
@@ -2116,7 +2168,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                             return LRESULT(0);
                         }
                         'v' => {
-                            ai::ALWAYS_APPROVE.store(true, std::sync::atomic::Ordering::Relaxed);
+                            ai::ALWAYS_APPROVE.store(true, std::sync::atomic::Ordering::Release);
                             if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
                                 let _ = conn.execute("INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('always_approve', '1');", []);
                             }
@@ -2661,7 +2713,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                         if let Some(r) = s.results.get(s.selected) {
                             if image_path_for_result(r).is_some() {
                                 s.image_preview_active = true;
-                                show_preview_window(hwnd, s);
+                                show_preview_window(hwnd, sp);
                                 let _ = InvalidateRect(hwnd, None, FALSE);
                             } else if r.entry.source == "app" {
                                 s.submenu_active = !s.submenu_active;
@@ -3021,7 +3073,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                         return LRESULT(0);
                     }
                     if mx >= always_x && mx < always_x + always_w {
-                        ai::ALWAYS_APPROVE.store(true, std::sync::atomic::Ordering::Relaxed);
+                        ai::ALWAYS_APPROVE.store(true, std::sync::atomic::Ordering::Release);
                         if let Ok(conn) = rusqlite::Connection::open(&s.db_path) {
                             let _ = conn.execute("INSERT OR REPLACE INTO ai_settings (key, value) VALUES ('always_approve', '1');", []);
                         }
@@ -3352,9 +3404,14 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 if !s.icon_brave.0.is_null() {
                     let _ = DestroyIcon(s.icon_brave);
                 }
-                for &hicon in s.app_icons.values() {
+                for (key, &hicon) in &s.app_icons {
                     if !hicon.0.is_null() {
-                        let _ = DestroyIcon(hicon);
+                        // Window icon handles are owned by other windows (obtained via
+                        // SendMessage(WM_GETICON) or GetClassLongPtrW) and must NOT be
+                        // destroyed — doing so corrupts the system-wide icon cache.
+                        if !key.starts_with("window:") {
+                            let _ = DestroyIcon(hicon);
+                        }
                     }
                 }
                 for &hbmp in s.clipboard_thumbnails.borrow().values() {
@@ -4548,7 +4605,7 @@ impl ai::RunCallbacks for UiRunCallbacks {
             }
         }
 
-        if ai::ALWAYS_APPROVE.load(std::sync::atomic::Ordering::Relaxed) {
+        if ai::ALWAYS_APPROVE.load(std::sync::atomic::Ordering::Acquire) {
             std::thread::spawn(move || {
                 let _ = ai::resolve_run_approval(&approval, true);
             });
@@ -6520,13 +6577,16 @@ unsafe fn trigger_icon_loading(_hwnd: HWND, s: &mut State) {
         let (source, key) = (res.entry.source.as_str(), res.entry.launch_command.clone());
         // For WINDOW source: fetch icon synchronously on the UI thread (fast, only called once
         // when results arrive — not on every paint frame) and cache it in app_icons.
+        // Wrap in catch_unwind to prevent UI crash if target window handle is invalid
+        // or shell extension panics during icon extraction.
         if source == "WINDOW" && !s.app_icons.contains_key(&key) {
             let hwnd_val = key
                 .strip_prefix("window:")
                 .and_then(|h| h.parse::<isize>().ok())
                 .unwrap_or(0);
             let win_hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
-            let hicon = get_window_icon(win_hwnd);
+            let hicon = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| get_window_icon(win_hwnd)))
+                .unwrap_or(HICON(std::ptr::null_mut()));
             s.app_icons.insert(key.clone(), hicon);
             continue;
         }
@@ -6538,10 +6598,11 @@ unsafe fn trigger_icon_loading(_hwnd: HWND, s: &mut State) {
         let needs_icon =
             (source == "app" || icon_file_path(source, &key).is_some() || is_kill_action)
                 && !is_settings
-                && !s.app_icons.contains_key(&key);
+                && !s.app_icons.contains_key(&key)
+                && !s.pending_icons.contains(&key);
         if needs_icon {
-            // Placeholder so we don't spawn multiple threads for same path
-            s.app_icons.insert(key.clone(), HICON(std::ptr::null_mut()));
+            // Track pending loads so we don't spawn multiple threads for same path
+            s.pending_icons.insert(key.clone());
             let _ = tx.send(IconRequest {
                 key,
                 source: source.to_string(),
@@ -11329,8 +11390,15 @@ fn get_app_path(launch_command: &str) -> String {
 unsafe fn get_window_icon(hwnd: HWND) -> HICON {
     use windows::Win32::Foundation::WPARAM;
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetClassLongPtrW, SendMessageW, GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL, WM_GETICON,
+        GetClassLongPtrW, IsWindow, SendMessageW, GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL,
+        WM_GETICON,
     };
+
+    // Validate window handle before attempting to get icon.
+    // Stale handles from closed windows may return garbage or cause crashes.
+    if !IsWindow(hwnd).as_bool() {
+        return HICON(std::ptr::null_mut());
+    }
 
     let mut hicon = HICON(
         SendMessageW(hwnd, WM_GETICON, WPARAM(ICON_BIG as usize), None).0 as *mut std::ffi::c_void,
