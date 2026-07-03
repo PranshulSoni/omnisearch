@@ -1,4 +1,8 @@
 fn main() {
+    println!("cargo:rerun-if-changed=ui/settings.slint");
+    println!("cargo:rerun-if-changed=../icons/OmniSearchTrans.ico");
+    println!("cargo:rerun-if-changed=../icons/OmniSearchTrans.png");
+
     slint_build::compile("ui/settings.slint").unwrap();
 
     if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() == "windows" {
