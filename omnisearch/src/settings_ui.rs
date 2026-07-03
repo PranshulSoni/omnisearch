@@ -868,6 +868,47 @@ pub fn run_settings_window() {
 
     // Show the window and run the event loop until it's closed.
     ui.window().show().ok();
+    
+    // Explicitly set the native taskbar and titlebar icon for the settings window
+    // to bypass Slint's built-in image scaler.
+    unsafe {
+        let title_wide: Vec<u16> = "OmniSearch Settings\0".encode_utf16().collect();
+        if let Ok(hwnd) = windows::Win32::UI::WindowsAndMessaging::FindWindowW(
+            windows::core::PCWSTR::null(),
+            windows::core::PCWSTR(title_wide.as_ptr()),
+        ) {
+            if !hwnd.is_invalid() {
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    LoadImageW, SendMessageW, IMAGE_ICON, LR_DEFAULTCOLOR, WM_SETICON, ICON_BIG, ICON_SMALL,
+                };
+                use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+                let hinst = GetModuleHandleW(None).unwrap();
+                let hicon_big = LoadImageW(
+                    hinst,
+                    windows::core::PCWSTR(1 as *const u16),
+                    IMAGE_ICON,
+                    32,
+                    32,
+                    LR_DEFAULTCOLOR,
+                );
+                let hicon_small = LoadImageW(
+                    hinst,
+                    windows::core::PCWSTR(1 as *const u16),
+                    IMAGE_ICON,
+                    16,
+                    16,
+                    LR_DEFAULTCOLOR,
+                );
+                if let Ok(h) = hicon_big {
+                    SendMessageW(hwnd, WM_SETICON, windows::Win32::Foundation::WPARAM(ICON_BIG as usize), windows::Win32::Foundation::LPARAM(h.0));
+                }
+                if let Ok(h) = hicon_small {
+                    SendMessageW(hwnd, WM_SETICON, windows::Win32::Foundation::WPARAM(ICON_SMALL as usize), windows::Win32::Foundation::LPARAM(h.0));
+                }
+            }
+        }
+    }
+
     ui.window().set_minimized(false);
     slint::run_event_loop().ok();
 
