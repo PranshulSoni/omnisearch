@@ -159,20 +159,47 @@ fn default_result_subtitle_font_size() -> u32 {
     13
 }
 
+fn exe_dir_settings_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join("settings.json"))
+}
+
+fn appdata_settings_path() -> Option<PathBuf> {
+    let appdata = std::env::var("APPDATA").ok()?;
+    Some(PathBuf::from(appdata).join("omnisearch").join("settings.json"))
+}
+
 impl AppSettings {
+    /// Prefer whichever settings file already exists (exe dir first for the
+    /// default/portable install), falling back to the exe dir for new files.
+    /// The exe dir isn't writable under Program Files — save() handles that.
     pub fn get_settings_path() -> PathBuf {
-        let mut path = std::env::current_exe().unwrap();
-        path.pop(); // remove executable
-        path.push("settings.json");
-        path
+        if let Some(p) = exe_dir_settings_path() {
+            if p.exists() {
+                return p;
+            }
+        }
+        if let Some(p) = appdata_settings_path() {
+            if p.exists() {
+                return p;
+            }
+        }
+        exe_dir_settings_path()
+            .or_else(appdata_settings_path)
+            .unwrap_or_else(|| PathBuf::from("settings.json"))
     }
 
     pub fn load() -> Self {
         let path = Self::get_settings_path();
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(settings) = serde_json::from_str(&content) {
-                    return settings;
+                match serde_json::from_str(&content) {
+                    Ok(settings) => return settings,
+                    Err(_) => {
+                        // Keep the corrupt file for inspection instead of silently
+                        // overwriting the user's settings with defaults.
+                        let _ = fs::rename(&path, path.with_extension("json.bak"));
+                    }
                 }
             }
         }
@@ -182,9 +209,19 @@ impl AppSettings {
     }
 
     pub fn save(&self) {
+        let Ok(content) = serde_json::to_string_pretty(self) else {
+            return;
+        };
         let path = Self::get_settings_path();
-        if let Ok(content) = serde_json::to_string_pretty(self) {
-            let _ = fs::write(path, content);
+        if fs::write(&path, &content).is_ok() {
+            return;
+        }
+        // Exe dir not writable (e.g. Program Files install) — fall back to %APPDATA%.
+        if let Some(fallback) = appdata_settings_path() {
+            if let Some(dir) = fallback.parent() {
+                let _ = fs::create_dir_all(dir);
+            }
+            let _ = fs::write(fallback, &content);
         }
     }
 

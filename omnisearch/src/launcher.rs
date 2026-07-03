@@ -408,12 +408,15 @@ fn handle_action(action: &str) {
                 let log_path = std::path::PathBuf::from(appdata)
                     .join("omnisearch")
                     .join("omnisearch.log");
+                // Escape single quotes for the PS literal ('' inside '...') so an
+                // apostrophe in the user profile path can't break the command.
+                let escaped = log_path.display().to_string().replace('\'', "''");
                 let _ = Command::new("powershell")
                     .args([
                         "-WindowStyle",
                         "Hidden",
                         "-Command",
-                        &format!("Get-Content '{}' -Raw | Set-Clipboard", log_path.display()),
+                        &format!("Get-Content '{}' -Raw | Set-Clipboard", escaped),
                     ])
                     .creation_flags(0x08000000)
                     .spawn();
@@ -602,7 +605,7 @@ fn handle_action(action: &str) {
                 .args([
                     "-WindowStyle", "Hidden",
                     "-Command",
-                    "Get-Service bthserv | ForEach-Object { if ($_.Status -eq 'Running') { Stop-Service -Name 'bthserv' -Force } else { Start-Service -Name 'bthserv' } }",
+                    "$ErrorActionPreference='Stop'; try { $s = Get-Service bthserv; if ($s.Status -eq 'Running') { Stop-Service -Name 'bthserv' -Force } else { Start-Service -Name 'bthserv' } } catch { Start-Process 'ms-settings:bluetooth' }",
                 ])
                 .creation_flags(0x08000000)
                 .spawn();
@@ -612,7 +615,7 @@ fn handle_action(action: &str) {
                 .args([
                     "-WindowStyle", "Hidden",
                     "-Command",
-                    "$adapter = Get-NetAdapter -Name 'Wi-Fi' -ErrorAction SilentlyContinue; if ($adapter) { if ($adapter.Status -eq 'Up') { Disable-NetAdapter -Name 'Wi-Fi' -Confirm:$false } else { Enable-NetAdapter -Name 'Wi-Fi' -Confirm:$false } } else { Start-Process 'ms-settings:network-wifi' }",
+                    "$adapter = Get-NetAdapter -Name 'Wi-Fi' -ErrorAction SilentlyContinue; if ($adapter) { try { if ($adapter.Status -eq 'Up') { Disable-NetAdapter -Name 'Wi-Fi' -Confirm:$false -ErrorAction Stop } else { Enable-NetAdapter -Name 'Wi-Fi' -Confirm:$false -ErrorAction Stop } } catch { Start-Process 'ms-settings:network-wifi' } } else { Start-Process 'ms-settings:network-wifi' }",
                 ])
                 .creation_flags(0x08000000)
                 .spawn();
