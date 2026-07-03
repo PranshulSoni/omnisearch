@@ -117,7 +117,12 @@ fn main() {
         return;
     }
 
+    // installer.iss installs to {localappdata}\Programs\omnisearch; the old branding
+    // used "OpenSearch OS". Clean both so upgrades from either layout uninstall fully.
     let install_dir = PathBuf::from(&local_appdata)
+        .join("Programs")
+        .join("omnisearch");
+    let legacy_install_dir = PathBuf::from(&local_appdata)
         .join("Programs")
         .join("OpenSearch OS");
     let data_dir = PathBuf::from(&appdata).join("omnisearch");
@@ -157,35 +162,32 @@ fn main() {
     // 2. Clear application data directory (SQLite DB, logs)
     let _ = delete_dir_with_retry(&data_dir);
 
-    // 3. Clear installation folder (any leftovers)
+    // 3. Clear installation folder (any leftovers), including the legacy-branded one
     let _ = delete_dir_with_retry(&install_dir);
+    let _ = delete_dir_with_retry(&legacy_install_dir);
 
-    // 4. Manually purge any lingering shortcuts
-    let desktop_lnk = PathBuf::from(&user_profile)
-        .join("Desktop")
-        .join("OpenSearch OS.lnk");
-    let startup_lnk = PathBuf::from(&appdata)
+    // 4. Manually purge any lingering shortcuts (current "omnisearch" names and
+    //    the legacy "OpenSearch OS" ones)
+    let start_menu_programs = PathBuf::from(&appdata)
         .join("Microsoft")
         .join("Windows")
         .join("Start Menu")
-        .join("Programs")
-        .join("Startup")
-        .join("OpenSearch OS.lnk");
-    let startmenu_folder = PathBuf::from(&appdata)
-        .join("Microsoft")
-        .join("Windows")
-        .join("Start Menu")
-        .join("Programs")
-        .join("OpenSearch OS");
-
-    if desktop_lnk.exists() {
-        let _ = fs::remove_file(&desktop_lnk);
+        .join("Programs");
+    for name in ["omnisearch.lnk", "OpenSearch OS.lnk"] {
+        let desktop_lnk = PathBuf::from(&user_profile).join("Desktop").join(name);
+        if desktop_lnk.exists() {
+            let _ = fs::remove_file(&desktop_lnk);
+        }
+        let startup_lnk = start_menu_programs.join("Startup").join(name);
+        if startup_lnk.exists() {
+            let _ = fs::remove_file(&startup_lnk);
+        }
     }
-    if startup_lnk.exists() {
-        let _ = fs::remove_file(&startup_lnk);
-    }
-    if startmenu_folder.exists() {
-        let _ = fs::remove_dir_all(&startmenu_folder);
+    for folder in ["omnisearch", "OpenSearch OS"] {
+        let startmenu_folder = start_menu_programs.join(folder);
+        if startmenu_folder.exists() {
+            let _ = fs::remove_dir_all(&startmenu_folder);
+        }
     }
 
     // Success notification

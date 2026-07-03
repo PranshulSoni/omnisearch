@@ -94,11 +94,16 @@ pub fn insert_memory_event(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
         params![timestamp, source, event_type, title, detail, app_name, path, url],
     );
-    let _ = conn.execute(
-        "DELETE FROM memory_events
-         WHERE id NOT IN (SELECT id FROM memory_events ORDER BY timestamp DESC LIMIT 50000);",
-        [],
-    );
+    // Trim to the 50K newest rows, but not on every insert — the subquery scans the
+    // whole table and the indexers call this thousands of times per rescan cycle.
+    static INSERTS_SINCE_TRIM: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if INSERTS_SINCE_TRIM.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 128 == 0 {
+        let _ = conn.execute(
+            "DELETE FROM memory_events
+             WHERE id NOT IN (SELECT id FROM memory_events ORDER BY timestamp DESC LIMIT 50000);",
+            [],
+        );
+    }
 }
 
 fn ensure_settings_catalog_fts(conn: &Connection, meta: &[CatalogEntry]) -> rusqlite::Result<()> {

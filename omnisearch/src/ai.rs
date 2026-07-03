@@ -94,24 +94,44 @@ fn get_db_conn() -> Option<rusqlite::Connection> {
 }
 
 pub fn get_config() -> Result<AiConfig> {
+    // One connection for all three settings lookups (api_key/endpoint/model).
+    let conn = get_db_conn();
+    let db_get = |key: &str| -> Option<String> {
+        let c = conn.as_ref()?;
+        let val = c
+            .query_row(
+                "SELECT value FROM ai_settings WHERE key = ?1",
+                [key],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()?;
+        let trimmed = val.trim().to_string();
+        (!trimmed.is_empty()).then_some(trimmed)
+    };
+
     // 1. Resolve API key
     let mut api_key = None;
     let mut is_opencode = false;
+    let mut is_embedded = false;
 
     // Check SQLite settings table
-    if let Some(conn) = get_db_conn() {
-        if let Ok(val) = conn.query_row(
-            "SELECT value FROM ai_settings WHERE key = 'api_key'",
-            [],
-            |row| row.get::<_, String>(0),
-        ) {
-            let val_trimmed = val.trim().to_string();
-            if !val_trimmed.is_empty() {
-                if val_trimmed.starts_with("sk-oc-") || val_trimmed.contains("opencode") {
-                    is_opencode = true;
-                }
+    if let Some(val_trimmed) = db_get("api_key") {
+        if val_trimmed.starts_with("sk-oc-") || val_trimmed.contains("opencode") {
+            is_opencode = true;
+        }
+        // The seeded shared key (written on first run) must not shadow embedded
+        // rotated keys, or rotation-on-quota-failure can never take effect. A
+        // user-supplied key never matches this prefix and keeps top priority.
+        if val_trimmed.starts_with("sk-HrvSzHIY") && get_embedded_keys_count() > 0 {
+            let idx = get_active_key_index(get_embedded_keys_count());
+            if let Some(k) = get_rotated_key(idx) {
+                api_key = Some(k);
+                is_embedded = true;
+            } else {
                 api_key = Some(val_trimmed);
             }
+        } else {
+            api_key = Some(val_trimmed);
         }
     }
 
@@ -168,8 +188,6 @@ pub fn get_config() -> Result<AiConfig> {
         }
     }
 
-    let mut is_embedded = false;
-
     // Check Embedded Rotated Keys
     if api_key.is_none() {
         let count = get_embedded_keys_count();
@@ -197,21 +215,7 @@ pub fn get_config() -> Result<AiConfig> {
     }
 
     // 2. Resolve Endpoint
-    let mut endpoint = None;
-
-    // Check SQLite
-    if let Some(conn) = get_db_conn() {
-        if let Ok(val) = conn.query_row(
-            "SELECT value FROM ai_settings WHERE key = 'endpoint'",
-            [],
-            |row| row.get::<_, String>(0),
-        ) {
-            let val_trimmed = val.trim().to_string();
-            if !val_trimmed.is_empty() {
-                endpoint = Some(val_trimmed);
-            }
-        }
-    }
+    let mut endpoint = db_get("endpoint");
 
     // Check Environment Variable
     if endpoint.is_none() {
@@ -247,21 +251,7 @@ pub fn get_config() -> Result<AiConfig> {
     });
 
     // 3. Resolve Model
-    let mut model = None;
-
-    // Check SQLite
-    if let Some(conn) = get_db_conn() {
-        if let Ok(val) = conn.query_row(
-            "SELECT value FROM ai_settings WHERE key = 'model'",
-            [],
-            |row| row.get::<_, String>(0),
-        ) {
-            let val_trimmed = val.trim().to_string();
-            if !val_trimmed.is_empty() {
-                model = Some(val_trimmed);
-            }
-        }
-    }
+    let mut model = db_get("model");
 
     // Check Environment Variable
     if model.is_none() {
@@ -638,7 +628,12 @@ fn agent_label(cfg: &AiConfig) -> &'static str {
 
 pub fn complete_agent(system: &str, user: &str) -> Result<String> {
     let cfg = get_agent_config();
-    ensure_hermes_gateway_running()?;
+    // Only demand the local gateway when the request actually targets Hermes.
+    // With a cloud fallback config this used to fail the request (and kick off
+    // a Hermes install) even though the fallback needed no gateway at all.
+    if cfg.model == "hermes-agent" {
+        ensure_hermes_gateway_running()?;
+    }
     let timeout_secs = 300;
     let body = serde_json::json!({
         "model": cfg.model,
@@ -682,7 +677,9 @@ pub fn complete_chat_agent(
     user: &str,
 ) -> Result<String> {
     let cfg = get_agent_config();
-    ensure_hermes_gateway_running()?;
+    if cfg.model == "hermes-agent" {
+        ensure_hermes_gateway_running()?;
+    }
     let timeout_secs = 300;
     let body = serde_json::json!({
         "model": cfg.model,
@@ -1139,13 +1136,14 @@ fn html_to_text(html: &str) -> String {
         }
         i = end;
     }
+    // Decode &amp; last, or "&amp;lt;" double-decodes into "<".
     let out = out
         .replace("&nbsp;", " ")
-        .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
-        .replace("&#39;", "'");
+        .replace("&#39;", "'")
+        .replace("&amp;", "&");
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -1334,11 +1332,29 @@ pub fn get_run_status(run_id: &str) -> Result<RunStatusResponse> {
 
 pub fn poll_and_stream_existing_run(run_id: &str, cb: &dyn RunCallbacks) -> Result<()> {
     let mut seen_waiting = false;
+    let mut consecutive_errors = 0u32;
+    let started = std::time::Instant::now();
     loop {
+        // Bound the loop: a dead gateway or an orphaned run must not spin this
+        // thread forever with the UI stuck on "Executing…".
+        if started.elapsed() > std::time::Duration::from_secs(30 * 60) {
+            cb.on_done(false, "Run timed out after 30 minutes.");
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_secs(1));
         let status_resp = match get_run_status(run_id) {
-            Ok(r) => r,
-            Err(_) => continue, // ignore transient network errors
+            Ok(r) => {
+                consecutive_errors = 0;
+                r
+            }
+            Err(_) => {
+                consecutive_errors += 1;
+                if consecutive_errors >= 30 {
+                    cb.on_done(false, "Lost connection to the Hermes gateway.");
+                    break;
+                }
+                continue; // ignore transient network errors
+            }
         };
 
         match status_resp.status.as_str() {
