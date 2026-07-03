@@ -368,9 +368,21 @@ pub fn run_settings_window() {
     });
 
     ui.on_open_url(move |url| {
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", url.as_str()])
-            .spawn();
+        let url_wide: Vec<u16> = url.as_str().encode_utf16().chain(std::iter::once(0)).collect();
+        use windows::core::{w, PCWSTR};
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use windows::Win32::Foundation::HWND;
+        unsafe {
+            let _ = ShellExecuteW(
+                HWND::default(),
+                w!("open"),
+                PCWSTR(url_wide.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            );
+        }
     });
 
     // Re-assemble + validate the hotkey from the 4 dropdowns; apply, save and notify the
