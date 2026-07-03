@@ -35,12 +35,12 @@ fn get_rotated_key(index: usize) -> Option<String> {
     let raw = EMBEDDED_KEYS_RAW?;
     let parts: Vec<&str> = raw.split(',').collect();
     let hex_str = parts.get(index)?;
-    
+
     let mut bytes = Vec::new();
     let chars: Vec<char> = hex_str.chars().collect();
     for i in (0..chars.len()).step_by(2) {
         if i + 1 < chars.len() {
-            let hex_pair: String = chars[i..=i+1].iter().collect();
+            let hex_pair: String = chars[i..=i + 1].iter().collect();
             if let Ok(b) = u8::from_str_radix(&hex_pair, 16) {
                 bytes.push(b ^ 0x5F);
             }
@@ -254,7 +254,11 @@ pub fn get_config() -> Result<AiConfig> {
     ))?;
 
     // If key contains cues about OpenCode Zen
-    if is_embedded || key.starts_with("sk-oc-") || key.contains("opencode") || key.starts_with("sk-HrvSzHIY") {
+    if is_embedded
+        || key.starts_with("sk-oc-")
+        || key.contains("opencode")
+        || key.starts_with("sk-HrvSzHIY")
+    {
         is_opencode = true;
     }
 
@@ -364,8 +368,8 @@ pub fn complete(system: &str, user: &str) -> Result<String> {
 
         match resp {
             Ok(r) => {
-                let v: serde_json::Value = r.into_json()
-                    .map_err(|e| anyhow!("bad AI response: {e}"))?;
+                let v: serde_json::Value =
+                    r.into_json().map_err(|e| anyhow!("bad AI response: {e}"))?;
                 let text = v["choices"][0]["message"]["content"]
                     .as_str()
                     .ok_or_else(|| anyhow!("AI response had no content"))?;
@@ -373,14 +377,18 @@ pub fn complete(system: &str, user: &str) -> Result<String> {
             }
             Err(ureq::Error::Status(code, r)) => {
                 let msg = r.into_string().unwrap_or_default();
-                let is_auth_or_quota = code == 401 || code == 429 || code == 402 ||
-                                       msg.contains("insufficient_quota") ||
-                                       msg.contains("quota") ||
-                                       msg.contains("balance");
+                let is_auth_or_quota = code == 401
+                    || code == 429
+                    || code == 402
+                    || msg.contains("insufficient_quota")
+                    || msg.contains("quota")
+                    || msg.contains("balance");
 
                 let is_using_embedded = count > 0 && {
                     let idx = get_active_key_index(count);
-                    get_rotated_key(idx).map(|k| k == cfg.api_key).unwrap_or(false)
+                    get_rotated_key(idx)
+                        .map(|k| k == cfg.api_key)
+                        .unwrap_or(false)
                 };
 
                 if is_auth_or_quota && is_using_embedded && attempt + 1 < max_attempts {
@@ -435,8 +443,8 @@ pub fn complete_chat(
 
         match resp {
             Ok(r) => {
-                let v: serde_json::Value = r.into_json()
-                    .map_err(|e| anyhow!("bad AI response: {e}"))?;
+                let v: serde_json::Value =
+                    r.into_json().map_err(|e| anyhow!("bad AI response: {e}"))?;
                 let text = v["choices"][0]["message"]["content"]
                     .as_str()
                     .ok_or_else(|| anyhow!("AI response had no content"))?;
@@ -444,14 +452,18 @@ pub fn complete_chat(
             }
             Err(ureq::Error::Status(code, r)) => {
                 let msg = r.into_string().unwrap_or_default();
-                let is_auth_or_quota = code == 401 || code == 429 || code == 402 ||
-                                       msg.contains("insufficient_quota") ||
-                                       msg.contains("quota") ||
-                                       msg.contains("balance");
+                let is_auth_or_quota = code == 401
+                    || code == 429
+                    || code == 402
+                    || msg.contains("insufficient_quota")
+                    || msg.contains("quota")
+                    || msg.contains("balance");
 
                 let is_using_embedded = count > 0 && {
                     let idx = get_active_key_index(count);
-                    get_rotated_key(idx).map(|k| k == cfg.api_key).unwrap_or(false)
+                    get_rotated_key(idx)
+                        .map(|k| k == cfg.api_key)
+                        .unwrap_or(false)
                 };
 
                 if is_auth_or_quota && is_using_embedded && attempt + 1 < max_attempts {
@@ -471,7 +483,6 @@ pub fn complete_chat(
 
     Err(anyhow!("All embedded API keys failed or were exhausted."))
 }
-
 
 fn get_hermes_config() -> AiConfig {
     let mut api_key = "hermes".to_string();

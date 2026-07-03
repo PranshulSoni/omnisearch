@@ -148,7 +148,7 @@ pub fn start_watcher(db_path: PathBuf) {
         log_indexer("Watcher started");
 
         let collect = |set: &mut std::collections::HashSet<PathBuf>,
-                           res: notify::Result<notify::Event>| {
+                       res: notify::Result<notify::Event>| {
             if let Ok(ev) = res {
                 if matches!(
                     ev.kind,
@@ -204,7 +204,11 @@ fn log_indexer(msg: &str) {
     let _ = std::fs::create_dir_all(&log_dir);
     let log_path = log_dir.join("indexer.log");
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
-        if file.metadata().map(|m| m.len() > 1024 * 1024).unwrap_or(false) {
+        if file
+            .metadata()
+            .map(|m| m.len() > 1024 * 1024)
+            .unwrap_or(false)
+        {
             let _ = file.set_len(0);
         }
         let _ = writeln!(file, "{}", msg);
@@ -406,8 +410,8 @@ struct ExtractJob {
 /// to SQLite incrementally (bounded result channel keeps memory in check). Workers run at
 /// below-normal priority so a fast first-pass index still yields to the foreground.
 fn spawn_extractors(jobs: Vec<ExtractJob>) -> std::sync::mpsc::Receiver<PendingUpdate> {
-    use std::sync::mpsc;
     use std::collections::VecDeque;
+    use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
 
     let n_workers = std::thread::available_parallelism()

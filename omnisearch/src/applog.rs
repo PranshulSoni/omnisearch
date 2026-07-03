@@ -24,7 +24,11 @@ pub fn log(msg: &str) {
         {
             use std::io::Write;
             // Truncate in-place if file exceeds 1MB (atomic: no TOCTOU race).
-            if file.metadata().map(|m| m.len() > 1024 * 1024).unwrap_or(false) {
+            if file
+                .metadata()
+                .map(|m| m.len() > 1024 * 1024)
+                .unwrap_or(false)
+            {
                 let _ = file.set_len(0);
             }
             if writeln!(file, "[{}] {}", now_ms, msg).is_ok() {
