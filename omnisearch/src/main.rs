@@ -397,6 +397,7 @@ struct State {
     target_h: i32,
     height_anim_from: i32,
     height_anim_started: std::time::Instant,
+    lens_hovered: bool,
 }
 
 #[derive(PartialEq)]
@@ -426,6 +427,29 @@ struct IconRequest {
 impl State {
     fn search_h(&self) -> i32 {
         self.app_settings.search_bar_height as i32
+    }
+    fn lens_rect(&self, win_w: i32) -> RECT {
+        let p = self.current_p();
+        let t = ease_out(p);
+        let pill_w = 96;
+        let end_w = win_w;
+        let w = (pill_w as f32 + (end_w - pill_w) as f32 * t) as i32;
+        let x = (win_w - w) / 2;
+        let pill_h = self.search_h();
+        let start_y = self.cy - pill_h / 2;
+        let end_y = self.launcher_top_y();
+        let y = (start_y as f32 + (end_y - start_y) as f32 * t) as i32;
+        
+        let button_size = 32;
+        let right_margin = 16;
+        let left = x + w - right_margin - button_size;
+        let top = y + (pill_h - button_size) / 2;
+        RECT {
+            left,
+            top,
+            right: left + button_size,
+            bottom: top + button_size,
+        }
     }
     fn item_h(&self) -> i32 {
         self.app_settings.item_height as i32
@@ -976,6 +1000,7 @@ unsafe fn run(first_settings_run: bool) {
         target_h: homepage_win_h(60, 68, 8),
         height_anim_from: homepage_win_h(60, 68, 8),
         height_anim_started: std::time::Instant::now(),
+        lens_hovered: false,
     });
 
     // Spawn background Hermes gateway status checker and auto-starter
@@ -1647,11 +1672,28 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
         WM_SETCURSOR => {
             unsafe {
                 use windows::Win32::Foundation::HINSTANCE;
-                use windows::Win32::UI::WindowsAndMessaging::{LoadCursorW, SetCursor, IDC_CROSS};
-                if !sp.is_null() && (*sp).color_picker_active {
-                    if let Ok(cursor) = LoadCursorW(HINSTANCE(std::ptr::null_mut()), IDC_CROSS) {
-                        SetCursor(cursor);
-                        return LRESULT(1);
+                use windows::Win32::UI::WindowsAndMessaging::{LoadCursorW, SetCursor, IDC_CROSS, IDC_HAND};
+                if !sp.is_null() {
+                    let s = &*sp;
+                    if s.color_picker_active {
+                        if let Ok(cursor) = LoadCursorW(HINSTANCE(std::ptr::null_mut()), IDC_CROSS) {
+                            SetCursor(cursor);
+                            return LRESULT(1);
+                        }
+                    } else if s.anim == Anim::Visible {
+                        let mut pt = POINT::default();
+                        let _ = GetCursorPos(&mut pt);
+                        let _ = ScreenToClient(hwnd, &mut pt);
+                        let mut rc_client = RECT::default();
+                        let _ = GetClientRect(hwnd, &mut rc_client);
+                        let win_w = rc_client.right - rc_client.left;
+                        let lens_rect = s.lens_rect(win_w);
+                        if pt.x >= lens_rect.left && pt.x < lens_rect.right && pt.y >= lens_rect.top && pt.y < lens_rect.bottom {
+                            if let Ok(cursor) = LoadCursorW(HINSTANCE(std::ptr::null_mut()), IDC_HAND) {
+                                SetCursor(cursor);
+                                return LRESULT(1);
+                            }
+                        }
                     }
                 }
             }
@@ -3130,6 +3172,15 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
             let mut rc_client = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc_client);
             let win_w = rc_client.right - rc_client.left;
+
+            let lens_rect = s.lens_rect(win_w);
+            if s.anim == Anim::Visible && mx >= lens_rect.left && mx < lens_rect.right && my >= lens_rect.top && my < lens_rect.bottom {
+                do_hide(hwnd, s);
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                crate::circle_to_search::start_lens_search(hwnd, s);
+                return LRESULT(0);
+            }
+
             let _bx = (win_w - WIN_W) / 2;
             let by = s.launcher_top_y();
 
@@ -3251,6 +3302,16 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
             let _mx = (lp.0 & 0xFFFF) as i16 as i32;
             let my = ((lp.0 >> 16) & 0xFFFF) as i16 as i32;
 
+            let mut rc_client = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc_client);
+            let win_w = rc_client.right - rc_client.left;
+            let lens_rect = s.lens_rect(win_w);
+            let is_lens_hovered = s.anim == Anim::Visible && _mx >= lens_rect.left && _mx < lens_rect.right && my >= lens_rect.top && my < lens_rect.bottom;
+            if s.lens_hovered != is_lens_hovered {
+                s.lens_hovered = is_lens_hovered;
+                let _ = InvalidateRect(hwnd, None, FALSE);
+            }
+
             let mut pt = POINT::default();
             let _ = GetCursorPos(&mut pt);
 
@@ -3305,6 +3366,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
             s.mouse_tracking = false;
             s.hovered_item = None;
             s.hovered_filter = None;
+            s.lens_hovered = false;
             let _ = InvalidateRect(hwnd, None, FALSE);
             LRESULT(0)
         }
@@ -7024,7 +7086,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
     // Text / placeholder
     let tx = x + PAD_L + SEARCH_ICON_SIZE + 12;
-    let right_reserve = if s.search_loading { 180 } else { PAD_L };
+    let right_reserve = if s.search_loading { 180 } else { 60 };
     let tw = w - (PAD_L + SEARCH_ICON_SIZE + 12) - right_reserve;
     let mut tr = RECT {
         left: tx,
@@ -7117,6 +7179,37 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
             );
         }
+    }
+
+    // Draw Lens Icon
+    let lens_rect = s.lens_rect(win_w);
+    let lens_icon = crate::circle_to_search::get_lens_icon();
+    if !lens_icon.0.is_null() && s.anim == Anim::Visible {
+        if s.lens_hovered {
+            fill_rounded(
+                mdc,
+                lens_rect.left,
+                lens_rect.top,
+                lens_rect.right - lens_rect.left,
+                lens_rect.bottom - lens_rect.top,
+                6,
+                palette.bg_hover,
+            );
+        }
+        let icon_size = 20;
+        let icon_x = lens_rect.left + (lens_rect.right - lens_rect.left - icon_size) / 2;
+        let icon_y = lens_rect.top + (lens_rect.bottom - lens_rect.top - icon_size) / 2;
+        let _ = DrawIconEx(
+            mdc,
+            icon_x,
+            icon_y,
+            lens_icon,
+            icon_size,
+            icon_size,
+            0,
+            HBRUSH(null_mut()),
+            DI_NORMAL,
+        );
     }
 
     // Draw cursor
