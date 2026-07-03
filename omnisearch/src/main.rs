@@ -2084,7 +2084,8 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 return LRESULT(0);
             }
             let s = &mut *sp;
-            if s.placeholder_override.is_some() {
+            let is_control_char = (wp.0 as u32) < 32 || (wp.0 as u32) == 127;
+            if !is_control_char && s.placeholder_override.is_some() {
                 s.placeholder_override = None;
                 let _ = KillTimer(hwnd, TIMER_CLIPBOARD_MSG);
                 let _ = InvalidateRect(hwnd, None, FALSE);
@@ -2164,13 +2165,15 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 return LRESULT(0);
             }
             let s = &mut *sp;
-            if s.placeholder_override.is_some() {
-                s.placeholder_override = None;
-                let _ = KillTimer(hwnd, TIMER_CLIPBOARD_MSG);
-                let _ = InvalidateRect(hwnd, None, FALSE);
-            }
             let vk = VIRTUAL_KEY(wp.0 as u16);
             let ctrl_down = (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
+            if vk == VK_BACK || vk == VK_DELETE || (ctrl_down && vk.0 as u32 == 0x56) {
+                if s.placeholder_override.is_some() {
+                    s.placeholder_override = None;
+                    let _ = KillTimer(hwnd, TIMER_CLIPBOARD_MSG);
+                    let _ = InvalidateRect(hwnd, None, FALSE);
+                }
+            }
             // In-app note editor: text is appended in WM_CHAR; control keys here.
             if s.note_editing {
                 if ctrl_down && vk.0 == 0x53 { // Ctrl+S — save, keep editing

@@ -9830,7 +9830,7 @@ impl SearchEngine {
         }
 
         let q_lower = q.to_lowercase();
-        let mut stmt = match conn.prepare("SELECT name, content, keyword FROM snippets WHERE name LIKE ?1 OR keyword = ?2 LIMIT 5") {
+        let mut stmt = match conn.prepare("SELECT name, content, keyword FROM snippets WHERE name LIKE ?1 OR keyword = ?2 COLLATE NOCASE LIMIT 5") {
             Ok(s) => s,
             Err(_) => return results,
         };
@@ -9855,6 +9855,15 @@ impl SearchEngine {
                 } else {
                     format!(" [{}]", kw_str)
                 };
+                let is_exact_keyword = !kw_str.is_empty() && kw_str.to_lowercase() == q_lower;
+                let is_exact_name = name.to_lowercase() == q_lower;
+                let score = if is_exact_keyword {
+                    110.0
+                } else if is_exact_name {
+                    105.0
+                } else {
+                    3.9
+                };
                 results.push(SearchResult {
                     entry: CatalogEntry {
                         id: format!("snippet.{}", name.to_lowercase().replace(' ', "_")),
@@ -9865,7 +9874,7 @@ impl SearchEngine {
                         description: ellipsize_chars(&content, 63),
                         synonyms: format!("{} {}", name.to_lowercase(), kw_str),
                     },
-                    score: 3.9,
+                    score,
                 });
             }
         }
@@ -10052,7 +10061,7 @@ impl SearchEngine {
                 Err(_) => return results,
             }
         } else {
-            match conn.prepare("SELECT name, content, keyword FROM snippets WHERE name LIKE ?1 OR content LIKE ?2 OR keyword = ?3 ORDER BY name ASC") {
+            match conn.prepare("SELECT name, content, keyword FROM snippets WHERE name LIKE ?1 OR content LIKE ?2 OR keyword = ?3 COLLATE NOCASE ORDER BY name ASC") {
                 Ok(s) => s,
                 Err(_) => return results,
             }
