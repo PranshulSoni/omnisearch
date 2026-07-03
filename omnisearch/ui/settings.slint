@@ -1632,38 +1632,38 @@ export component SettingsWindow inherits Window {
                                         Text { text: "Add expansion"; color: root.text-primary; font-size: 16px; font-weight: 700; }
                                         Text { text: "Type the trigger in OmniSearch, press Enter, and the saved text is pasted into the previous app."; color: root.text-muted; font-size: 12px; }
                                     }
-                                    HorizontalBox {
-                                        spacing: 10px;
-                                        VerticalBox {
-                                            horizontal-stretch: 3;
-                                            spacing: 6px;
-                                            Text { text: "Name"; color: root.text-muted; font-size: 11px; font-weight: 600; }
+                                    VerticalBox {
+                                        padding: 0; spacing: 12px;
+                                        HorizontalBox {
+                                            padding: 0; spacing: 12px;
+                                            Text { text: "Name"; color: root.text-muted; font-size: 12px; font-weight: 600; width: 110px; vertical-alignment: center; }
                                             LineEdit { text <=> root.snippet-name; placeholder-text: "Work email"; }
                                         }
-                                        VerticalBox {
-                                            horizontal-stretch: 1;
-                                            spacing: 6px;
-                                            Text { text: "Trigger"; color: root.text-muted; font-size: 11px; font-weight: 600; }
+                                        HorizontalBox {
+                                            padding: 0; spacing: 12px;
+                                            Text { text: "Trigger"; color: root.text-muted; font-size: 12px; font-weight: 600; width: 110px; vertical-alignment: center; }
                                             LineEdit { text <=> root.snippet-keyword; placeholder-text: "!email"; }
                                         }
-                                    }
-                                    VerticalBox {
-                                        spacing: 6px;
-                                        Text { text: "Expansion text"; color: root.text-muted; font-size: 11px; font-weight: 600; }
-                                        LineEdit { text <=> root.snippet-content; placeholder-text: "Text to paste"; height: 40px; }
+                                        HorizontalBox {
+                                            padding: 0; spacing: 12px;
+                                            Text { text: "Expansion text"; color: root.text-muted; font-size: 12px; font-weight: 600; width: 110px; vertical-alignment: center; }
+                                            LineEdit { text <=> root.snippet-content; placeholder-text: "Text to paste"; height: 40px; }
+                                        }
                                     }
                                     HorizontalBox {
-                                        alignment: center;
-                                        Text { text: "Name and expansion text are required. Empty trigger uses the name."; color: root.text-muted; font-size: 12px; }
+                                        padding: 0;
+                                        Text { text: "Name and expansion text are required. Empty trigger uses the name."; color: root.text-muted; font-size: 12px; vertical-alignment: center; }
                                         Rectangle { horizontal-stretch: 1; }
-                                        Button { text: "Add expansion"; clicked => { root.add-snippet(); } }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Button { text: "Add expansion"; clicked => { root.add-snippet(); } }
+                                        }
                                     }
                                 }
                             }
                             for snippet[i] in root.snippets: Rectangle {
                                 background: root.card-bg; border-radius: 10px; border-color: root.border-color; border-width: 1px;
                                 HorizontalBox {
-                                    alignment: center;
                                     padding-top: 14px; padding-bottom: 14px;
                                     padding-left: 18px; padding-right: 16px;
                                     spacing: 16px;
@@ -1671,13 +1671,13 @@ export component SettingsWindow inherits Window {
                                         width: 96px; height: 30px; border-radius: 8px; background: root.hover-bg; border-color: root.accent; border-width: 1px;
                                         Text { text: snippet.keyword; color: root.accent; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                                     }
-                                    VerticalBox {
-                                        alignment: center; spacing: 4px;
-                                        Text { text: snippet.name; color: root.text-primary; font-size: 15px; font-weight: 700; }
-                                        Text { text: snippet.content; color: root.text-muted; font-size: 12px; overflow: elide; }
-                                    }
+                                    Text { text: snippet.name; color: root.text-primary; font-size: 15px; font-weight: 700; vertical-alignment: center; }
                                     Rectangle { horizontal-stretch: 1; }
-                                    Button { text: "Delete"; clicked => { root.delete-snippet(snippet.id); } }
+                                    Text { text: snippet.content; color: root.text-muted; font-size: 12px; overflow: elide; vertical-alignment: center; max-width: 300px; horizontal-alignment: right; }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Button { text: "Delete"; clicked => { root.delete-snippet(snippet.id); } }
+                                    }
                                 }
                             }
                         }
