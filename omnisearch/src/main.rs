@@ -71,6 +71,7 @@ const TIMER_CURSOR_BLINK: usize = 2;
 const TIMER_AI_ANIM: usize = 5;
 const TIMER_ICON_BATCH: usize = 6;
 const TIMER_SEARCH_ANIM: usize = 7;
+const TIMER_CLIPBOARD_MSG: usize = 8;
 const CURSOR_BLINK_MS: u32 = 530;
 const WM_ICON_LOADED: u32 = WM_USER + 1;
 const WM_ENGINE_READY: u32 = WM_USER + 2;
@@ -386,6 +387,7 @@ struct State {
     target_h: i32,
     height_anim_from: i32,
     height_anim_started: std::time::Instant,
+    placeholder_override: Option<String>,
 }
 
 #[derive(PartialEq)]
@@ -1015,6 +1017,7 @@ unsafe fn run(first_settings_run: bool) {
         target_h: homepage_win_h(60, 68, 8),
         height_anim_from: homepage_win_h(60, 68, 8),
         height_anim_started: std::time::Instant::now(),
+        placeholder_override: None,
     });
 
     // Spawn background Hermes gateway status checker and auto-starter
@@ -2066,6 +2069,11 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                         invalidate_search_row(hwnd, s);
                     }
                 }
+                TIMER_CLIPBOARD_MSG => {
+                    let _ = KillTimer(hwnd, TIMER_CLIPBOARD_MSG);
+                    s.placeholder_override = None;
+                    let _ = InvalidateRect(hwnd, None, FALSE);
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -2076,6 +2084,11 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 return LRESULT(0);
             }
             let s = &mut *sp;
+            if s.placeholder_override.is_some() {
+                s.placeholder_override = None;
+                let _ = KillTimer(hwnd, TIMER_CLIPBOARD_MSG);
+                let _ = InvalidateRect(hwnd, None, FALSE);
+            }
             if s.form_state != FormState::None {
                 s.search_input_active = true;
                 if let Some(c) = wm_char_decode(&mut s.pending_surrogate, wp.0 as u32) {
@@ -2151,6 +2164,11 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 return LRESULT(0);
             }
             let s = &mut *sp;
+            if s.placeholder_override.is_some() {
+                s.placeholder_override = None;
+                let _ = KillTimer(hwnd, TIMER_CLIPBOARD_MSG);
+                let _ = InvalidateRect(hwnd, None, FALSE);
+            }
             let vk = VIRTUAL_KEY(wp.0 as u16);
             let ctrl_down = (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
             // In-app note editor: text is appended in WM_CHAR; control keys here.
@@ -5431,11 +5449,12 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 return;
             } else if let Some(content) = cmd.strip_prefix("copy_snippet:") {
                 copy_to_clipboard(hwnd, content);
-                s.query = content.to_string();
-                s.cursor_pos = s.query.len();
+                s.query.clear();
+                s.cursor_pos = 0;
+                s.placeholder_override = Some("Copied to clipboard!".to_string());
                 s.reset_results();
-                s.selected = 0;
                 reset_cursor_blink(hwnd, s);
+                let _ = unsafe { SetTimer(hwnd, TIMER_CLIPBOARD_MSG, 2000, None) };
                 let _ = InvalidateRect(hwnd, None, FALSE);
                 return;
             } else if let Some(url) = cmd.strip_prefix("open_quicklink:") {
@@ -7252,24 +7271,32 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     SetTextColor(mdc, palette.clr_white);
 
     if s.query.is_empty()
-        && (s.app_settings.show_placeholder || !matches!(s.form_state, FormState::None))
+        && (s.app_settings.show_placeholder || !matches!(s.form_state, FormState::None) || s.placeholder_override.is_some())
     {
-        let ph_str = match &s.form_state {
-            FormState::CreateSnippetName => "Create Snippet: Enter Name...",
-            FormState::CreateSnippetContent { .. } => "Create Snippet: Enter Content...",
-            FormState::CreateSnippetKeyword { .. } => "Create Snippet: Enter Keyword (optional)...",
-            FormState::CreateQuicklinkName => "Create Quicklink: Enter Name...",
-            FormState::CreateQuicklinkUrl { .. } => {
-                "Create Quicklink: Enter URL (use {query} placeholder)..."
+        let ph_str = if let Some(ref override_msg) = s.placeholder_override {
+            override_msg.as_str()
+        } else {
+            match &s.form_state {
+                FormState::CreateSnippetName => "Create Snippet: Enter Name...",
+                FormState::CreateSnippetContent { .. } => "Create Snippet: Enter Content...",
+                FormState::CreateSnippetKeyword { .. } => "Create Snippet: Enter Keyword (optional)...",
+                FormState::CreateQuicklinkName => "Create Quicklink: Enter Name...",
+                FormState::CreateQuicklinkUrl { .. } => {
+                    "Create Quicklink: Enter URL (use {query} placeholder)..."
+                }
+                FormState::CreateQuicklinkKeyword { .. } => "Create Quicklink: Enter Keyword...",
+                FormState::CreateFocusCategoryName => "Create Focus Category: Enter Name...",
+                FormState::CreateFocusCategoryBlocked { .. } => "Focus Category: Enter blocked apps (comma separated, e.g. discord.exe, slack.exe)...",
+                FormState::CreateNoteName => "Create Note: Enter Title...",
+                FormState::None => "Search files, code, PDFs, OCR...",
             }
-            FormState::CreateQuicklinkKeyword { .. } => "Create Quicklink: Enter Keyword...",
-            FormState::CreateFocusCategoryName => "Create Focus Category: Enter Name...",
-            FormState::CreateFocusCategoryBlocked { .. } => "Focus Category: Enter blocked apps (comma separated, e.g. discord.exe, slack.exe)...",
-            FormState::CreateNoteName => "Create Note: Enter Title...",
-            FormState::None => "Search files, code, PDFs, OCR...",
         };
         let mut ph: Vec<u16> = ph_str.encode_utf16().collect();
-        SetTextColor(mdc, palette.clr_ph);
+        if s.placeholder_override.is_some() {
+            SetTextColor(mdc, palette.clr_accent);
+        } else {
+            SetTextColor(mdc, palette.clr_ph);
+        }
         let _ = DrawTextW(
             mdc,
             &mut ph,
