@@ -10122,7 +10122,14 @@ unsafe fn load_png_to_hicon(bytes: &[u8], size: u32) -> HICON {
 
     let img = match image::load_from_memory_with_format(bytes, image::ImageFormat::Png) {
         Ok(img) => {
-            let rgba = img.into_rgba8();
+            let mut rgba = img.into_rgba8();
+            // Premultiply alpha before resizing to prevent white fringe/halo artifacts
+            for pixel in rgba.chunks_exact_mut(4) {
+                let a = pixel[3] as u32;
+                pixel[0] = ((pixel[0] as u32 * a) / 255) as u8;
+                pixel[1] = ((pixel[1] as u32 * a) / 255) as u8;
+                pixel[2] = ((pixel[2] as u32 * a) / 255) as u8;
+            }
             image::imageops::resize(&rgba, size, size, image::imageops::FilterType::Lanczos3)
         }
         Err(_) => return HICON(null_mut()),
@@ -10168,15 +10175,11 @@ unsafe fn load_png_to_hicon(bytes: &[u8], size: u32) -> HICON {
         if !h.0.is_null() && !bits.is_null() && src.len() >= expected {
             let slice = std::slice::from_raw_parts_mut(bits, expected);
             for i in 0..(width as usize * height as usize) {
-                // premultiply alpha
-                let a = src[i * 4 + 3] as u32;
-                let r = (src[i * 4] as u32 * a) / 255;
-                let g = (src[i * 4 + 1] as u32 * a) / 255;
-                let b = (src[i * 4 + 2] as u32 * a) / 255;
-                slice[i * 4] = b as u8;
-                slice[i * 4 + 1] = g as u8;
-                slice[i * 4 + 2] = r as u8;
-                slice[i * 4 + 3] = a as u8;
+                // The image is already premultiplied, just copy with BGR order swap for Windows DIB
+                slice[i * 4] = src[i * 4 + 2]; // B
+                slice[i * 4 + 1] = src[i * 4 + 1]; // G
+                slice[i * 4 + 2] = src[i * 4]; // R
+                slice[i * 4 + 3] = src[i * 4 + 3]; // A
             }
         }
 
