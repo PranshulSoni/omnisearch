@@ -989,7 +989,11 @@ pub fn run_agent_streaming(system: &str, user: &str, cb: &dyn RunCallbacks) -> R
         }
 
         // Progress / delta text: accumulate whatever content we can find.
-        let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let kind = v
+            .get("event")
+            .or_else(|| v.get("type"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
         match kind {
             "completed" | "run.completed" | "response.completed" => {
                 if let Some(t) = v.get("output").and_then(|o| o.as_str()) {
@@ -1010,6 +1014,9 @@ pub fn run_agent_streaming(system: &str, user: &str, cb: &dyn RunCallbacks) -> R
                     .unwrap_or("agent run failed");
                 cb.on_done(false, msg);
                 return Ok(());
+            }
+            "reasoning.available" | "reasoning" | "thought" => {
+                // Ignore reasoning text events so they do not pollute or duplicate final response content
             }
             _ => {
                 // Streaming delta: append any text fragment we can find.
