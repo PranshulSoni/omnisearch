@@ -12,16 +12,6 @@ name = "inspect-db"
 path = "src/inspect_db.rs"
 
 [[bin]]
-name = "test_slint"
-path = "src/bin/test_slint.rs"
-
-# gpu-test branch: GPU-rendered launcher spike (Slint). Separate target; does not
-# affect the `omnisearch` binary or the settings.slint build path.
-[[bin]]
-name = "gpu-launcher"
-path = "src/gpu_launcher.rs"
-
-[[bin]]
 name = "uninstall"
 path = "src/uninstall.rs"
 
@@ -79,8 +69,6 @@ image = "0.24"
 slint = { version = "1.17.0", features = ["raw-window-handle-06"] }
 once_cell = "1.21.4"
 winreg = "0.56.0"
-# gpu-test branch: HWND extraction for the gpu-launcher spike's Win32 glue.
-raw-window-handle = "0.6"
 
 
 [profile.release]
