@@ -1074,11 +1074,14 @@ unsafe fn run(first_settings_run: bool) {
     // If the COM-heavy icon loading code panics (common with shell extensions),
     // the thread would die silently and all future icons would stop loading.
     // This wrapper catches panics, logs them, and restarts the thread.
-    fn spawn_icon_loader(hwnd: HWND, icon_rx: std::sync::mpsc::Receiver<IconRequest>) {
+    fn spawn_icon_loader(hwnd: SendHwnd, icon_rx: std::sync::mpsc::Receiver<IconRequest>) {
         std::thread::spawn(move || {
+            // Rebind the whole wrapper: edition-2021 disjoint capture would otherwise
+            // capture only the raw (non-Send) HWND field out of `hwnd.0` uses below.
+            let hwnd = hwnd;
             loop {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let hwnd_raw = SendHwnd(hwnd);
+                    let hwnd_raw = SendHwnd(hwnd.0);
                     let _ = unsafe {
                         windows::Win32::System::Com::CoInitializeEx(
                             None,
@@ -1143,7 +1146,7 @@ unsafe fn run(first_settings_run: bool) {
         });
     }
 
-    spawn_icon_loader(hwnd, icon_rx);
+    spawn_icon_loader(hwnd_icon, icon_rx);
 
     let _ = unsafe { windows::Win32::System::DataExchange::AddClipboardFormatListener(hwnd) };
 
