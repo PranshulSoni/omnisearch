@@ -93,6 +93,8 @@ export component SettingsWindow inherits Window {
     in-out property <string> snippet-content;
     in-out property <image> desktop-wallpaper;
     in-out property <bool> has-desktop-wallpaper: false;
+    in-out property <bool> snippet-name-error: false;
+    in-out property <bool> snippet-content-error: false;
 
     property <bool> edit-panel-expanded: false;
     
@@ -268,7 +270,7 @@ export component SettingsWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
-                    ta-general := TouchArea { clicked => { root.current-page = 0; } }
+                    ta-general := TouchArea { clicked => { root.current-page = 0; root.snippet-name-error = false; root.snippet-content-error = false; } }
                 }
 
                 Rectangle { height: 4px; }
@@ -309,7 +311,7 @@ export component SettingsWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
-                    ta-appearance := TouchArea { clicked => { root.current-page = 1; } }
+                    ta-appearance := TouchArea { clicked => { root.current-page = 1; root.snippet-name-error = false; root.snippet-content-error = false; } }
                 }
 
                 Rectangle { height: 4px; }
@@ -350,7 +352,7 @@ export component SettingsWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
-                    ta-hotkeys := TouchArea { clicked => { root.current-page = 2; } }
+                    ta-hotkeys := TouchArea { clicked => { root.current-page = 2; root.snippet-name-error = false; root.snippet-content-error = false; } }
                 }
 
                 Rectangle { height: 4px; }
@@ -391,7 +393,7 @@ export component SettingsWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
-                    ta-agent := TouchArea { clicked => { root.current-page = 3; } }
+                    ta-agent := TouchArea { clicked => { root.current-page = 3; root.snippet-name-error = false; root.snippet-content-error = false; } }
                 }
 
                 Rectangle { height: 4px; }
@@ -432,7 +434,7 @@ export component SettingsWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
-                    ta-plugins := TouchArea { clicked => { root.current-page = 4; } }
+                    ta-plugins := TouchArea { clicked => { root.current-page = 4; root.snippet-name-error = false; root.snippet-content-error = false; } }
                 }
 
                 Rectangle { height: 4px; }
@@ -473,7 +475,7 @@ export component SettingsWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
-                    ta-config := TouchArea { clicked => { root.current-page = 5; } }
+                    ta-config := TouchArea { clicked => { root.current-page = 5; root.snippet-name-error = false; root.snippet-content-error = false; } }
                 }
 
                 Rectangle { height: 4px; }
@@ -514,7 +516,7 @@ export component SettingsWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
-                    ta-database := TouchArea { clicked => { root.current-page = 6; } }
+                    ta-database := TouchArea { clicked => { root.current-page = 6; root.snippet-name-error = false; root.snippet-content-error = false; } }
                 }
 
                 Rectangle { vertical-stretch: 1; }
@@ -559,7 +561,7 @@ export component SettingsWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
-                    ta-about := TouchArea { clicked => { root.current-page = 7; } }
+                    ta-about := TouchArea { clicked => { root.current-page = 7; root.snippet-name-error = false; root.snippet-content-error = false; } }
                 }
 
 
@@ -1635,19 +1637,42 @@ export component SettingsWindow inherits Window {
                                     VerticalBox {
                                         padding: 0; spacing: 12px;
                                         HorizontalBox {
-                                            padding: 0; spacing: 12px;
-                                            Text { text: "Name"; color: root.text-muted; font-size: 12px; font-weight: 600; width: 110px; vertical-alignment: center; }
-                                            LineEdit { text <=> root.snippet-name; placeholder-text: "Work email"; }
-                                        }
-                                        HorizontalBox {
-                                            padding: 0; spacing: 12px;
-                                            Text { text: "Trigger"; color: root.text-muted; font-size: 12px; font-weight: 600; width: 110px; vertical-alignment: center; }
-                                            LineEdit { text <=> root.snippet-keyword; placeholder-text: "!email"; }
+                                            padding: 0; spacing: 10px;
+                                            HorizontalBox {
+                                                padding: 0; spacing: 12px; horizontal-stretch: 3;
+                                                Text { text: "Name"; color: root.text-muted; font-size: 12px; font-weight: 600; width: 110px; vertical-alignment: center; }
+                                                Rectangle {
+                                                    height: 34px;
+                                                    border-width: 1.5px;
+                                                    border-color: root.snippet-name-error ? #ff4d4d : transparent;
+                                                    border-radius: 4px;
+                                                    LineEdit {
+                                                        width: 100%; height: 100%;
+                                                        text <=> root.snippet-name; placeholder-text: "Work email";
+                                                        edited => { root.snippet-name-error = false; }
+                                                    }
+                                                }
+                                            }
+                                            HorizontalBox {
+                                                padding: 0; spacing: 12px; horizontal-stretch: 1;
+                                                Text { text: "Trigger"; color: root.text-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                                LineEdit { text <=> root.snippet-keyword; placeholder-text: "!email"; height: 34px; }
+                                            }
                                         }
                                         HorizontalBox {
                                             padding: 0; spacing: 12px;
                                             Text { text: "Expansion text"; color: root.text-muted; font-size: 12px; font-weight: 600; width: 110px; vertical-alignment: center; }
-                                            LineEdit { text <=> root.snippet-content; placeholder-text: "Text to paste"; height: 40px; }
+                                            Rectangle {
+                                                height: 40px;
+                                                border-width: 1.5px;
+                                                border-color: root.snippet-content-error ? #ff4d4d : transparent;
+                                                border-radius: 4px;
+                                                LineEdit {
+                                                    width: 100%; height: 100%;
+                                                    text <=> root.snippet-content; placeholder-text: "Text to paste";
+                                                    edited => { root.snippet-content-error = false; }
+                                                }
+                                            }
                                         }
                                     }
                                     HorizontalBox {
@@ -1656,7 +1681,16 @@ export component SettingsWindow inherits Window {
                                         Rectangle { horizontal-stretch: 1; }
                                         VerticalLayout {
                                             alignment: center;
-                                            Button { text: "Add expansion"; clicked => { root.add-snippet(); } }
+                                            Button {
+                                                text: "Add expansion";
+                                                clicked => {
+                                                    root.snippet-name-error = root.snippet-name == "";
+                                                    root.snippet-content-error = root.snippet-content == "";
+                                                    if (!root.snippet-name-error && !root.snippet-content-error) {
+                                                        root.add-snippet();
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1673,7 +1707,7 @@ export component SettingsWindow inherits Window {
                                     }
                                     Text { text: snippet.name; color: root.text-primary; font-size: 15px; font-weight: 700; vertical-alignment: center; }
                                     Rectangle { horizontal-stretch: 1; }
-                                    Text { text: snippet.content; color: root.text-muted; font-size: 12px; overflow: elide; vertical-alignment: center; max-width: 300px; horizontal-alignment: right; }
+                                    Text { text: snippet.content; color: root.accent; font-size: 14px; font-weight: 600; overflow: elide; vertical-alignment: center; max-width: 300px; horizontal-alignment: right; }
                                     VerticalLayout {
                                         alignment: center;
                                         Button { text: "Delete"; clicked => { root.delete-snippet(snippet.id); } }
