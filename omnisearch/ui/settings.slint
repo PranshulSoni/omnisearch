@@ -1739,11 +1739,13 @@ export component SettingsWindow inherits Window {
                                     HorizontalBox {
                                         spacing: 10px;
                                         VerticalBox {
+                                            horizontal-stretch: 3;
                                             spacing: 6px;
                                             Text { text: "Name"; color: root.text-muted; font-size: 11px; font-weight: 600; }
                                             LineEdit { text <=> root.snippet-name; placeholder-text: "Work email"; }
                                         }
                                         VerticalBox {
+                                            horizontal-stretch: 1;
                                             spacing: 6px;
                                             Text { text: "Trigger"; color: root.text-muted; font-size: 11px; font-weight: 600; }
                                             LineEdit { text <=> root.snippet-keyword; placeholder-text: "!email"; }
@@ -1755,6 +1757,7 @@ export component SettingsWindow inherits Window {
                                         LineEdit { text <=> root.snippet-content; placeholder-text: "Text to paste"; height: 40px; }
                                     }
                                     HorizontalBox {
+                                        alignment: center;
                                         Text { text: "Name and expansion text are required. Empty trigger uses the name."; color: root.text-muted; font-size: 12px; }
                                         Rectangle { horizontal-stretch: 1; }
                                         Button { text: "Add expansion"; clicked => { root.add-snippet(); } }
@@ -1762,9 +1765,12 @@ export component SettingsWindow inherits Window {
                                 }
                             }
                             for snippet[i] in root.snippets: Rectangle {
-                                background: root.card-bg; border-radius: 10px; border-color: root.border-color; border-width: 1px; height: 84px;
+                                background: root.card-bg; border-radius: 10px; border-color: root.border-color; border-width: 1px;
                                 HorizontalBox {
-                                    padding-left: 18px; padding-right: 16px; spacing: 16px;
+                                    alignment: center;
+                                    padding-top: 14px; padding-bottom: 14px;
+                                    padding-left: 18px; padding-right: 16px;
+                                    spacing: 16px;
                                     Rectangle {
                                         width: 96px; height: 30px; border-radius: 8px; background: root.hover-bg; border-color: root.accent; border-width: 1px;
                                         Text { text: snippet.keyword; color: root.accent; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
