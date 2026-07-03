@@ -51,7 +51,7 @@ struct SlintSnippet {
 
 export component SettingsWindow inherits Window {
     title: "OmniSearch Settings";
-    icon: @image-url("../../icons/OmniSearchTrans.png");
+    icon: @image-url("../../icons/OmniSearchTrans_16.png");
     min-width: 860px;
     min-height: 560px;
     preferred-width: 900px;
@@ -88,6 +88,7 @@ export component SettingsWindow inherits Window {
     in-out property <bool> plugin-text-expansions;
     in-out property <bool> plugin-color-picker;
     in-out property <bool> plugin-calculator;
+    in-out property <bool> plugin-git-commits;
     in-out property <string> snippet-name;
     in-out property <string> snippet-keyword;
     in-out property <string> snippet-content;
@@ -103,6 +104,7 @@ export component SettingsWindow inherits Window {
     in-out property <bool> show-text-info: false;
     in-out property <bool> show-color-info: false;
     in-out property <bool> show-calc-info: false;
+    in-out property <bool> show-git-info: false;
     
     // Callbacks to Rust
     callback save-settings();
@@ -126,7 +128,7 @@ export component SettingsWindow inherits Window {
     in-out property <string> agent-endpoint;
     in-out property <string> agent-model;
     in-out property <bool> agent-always-approve;
-    in-out property <image> agent-logo: @image-url("../../icons/AgentLogo.png");
+    in-out property <image> agent-logo: @image-url("../../icons/OmniSearchTrans_small.png");
 
     // Database settings properties
     in-out property <string> db-last-indexed;
@@ -211,7 +213,7 @@ export component SettingsWindow inherits Window {
                         HorizontalLayout {
                             alignment: center;
                             Image {
-                                source: @image-url("../../icons/OmniSearchTrans.png");
+                                source: @image-url("../../icons/OmniSearchTrans_small.png");
                                 width: 64px;
                                 height: 64px;
                                 image-fit: contain;
@@ -1744,6 +1746,50 @@ export component SettingsWindow inherits Window {
                                         padding-left: 20px; padding-right: 20px; padding-bottom: 16px; spacing: 12px;
                                         Text {
                                             text: "💡 Trigger: Type any formula or math equation directly in the search bar (e.g. 'sqrt(16) * 12' or '15% of 350'). The parsed result is shown inline immediately.";
+                                            color: root.text-muted;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                background: root.card-bg; border-radius: 8px; border-color: root.border-color; border-width: 1px;
+                                height: root.show-git-info ? 134px : 74px;
+                                animate height { duration: 150ms; easing: ease-out; }
+                                VerticalLayout {
+                                    padding: 0;
+                                    HorizontalBox {
+                                        padding-left: 20px; padding-right: 20px; padding-top: 16px; padding-bottom: 16px; spacing: 16px;
+                                        Text { text: "\u{e8ee}"; font-family: "Segoe MDL2 Assets"; font-size: 20px; color: root.accent; vertical-alignment: center; width: 28px; }
+                                        VerticalBox { alignment: center; spacing: 2px; Text { text: "Git Commits"; color: root.text-primary; font-size: 14px; font-weight: 600; } Text { text: "Recent repository commits in search and filters"; color: root.text-muted; font-size: 12px; } }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Rectangle {
+                                                width: 24px; height: 24px; border-radius: 12px;
+                                                background: git-i-touch.has-hover ? root.border-color : transparent;
+                                                Text {
+                                                    text: "\u{e946}";
+                                                    font-family: "Segoe MDL2 Assets";
+                                                    font-size: 16px;
+                                                    color: root.show-git-info ? root.accent : (git-i-touch.has-hover ? root.text-primary : root.text-muted);
+                                                    horizontal-alignment: center;
+                                                    vertical-alignment: center;
+                                                }
+                                                git-i-touch := TouchArea {
+                                                    clicked => {
+                                                        root.show-git-info = !root.show-git-info;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        VerticalBox { alignment: center; ToggleSwitch { checked <=> root.plugin-git-commits; toggled => { root.save-settings(); } } }
+                                    }
+                                    if root.show-git-info : HorizontalBox {
+                                        padding-left: 20px; padding-right: 20px; padding-bottom: 16px; spacing: 12px;
+                                        Text {
+                                            text: "Trigger: type 'commits:' or search commit text. Turning this off removes Git commit results, the home shortcut, and related filter counts until re-enabled.";
                                             color: root.text-muted;
                                             font-size: 12px;
                                             wrap: word-wrap;

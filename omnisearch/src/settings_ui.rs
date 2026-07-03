@@ -176,6 +176,7 @@ pub fn run_settings_window() {
     ui.set_plugin_text_expansions(settings.plugin_text_expansions);
     ui.set_plugin_color_picker(settings.plugin_color_picker);
     ui.set_plugin_calculator(settings.plugin_calculator);
+    ui.set_plugin_git_commits(settings.plugin_git_commits);
     load_snippets_into_ui(&ui);
 
     if let Some(w_path) = get_desktop_wallpaper_path() {
@@ -339,6 +340,7 @@ pub fn run_settings_window() {
             s.plugin_text_expansions = ui.get_plugin_text_expansions();
             s.plugin_color_picker = ui.get_plugin_color_picker();
             s.plugin_calculator = ui.get_plugin_calculator();
+            s.plugin_git_commits = ui.get_plugin_git_commits();
             s.save();
             ui.set_hotkey_available(true);
             ui.set_hotkey_error(SharedString::from("Hotkey available and saved."));
@@ -351,7 +353,12 @@ pub fn run_settings_window() {
 
             std::thread::spawn(move || {
                 crate::settings_startup::sync_run_on_startup(run_on_startup);
-                save_ai_settings(&api_key.trim(), &endpoint.trim(), &model.trim(), always_approve);
+                save_ai_settings(
+                    &api_key.trim(),
+                    &endpoint.trim(),
+                    &model.trim(),
+                    always_approve,
+                );
             });
 
             if let Some(hwnd) = find_launcher_hwnd() {
@@ -368,11 +375,15 @@ pub fn run_settings_window() {
     });
 
     ui.on_open_url(move |url| {
-        let url_wide: Vec<u16> = url.as_str().encode_utf16().chain(std::iter::once(0)).collect();
+        let url_wide: Vec<u16> = url
+            .as_str()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         use windows::core::{w, PCWSTR};
+        use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        use windows::Win32::Foundation::HWND;
         unsafe {
             let _ = ShellExecuteW(
                 HWND::default(),

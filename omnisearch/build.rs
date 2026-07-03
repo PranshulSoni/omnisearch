@@ -2,6 +2,9 @@ fn main() {
     println!("cargo:rerun-if-changed=ui/settings.slint");
     println!("cargo:rerun-if-changed=../icons/OmniSearchTrans.ico");
     println!("cargo:rerun-if-changed=../icons/OmniSearchTrans.png");
+    println!("cargo:rerun-if-changed=../icons/OmniSearchTrans_small.png");
+    println!("cargo:rerun-if-changed=../icons/OmniSearchTrans_16.png");
+    println!("cargo:rerun-if-changed=../icons/OmniSearchTrans_32.png");
 
     slint_build::compile("ui/settings.slint").unwrap();
 

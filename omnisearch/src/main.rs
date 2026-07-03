@@ -102,7 +102,7 @@ unsafe fn setup_tray_icon(
     nid.uID = 1;
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
-    let hicon = unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans.png"), 16) };
+    let hicon = unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans_16.png"), 16) };
     nid.hIcon = hicon;
     let tip = "OmniSearch".encode_utf16().collect::<Vec<u16>>();
     for (i, &c) in tip.iter().enumerate().take(127) {
@@ -808,7 +808,7 @@ unsafe fn run(first_settings_run: bool) {
     let icon_clipboard = load_icon_from_dll("shell32.dll", 260, 64);
     let icon_memory = load_icon_from_dll("shell32.dll", 238, 64);
     let icon_agent = load_png_to_hicon(
-        include_bytes!("../../icons/AgentLogo.png"),
+        include_bytes!("../../icons/OmniSearchTrans_small.png"),
         AGENT_ICON_SIZE as u32,
     );
     let icon_agent_chat = load_png_to_hicon(
@@ -1047,10 +1047,9 @@ unsafe fn run(first_settings_run: bool) {
         configure_hermes_llm(&cfg.endpoint, &cfg.model, &cfg.api_key);
     }
 
-    let icon_main =
-        unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans.png"), 32) };
+    let icon_main = unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans_32.png"), 32) };
     let icon_main_sm =
-        unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans.png"), 16) };
+        unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans_16.png"), 16) };
 
     let class: Vec<u16> = "omnisearch\0".encode_utf16().collect();
     let wc = WNDCLASSEXW {
@@ -1212,7 +1211,9 @@ unsafe fn run(first_settings_run: bool) {
         indexer::start_indexer(db_path.clone());
         indexer::start_watcher(db_path.clone()); // instant indexing of new/changed files
         browser_indexer::start_browser_indexer(db_path.clone());
-        git_indexer::start_git_indexer(db_path.clone());
+        if crate::settings::AppSettings::load().plugin_git_commits {
+            git_indexer::start_git_indexer(db_path.clone());
+        }
 
         let db_path_for_timeline = db_path.clone();
         let hwnd_for_timeline = SendHwnd(HWND(hwnd_usize as *mut std::ffi::c_void));
@@ -4902,6 +4903,9 @@ fn plugin_execution_allowed(source: &str, cmd: &str) -> bool {
     }
     if cmd == "action:circle_to_search" {
         return settings.plugin_circle_search;
+    }
+    if source == "COMMIT" || cmd == "commits:" {
+        return settings.plugin_git_commits;
     }
     true
 }
@@ -9348,6 +9352,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 }
 
 fn default_homepage_results() -> Vec<crate::search::SearchResult> {
+    let settings = crate::settings::AppSettings::load();
     let items = [
         (
             "Browser Bookmarks",
@@ -9380,6 +9385,9 @@ fn default_homepage_results() -> Vec<crate::search::SearchResult> {
 
     items
         .into_iter()
+        .filter(|(_, _, cmd, src)| {
+            settings.plugin_git_commits || !(*cmd == "commits:" || *src == "HOMEPAGE_GIT")
+        })
         .enumerate()
         .map(|(i, (name, path, cmd, src))| crate::search::SearchResult {
             score: 1.0 - (i as f32 * 0.01),
@@ -10372,7 +10380,6 @@ unsafe fn copy_image_to_clipboard(hwnd: HWND, file_path: &str) -> bool {
     }
     copied
 }
-
 
 fn image_to_dib_bytes(image: image::DynamicImage) -> Option<Vec<u8>> {
     let rgba = image.into_rgba8();

@@ -87,6 +87,9 @@ pub struct AppSettings {
 
     #[serde(default = "default_true")]
     pub plugin_calculator: bool,
+
+    #[serde(default = "default_true")]
+    pub plugin_git_commits: bool,
 }
 
 impl Default for AppSettings {
@@ -118,6 +121,7 @@ impl Default for AppSettings {
             plugin_text_expansions: default_true(),
             plugin_color_picker: default_true(),
             plugin_calculator: default_true(),
+            plugin_git_commits: default_true(),
         }
     }
 }
@@ -266,5 +270,15 @@ impl AppSettings {
             _ => "Dark",
         }
         .to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_commits_plugin_defaults_on() {
+        assert!(AppSettings::default().plugin_git_commits);
     }
 }

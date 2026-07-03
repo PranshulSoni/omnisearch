@@ -425,6 +425,9 @@ fn plugin_allowed(r: &SearchResult, settings: &crate::settings::AppSettings) -> 
     if cmd == "action:circle_to_search" {
         return settings.plugin_circle_search;
     }
+    if source == "COMMIT" || cmd == "commits:" {
+        return settings.plugin_git_commits;
+    }
     true
 }
 
@@ -3216,14 +3219,32 @@ impl SearchEngine {
         let plugin_settings = crate::settings::AppSettings::load();
         results.retain(|r| plugin_allowed(r, &plugin_settings));
         if results.is_empty() {
-            if let Some(empty) = empty_scope_result(query) {
-                return vec![empty];
+            if !(query.trim().to_ascii_lowercase().starts_with("commits:")
+                && !plugin_settings.plugin_git_commits)
+            {
+                if let Some(empty) = empty_scope_result(query) {
+                    return vec![empty];
+                }
             }
         }
         results
     }
 
     fn search_raw_with_fts(
+        &mut self,
+        query: &str,
+        top_k: usize,
+        with_fts: bool,
+    ) -> Vec<SearchResult> {
+        if query.trim().to_ascii_lowercase().starts_with("commits:")
+            && !crate::settings::AppSettings::load().plugin_git_commits
+        {
+            return Vec::new();
+        }
+        self.search_raw_with_fts_inner(query, top_k, with_fts)
+    }
+
+    fn search_raw_with_fts_inner(
         &mut self,
         query: &str,
         top_k: usize,
@@ -8630,8 +8651,11 @@ fn try_pct_of(s: &str) -> Option<f64> {
     // reuse an offset from a lowercased copy to slice the original string.
     let needle = b"% of ";
     let bytes = s.as_bytes();
-    let idx = (0..bytes.len().saturating_sub(needle.len() - 1))
-        .find(|&i| bytes[i..].get(..needle.len()).map_or(false, |w| w.eq_ignore_ascii_case(needle)))?;
+    let idx = (0..bytes.len().saturating_sub(needle.len() - 1)).find(|&i| {
+        bytes[i..]
+            .get(..needle.len())
+            .map_or(false, |w| w.eq_ignore_ascii_case(needle))
+    })?;
     let pct_str = s[..idx].trim();
     let rest_str = s[idx + needle.len()..].trim();
     let pct: f64 = pct_str.parse().ok()?;
