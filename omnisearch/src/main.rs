@@ -102,20 +102,7 @@ unsafe fn setup_tray_icon(
     nid.uID = 1;
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
-    let hicon = unsafe {
-        let hinst = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap();
-        windows::Win32::UI::WindowsAndMessaging::LoadImageW(
-            hinst,
-            windows::core::PCWSTR(1 as *const u16),
-            windows::Win32::UI::WindowsAndMessaging::IMAGE_ICON,
-            16,
-            16,
-            windows::Win32::UI::WindowsAndMessaging::LR_DEFAULTCOLOR,
-        )
-        .ok()
-        .map(|h| HICON(h.0))
-        .unwrap_or(HICON(null_mut()))
-    };
+    let hicon = unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans.png"), 16) };
     nid.hIcon = hicon;
     let tip = "OmniSearch".encode_utf16().collect::<Vec<u16>>();
     for (i, &c) in tip.iter().enumerate().take(127) {
@@ -1060,32 +1047,10 @@ unsafe fn run(first_settings_run: bool) {
         configure_hermes_llm(&cfg.endpoint, &cfg.model, &cfg.api_key);
     }
 
-    let icon_main = unsafe {
-        windows::Win32::UI::WindowsAndMessaging::LoadImageW(
-            hinst.into(),
-            windows::core::PCWSTR(1 as *const u16),
-            windows::Win32::UI::WindowsAndMessaging::IMAGE_ICON,
-            32,
-            32,
-            windows::Win32::UI::WindowsAndMessaging::LR_DEFAULTCOLOR,
-        )
-        .ok()
-        .map(|h| HICON(h.0))
-        .unwrap_or(HICON(null_mut()))
-    };
-    let icon_main_sm = unsafe {
-        windows::Win32::UI::WindowsAndMessaging::LoadImageW(
-            hinst.into(),
-            windows::core::PCWSTR(1 as *const u16),
-            windows::Win32::UI::WindowsAndMessaging::IMAGE_ICON,
-            16,
-            16,
-            windows::Win32::UI::WindowsAndMessaging::LR_DEFAULTCOLOR,
-        )
-        .ok()
-        .map(|h| HICON(h.0))
-        .unwrap_or(HICON(null_mut()))
-    };
+    let icon_main =
+        unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans.png"), 32) };
+    let icon_main_sm =
+        unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans.png"), 16) };
 
     let class: Vec<u16> = "omnisearch\0".encode_utf16().collect();
     let wc = WNDCLASSEXW {
