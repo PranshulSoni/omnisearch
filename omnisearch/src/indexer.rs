@@ -42,7 +42,21 @@ fn extract_content(path: &Path, ext: &str) -> Option<String> {
     }
 }
 
-/// True if any path component is an ignored directory (node_modules, .git, appdata, temp…).
+fn wait_for_file_lock(path: &Path) -> bool {
+    if !path.exists() || !path.is_file() {
+        return false;
+    }
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(3);
+    while start.elapsed() < timeout {
+        if std::fs::OpenOptions::new().read(true).open(path).is_ok() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    false
+}
+
 fn path_in_ignored_dir(path: &Path) -> bool {
     path.components()
         .any(|c| c.as_os_str().to_str().map(is_ignored_dir).unwrap_or(false))
@@ -51,6 +65,17 @@ fn path_in_ignored_dir(path: &Path) -> bool {
 /// Index a single file immediately: upsert name/meta, plus content/OCR for indexable types.
 /// Used by the filesystem watcher so new files are searchable in milliseconds.
 fn index_one_file(conn: &Connection, path: &Path) {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if is_indexable_content(&ext) {
+        if !wait_for_file_lock(path) {
+            log_indexer(&format!("Watcher: File lock timeout for {:?}", path));
+            return;
+        }
+    }
     let meta = match std::fs::metadata(path) {
         Ok(m) if m.is_file() => m,
         _ => return,
@@ -64,11 +89,6 @@ fn index_one_file(conn: &Connection, path: &Path) {
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
     if name.is_empty() || is_ignored_file(&name, &ext) {
         return;
     }
