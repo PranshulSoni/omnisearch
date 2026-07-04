@@ -93,6 +93,10 @@ pub(crate) const WM_SET_HOTKEY_RECORDING: u32 = WM_USER + 11;
 pub(crate) const WM_LAUNCH_AGENT: u32 = WM_USER + 12;
 const WM_OCR_RESULT: u32 = WM_USER + 13;
 
+fn clipboard_ocr_empty_message() -> &'static str {
+    "No readable text found in the clipboard image"
+}
+
 unsafe fn setup_tray_icon(
     hwnd: windows::Win32::Foundation::HWND,
     _hinst: windows::Win32::Foundation::HMODULE,
@@ -3785,8 +3789,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                             trigger_search(hwnd, s);
                         }
                         None => {
-                            s.query = "No readable image on clipboard (copy a picture first)"
-                                .to_string();
+                            s.query = clipboard_ocr_empty_message().to_string();
                             s.cursor_pos = s.query.len();
                             s.reset_results();
                         }
@@ -11196,7 +11199,10 @@ unsafe fn save_clipboard_image(
     db_path: &std::path::Path,
     source_app: &str,
 ) -> Option<String> {
-    let bmp_bytes = capture_clipboard_bmp_bytes(hwnd)?;
+    let Some(bmp_bytes) = capture_clipboard_bmp_bytes(hwnd) else {
+        applog::log("clipboard OCR: no supported clipboard image format found");
+        return None;
+    };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -11287,9 +11293,15 @@ unsafe fn ocr_clipboard_image_with_win32_fallback(hwnd: HWND) -> Option<String> 
             .unwrap_or_default()
             .as_nanos()
     ));
-    std::fs::write(&path, bmp_bytes).ok()?;
+    if let Err(err) = std::fs::write(&path, bmp_bytes) {
+        applog::log(&format!("clipboard OCR: temp image write failed: {}", err));
+        return None;
+    }
     let result = indexer::ocr_image_file(&path);
     let _ = std::fs::remove_file(path);
+    if result.is_none() {
+        applog::log("clipboard OCR: OCR completed without readable text");
+    }
     result
 }
 
@@ -12445,6 +12457,12 @@ mod tests {
         assert_eq!(clipboard_bitmap_byte_len(20, -1), None);
         assert_eq!(clipboard_bitmap_byte_len(7000, 20), None);
         assert_eq!(clipboard_bitmap_byte_len(6000, 6000), None);
+    }
+
+    #[test]
+    fn clipboard_ocr_empty_message_mentions_text_not_missing_image() {
+        assert!(clipboard_ocr_empty_message().contains("readable text"));
+        assert!(!clipboard_ocr_empty_message().contains("copy a picture"));
     }
 
     #[test]
