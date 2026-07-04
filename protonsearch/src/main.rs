@@ -69,9 +69,11 @@ const HEIGHT_ANIM_MS: u128 = 90;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
 fn launcher_width_for_work_area(work_w: i32, desired_w: i32) -> i32 {
-    // ponytail: one clamp keeps the existing Appearance width setting useful without adding
-    // per-monitor profiles. Upgrade path: store widths per monitor ID if users need that.
-    let desired_w = desired_w.clamp(MIN_WIN_W, DEFAULT_WIN_W);
+    let desired_w = if work_w < 1400 {
+        desired_w.min(600).max(MIN_WIN_W)
+    } else {
+        desired_w.clamp(MIN_WIN_W, DEFAULT_WIN_W)
+    };
     let available_w = (work_w - SCREEN_EDGE_GAP).max(1);
     desired_w.min(available_w).max(240).min(work_w.max(1))
 }
@@ -486,7 +488,11 @@ impl State {
             return 3;
         }
         let calculated = (limit / item_h) as usize;
-        calculated.clamp(3, 8)
+        if work_h < 800 {
+            calculated.clamp(3, 5)
+        } else {
+            calculated.clamp(3, 8)
+        }
     }
     fn launcher_x(&self, client_w: i32) -> i32 {
         (client_w - self.launcher_w) / 2
@@ -12114,7 +12120,7 @@ mod tests {
     fn launcher_width_honors_setting_and_small_screens() {
         assert_eq!(launcher_width_for_work_area(1920, 720), 720);
         assert_eq!(launcher_width_for_work_area(1920, 1000), DEFAULT_WIN_W);
-        assert_eq!(launcher_width_for_work_area(640, 720), 608);
+        assert_eq!(launcher_width_for_work_area(640, 720), 600);
         assert_eq!(launcher_width_for_work_area(300, 720), 268);
     }
 
