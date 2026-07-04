@@ -2677,6 +2677,40 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                         }
                         return LRESULT(0);
                     }
+                    0x4F => {
+                        // Ctrl + O (OCR selected clipboard image)
+                        let maybe_path = s.results.get(s.selected)
+                            .and_then(|r| r.entry.launch_command.strip_prefix("copy_image:"))
+                            .map(|p| p.to_string());
+                        if let Some(path_owned) = maybe_path {
+                            s.query = "Scanning image…".to_string();
+                            s.cursor_pos = s.query.len();
+                            s.reset_results();
+                            reset_cursor_blink(hwnd, s);
+                            let _ = InvalidateRect(hwnd, None, FALSE);
+                            let hwnd_ocr = hwnd.0 as usize;
+                            std::thread::spawn(move || {
+                                let _ = unsafe {
+                                    windows::Win32::System::Com::CoInitializeEx(
+                                        None,
+                                        windows::Win32::System::Com::COINIT_MULTITHREADED,
+                                    )
+                                };
+                                let result = indexer::ocr_image_file(std::path::Path::new(&path_owned));
+                                unsafe { windows::Win32::System::Com::CoUninitialize(); }
+                                let ptr = Box::into_raw(Box::new(result));
+                                let _ = unsafe {
+                                    windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                                        windows::Win32::Foundation::HWND(hwnd_ocr as *mut std::ffi::c_void),
+                                        WM_OCR_RESULT,
+                                        WPARAM(0),
+                                        LPARAM(ptr as isize),
+                                    )
+                                };
+                            });
+                        }
+                        return LRESULT(0);
+                    }
                     _ => {}
                 }
             }
@@ -5870,6 +5904,40 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                     s.reset_results();
                     let _ = InvalidateRect(hwnd, None, FALSE);
                 }
+                return;
+            } else if let Some(path) = cmd.strip_prefix("ocr_image_file:") {
+                // OCR a saved clipboard image file (e.g., a screenshot saved in clipboard_images/).
+                // Runs on a background MTA thread to avoid deadlocking the STA window thread.
+                let path_owned = path.to_string();
+                let hwnd_ocr = hwnd.0 as usize;
+                std::thread::spawn(move || {
+                    let _ = unsafe {
+                        windows::Win32::System::Com::CoInitializeEx(
+                            None,
+                            windows::Win32::System::Com::COINIT_MULTITHREADED,
+                        )
+                    };
+                    let result = indexer::ocr_image_file(std::path::Path::new(&path_owned));
+                    unsafe {
+                        windows::Win32::System::Com::CoUninitialize();
+                    }
+                    let ptr = Box::into_raw(Box::new(result));
+                    let _ = unsafe {
+                        windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                            windows::Win32::Foundation::HWND(
+                                hwnd_ocr as *mut std::ffi::c_void,
+                            ),
+                            WM_OCR_RESULT,
+                            WPARAM(0),
+                            LPARAM(ptr as isize),
+                        )
+                    };
+                });
+                s.query = "Scanning image…".to_string();
+                s.cursor_pos = s.query.len();
+                s.reset_results();
+                reset_cursor_blink(hwnd, s);
+                let _ = InvalidateRect(hwnd, None, FALSE);
                 return;
             } else if cmd == "action:ocr_clipboard" {
                 // Offload blocking WinRT OCR to a background MTA thread to avoid

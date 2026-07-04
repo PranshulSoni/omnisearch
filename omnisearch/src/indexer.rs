@@ -37,7 +37,7 @@ fn extract_content(path: &Path, ext: &str) -> Option<String> {
     } else if ext == "docx" {
         safe_extract_docx_text(path)
     } else if IMAGE_EXTENSIONS.contains(&ext) {
-        extract_ocr_text(path)
+        ocr_image_file(path)
     } else {
         None
     }
@@ -1053,7 +1053,64 @@ fn read_text_file(path: &Path) -> std::io::Result<String> {
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
-fn extract_ocr_text(path: &Path) -> Option<String> {
+/// OCR the image currently on the clipboard, entirely in memory (no file is ever saved).
+/// Uses the same WinRT OcrEngine as the file path, but sources the SoftwareBitmap straight
+/// from the clipboard bitmap stream. Returns None if there's no image or no text found.
+pub fn ocr_clipboard_image() -> Option<String> {
+    use windows::ApplicationModel::DataTransfer::{Clipboard, StandardDataFormats};
+    use windows::Graphics::Imaging::{
+        BitmapAlphaMode, BitmapDecoder, BitmapPixelFormat, SoftwareBitmap,
+    };
+    use windows::core::Interface;
+    use windows::Media::Ocr::OcrEngine;
+    use windows::Storage::Streams::IRandomAccessStream;
+
+    let content = Clipboard::GetContent().ok()?;
+    let bitmap_format = StandardDataFormats::Bitmap().ok()?;
+    if !content.Contains(&bitmap_format).unwrap_or(false) {
+        return None;
+    }
+    // RandomAccessStreamReference -> a readable stream of the clipboard bitmap.
+    let stream_ref = content.GetBitmapAsync().ok()?.get().ok()?;
+    let stream = stream_ref.OpenReadAsync().ok()?.get().ok()?;
+    let stream: IRandomAccessStream = stream.cast().ok()?;
+
+    let decoder = BitmapDecoder::CreateAsync(&stream).ok()?.get().ok()?;
+    // Guard against absurdly large pastes (OOM protection, same spirit as the file path).
+    if decoder.PixelWidth().unwrap_or(9999) > 6000 || decoder.PixelHeight().unwrap_or(9999) > 6000
+    {
+        return None;
+    }
+    let raw = decoder.GetSoftwareBitmapAsync().ok()?.get().ok()?;
+
+    // WinRT OCR requires Bgra8 + premultiplied alpha.
+    let fmt_ok = raw.BitmapPixelFormat().ok() == Some(BitmapPixelFormat::Bgra8);
+    let alpha_ok = raw.BitmapAlphaMode().ok() == Some(BitmapAlphaMode::Premultiplied);
+    let bitmap = if fmt_ok && alpha_ok {
+        raw
+    } else {
+        SoftwareBitmap::ConvertWithAlpha(
+            &raw,
+            BitmapPixelFormat::Bgra8,
+            BitmapAlphaMode::Premultiplied,
+        )
+        .ok()?
+    };
+
+    let engine = OcrEngine::TryCreateFromUserProfileLanguages().ok()?;
+    let result = engine.RecognizeAsync(&bitmap).ok()?.get().ok()?;
+    let text = result.Text().ok()?.to_string();
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// OCR text from a saved image file on disk. Reuses the same WinRT OcrEngine pipeline
+/// as the background indexer, but callable on demand (e.g., from a clipboard image result).
+pub fn ocr_image_file(path: &Path) -> Option<String> {
     use windows::core::HSTRING;
     use windows::Graphics::Imaging::{
         BitmapAlphaMode, BitmapDecoder, BitmapPixelFormat, SoftwareBitmap,
