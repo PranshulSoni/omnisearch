@@ -471,6 +471,23 @@ impl State {
     fn item_h(&self) -> i32 {
         self.app_settings.item_height as i32
     }
+    fn visible_results(&self) -> usize {
+        let work_h = if self.cy * 2 < 400 {
+            400
+        } else if self.cy == unsafe { GetSystemMetrics(SM_CYSCREEN) } / 3 {
+            self.cy * 3 - 48
+        } else {
+            self.cy * 2
+        };
+        let search_h = self.search_h();
+        let item_h = self.item_h();
+        let limit = work_h - 189 - search_h;
+        if limit <= 0 {
+            return 3;
+        }
+        let calculated = (limit / item_h) as usize;
+        calculated.clamp(3, 8)
+    }
     fn launcher_x(&self, client_w: i32) -> i32 {
         (client_w - self.launcher_w) / 2
     }
@@ -538,13 +555,14 @@ impl State {
         if self.form_state != FormState::None {
             return self.search_h() + 24;
         }
+        let vr = self.visible_results();
         if self.query.is_empty() {
-            return homepage_win_h(self.search_h(), self.item_h(), self.results.len());
+            return homepage_win_h(self.search_h(), self.item_h(), self.results.len(), vr);
         }
         if self.has_prefix() {
-            scoped_results_win_h(self.search_h(), self.item_h(), self.results.len())
+            scoped_results_win_h(self.search_h(), self.item_h(), self.results.len(), vr)
         } else {
-            normal_search_win_h(self.search_h(), self.item_h(), self.results.len())
+            normal_search_win_h(self.search_h(), self.item_h(), self.results.len(), vr)
         }
     }
     fn paint_win_h(&self) -> i32 {
@@ -1095,9 +1113,9 @@ unsafe fn run(first_settings_run: bool) {
         unfiltered_results: default_homepage_results(),
         search_loading: false,
         search_anim_tick: 0,
-        shown_h: homepage_win_h(60, 68, 8),
-        target_h: homepage_win_h(60, 68, 8),
-        height_anim_from: homepage_win_h(60, 68, 8),
+        shown_h: homepage_win_h(60, 68, 8, 8),
+        target_h: homepage_win_h(60, 68, 8, 8),
+        height_anim_from: homepage_win_h(60, 68, 8, 8),
         height_anim_started: std::time::Instant::now(),
         placeholder_override: None,
     });
@@ -2044,9 +2062,10 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                         } else {
                             s.selected = s.selected.min(s.results.len() - 1);
                         }
+                        let vr = s.visible_results();
                         s.scroll_offset = s
                             .scroll_offset
-                            .min(s.results.len().saturating_sub(VISIBLE_RESULTS));
+                            .min(s.results.len().saturating_sub(vr));
                     }
 
                     // Clear stale WINDOW icon cache when new window results arrive
@@ -3163,8 +3182,9 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                         let _ = InvalidateRect(hwnd, None, FALSE);
                     } else if !s.results.is_empty() {
                         s.selected = (s.selected + 1).min(s.results.len() - 1);
-                        if s.selected >= s.scroll_offset + VISIBLE_RESULTS {
-                            s.scroll_offset = s.selected - (VISIBLE_RESULTS - 1);
+                        let vr = s.visible_results();
+                        if s.selected >= s.scroll_offset + vr {
+                            s.scroll_offset = s.selected - (vr - 1);
                         }
                         if s.query.is_empty() {
                             s.homepage_sel = s.selected;
@@ -3236,14 +3256,16 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                     // Scroll up
                     if s.scroll_offset > 0 {
                         s.scroll_offset -= 1;
-                        if s.selected >= s.scroll_offset + VISIBLE_RESULTS {
-                            s.selected = s.scroll_offset + VISIBLE_RESULTS - 1;
+                        let vr = s.visible_results();
+                        if s.selected >= s.scroll_offset + vr {
+                            s.selected = s.scroll_offset + vr - 1;
                         }
                         let _ = InvalidateRect(hwnd, None, FALSE);
                     }
                 } else {
                     // Scroll down
-                    if s.scroll_offset + VISIBLE_RESULTS < s.results.len() {
+                    let vr = s.visible_results();
+                    if s.scroll_offset + vr < s.results.len() {
                         s.scroll_offset += 1;
                         if s.selected < s.scroll_offset {
                             s.selected = s.scroll_offset;
@@ -3424,8 +3446,8 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                                 s.selected = 0;
                                 s.scroll_offset = 0;
                             } else {
-                                s.selected = s.selected.min(s.results.len() - 1);
-                                s.scroll_offset = s.scroll_offset.min(s.results.len().saturating_sub(VISIBLE_RESULTS));
+                                let vr = s.visible_results();
+                                s.scroll_offset = s.scroll_offset.min(s.results.len().saturating_sub(vr));
                             }
                             sync_height_animation(hwnd, s);
                             let _ = InvalidateRect(hwnd, None, FALSE);
@@ -3468,7 +3490,8 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 s.submenu_active = false;
                 let _ = InvalidateRect(hwnd, None, FALSE);
             }
-            let n = (s.results.len().saturating_sub(s.scroll_offset)).min(VISIBLE_RESULTS);
+            let vr = s.visible_results();
+            let n = (s.results.len().saturating_sub(s.scroll_offset)).min(vr);
             for i in 0..n {
                 let r = s.result_rect(i);
                 if my >= r.top && my < r.bottom {
@@ -3568,7 +3591,8 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 }
 
                 let mut new_hover_item = None;
-                let n = (s.results.len().saturating_sub(s.scroll_offset)).min(VISIBLE_RESULTS);
+                let vr = s.visible_results();
+                let n = (s.results.len().saturating_sub(s.scroll_offset)).min(vr);
                 for i in 0..n {
                     let r = s.result_rect(i);
                     if my >= r.top && my < r.bottom {
@@ -6357,24 +6381,24 @@ fn results_invalidation_rect(
     }
 }
 
-fn visible_row_count(result_count: usize) -> i32 {
-    result_count.clamp(1, VISIBLE_RESULTS) as i32
+fn visible_row_count(result_count: usize, max_results: usize) -> i32 {
+    result_count.clamp(1, max_results) as i32
 }
 
-fn homepage_win_h(search_h: i32, item_h: i32, result_count: usize) -> i32 {
-    search_h + 1 + LABEL_HEADER_H + visible_row_count(result_count) * item_h + 8
+fn homepage_win_h(search_h: i32, item_h: i32, result_count: usize, max_results: usize) -> i32 {
+    search_h + 1 + LABEL_HEADER_H + visible_row_count(result_count, max_results) * item_h + 8
 }
 
 fn launcher_top_y(cy: i32, current_h: i32) -> i32 {
     cy - current_h / 2
 }
 
-fn normal_search_win_h(search_h: i32, item_h: i32, result_count: usize) -> i32 {
-    search_h + 1 + CONTENT_HEADER_H + visible_row_count(result_count) * item_h + 8
+fn normal_search_win_h(search_h: i32, item_h: i32, result_count: usize, max_results: usize) -> i32 {
+    search_h + 1 + CONTENT_HEADER_H + visible_row_count(result_count, max_results) * item_h + 8
 }
 
-fn scoped_results_win_h(search_h: i32, item_h: i32, result_count: usize) -> i32 {
-    search_h + 1 + LABEL_HEADER_H + visible_row_count(result_count) * item_h + 8
+fn scoped_results_win_h(search_h: i32, item_h: i32, result_count: usize, max_results: usize) -> i32 {
+    search_h + 1 + LABEL_HEADER_H + visible_row_count(result_count, max_results) * item_h + 8
 }
 
 unsafe fn invalidate_search_row(hwnd: HWND, s: &State) {
@@ -8910,7 +8934,8 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     let n = if is_special_mode {
         0
     } else {
-        (s.results.len().saturating_sub(s.scroll_offset)).min(VISIBLE_RESULTS)
+        let vr = s.visible_results();
+        (s.results.len().saturating_sub(s.scroll_offset)).min(vr)
     };
     if !is_special_mode {
         let list_w = if s.submenu_active { w - 240 } else { w };
@@ -9951,15 +9976,16 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
         // Draw scrollbar if there are more results than visible
         let total_results = s.results.len();
-        if total_results > VISIBLE_RESULTS {
+        let vr = s.visible_results();
+        if total_results > vr {
             let track_top = list_y + 8;
             let track_bottom = list_y + n as i32 * s.item_h() - 8;
             let track_h = track_bottom - track_top;
 
-            let thumb_h = ((VISIBLE_RESULTS as f32 / total_results as f32) * track_h as f32) as i32;
+            let thumb_h = ((vr as f32 / total_results as f32) * track_h as f32) as i32;
             let thumb_h = thumb_h.max(24);
 
-            let max_offset = total_results - VISIBLE_RESULTS;
+            let max_offset = total_results - vr;
             let thumb_y = track_top
                 + (s.scroll_offset as f32 / max_offset as f32 * (track_h - thumb_h) as f32) as i32;
 
@@ -12257,22 +12283,22 @@ mod tests {
 
     #[test]
     fn normal_search_height_does_not_depend_on_result_count() {
-        assert_eq!(normal_search_win_h(60, 54, 1), 203);
-        assert_eq!(normal_search_win_h(60, 54, 8), 581);
+        assert_eq!(normal_search_win_h(60, 54, 1, 8), 203);
+        assert_eq!(normal_search_win_h(60, 54, 8, 8), 581);
     }
 
     #[test]
     fn scoped_results_height_matches_homepage_height() {
-        assert_eq!(scoped_results_win_h(60, 54, 2), homepage_win_h(60, 54, 2));
+        assert_eq!(scoped_results_win_h(60, 54, 2, 8), homepage_win_h(60, 54, 2, 8));
         // Homepage/scoped use the compact label header; normal search uses the taller
         // filter + results header, so it is strictly taller for the same row count.
-        assert!(scoped_results_win_h(60, 54, 2) < normal_search_win_h(60, 54, 2));
+        assert!(scoped_results_win_h(60, 54, 2, 8) < normal_search_win_h(60, 54, 2, 8));
     }
 
     #[test]
     fn launcher_top_is_anchored_to_homepage_height() {
         // 60 + 1 + LABEL_HEADER_H(38) + 8*54 + 8 = 539
-        assert_eq!(homepage_win_h(60, 54, 8), 539);
+        assert_eq!(homepage_win_h(60, 54, 8, 8), 539);
         assert_eq!(launcher_top_y(300, 539), 31);
     }
 
