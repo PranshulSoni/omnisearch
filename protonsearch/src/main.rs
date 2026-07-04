@@ -3940,12 +3940,12 @@ unsafe fn get_custom_monitor() -> HMONITOR {
 }
 
 // ── Window lifecycle ──────────────────────────────────────────────────────────
-unsafe fn animate_window(hwnd: HWND, appearing: bool) {
-    let sp = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
-    if sp.is_null() {
-        return;
-    }
-    let s = &mut *sp;
+// Takes `s` from the caller instead of re-deriving `&mut State` from GWLP_USERDATA:
+// both call sites (do_show, start_hide) already hold a live `&mut State` that they
+// use again after this returns, so a second independently-derived reference here
+// would alias it — undefined behavior that the LTO/opt-level=3 build is free to
+// exploit (e.g. caching a stale field value across the call).
+unsafe fn animate_window(hwnd: HWND, s: &mut State, appearing: bool) {
 
     let start_time = std::time::Instant::now();
     let start_p = match (appearing, &s.anim) {
@@ -4139,7 +4139,7 @@ unsafe fn do_show(hwnd: HWND, s: &mut State) {
             }
         }
     }
-    animate_window(hwnd, true);
+    animate_window(hwnd, s, true);
     trigger_search(hwnd, s);
 }
 
@@ -4184,7 +4184,7 @@ unsafe fn reset_launcher_window_position(hwnd: HWND, s: &mut State) {
 unsafe fn start_hide(hwnd: HWND, s: &mut State) {
     // Destroy the in-app note editor so it doesn't ghost over the launcher
     close_note_editor(hwnd, s);
-    animate_window(hwnd, false);
+    animate_window(hwnd, s, false);
     reset_visible_chat_view(hwnd, s);
 }
 
