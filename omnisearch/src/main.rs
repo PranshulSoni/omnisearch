@@ -97,6 +97,19 @@ fn clipboard_ocr_empty_message() -> &'static str {
     "No readable text found in the clipboard image"
 }
 
+fn run_clipboard_ocr<T>(job: impl FnOnce() -> T) -> T {
+    // ponytail: one global OCR lane is enough for clipboard images; upgrade to a real worker
+    // queue if we need progress/cancellation for many long-running image imports.
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let guard = LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let result = job();
+    drop(guard);
+    result
+}
+
 unsafe fn setup_tray_icon(
     hwnd: windows::Win32::Foundation::HWND,
     _hinst: windows::Win32::Foundation::HMODULE,
@@ -2703,8 +2716,9 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                                     )
                                 }
                                 .is_ok();
-                                let result =
-                                    indexer::ocr_image_file(std::path::Path::new(&path_owned));
+                                let result = run_clipboard_ocr(|| {
+                                    indexer::ocr_image_file(std::path::Path::new(&path_owned))
+                                });
                                 if let Some(text) = &result {
                                     if let Ok(conn) = rusqlite::Connection::open(&db_path_ocr) {
                                         let _ =
@@ -5942,7 +5956,9 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                         )
                     }
                     .is_ok();
-                    let result = indexer::ocr_image_file(std::path::Path::new(&path_owned));
+                    let result = run_clipboard_ocr(|| {
+                        indexer::ocr_image_file(std::path::Path::new(&path_owned))
+                    });
                     if let Some(text) = &result {
                         if let Ok(conn) = rusqlite::Connection::open(&db_path_ocr) {
                             let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
@@ -5985,11 +6001,11 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                         )
                     }
                     .is_ok();
-                    let result = unsafe {
+                    let result = run_clipboard_ocr(|| unsafe {
                         ocr_clipboard_image_with_win32_fallback(windows::Win32::Foundation::HWND(
                             hwnd_ocr as *mut std::ffi::c_void,
                         ))
-                    };
+                    });
                     if com_initialized {
                         unsafe {
                             windows::Win32::System::Com::CoUninitialize();
@@ -11253,7 +11269,9 @@ unsafe fn save_clipboard_image(
             )
         }
         .is_ok();
-        if let Some(text) = indexer::ocr_image_file(std::path::Path::new(&ocr_img_path)) {
+        if let Some(text) =
+            run_clipboard_ocr(|| indexer::ocr_image_file(std::path::Path::new(&ocr_img_path)))
+        {
             if let Ok(conn) = rusqlite::Connection::open(&ocr_db_path) {
                 let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
                 let _ = conn.execute(
@@ -11642,15 +11660,15 @@ unsafe fn import_windows_clipboard_history(db_path: &std::path::Path) {
                                                                                         )
                                                                                     }
                                                                                     .is_ok();
-                                                                                    if let Some(text) = indexer::ocr_image_file(std::path::Path::new(&ocr_path)) {
-                                                                                    if let Ok(c) = rusqlite::Connection::open(&ocr_db) {
-                                                                                        let _ = c.busy_timeout(std::time::Duration::from_secs(5));
-                                                                                        let _ = c.execute(
-                                                                                            "UPDATE clipboard_history SET ocr_text = ? WHERE content = ?;",
-                                                                                            rusqlite::params![text, ocr_path],
-                                                                                        );
+                                                                                    if let Some(text) = run_clipboard_ocr(|| indexer::ocr_image_file(std::path::Path::new(&ocr_path))) {
+                                                                                        if let Ok(c) = rusqlite::Connection::open(&ocr_db) {
+                                                                                            let _ = c.busy_timeout(std::time::Duration::from_secs(5));
+                                                                                            let _ = c.execute(
+                                                                                                "UPDATE clipboard_history SET ocr_text = ? WHERE content = ?;",
+                                                                                                rusqlite::params![text, ocr_path],
+                                                                                            );
+                                                                                        }
                                                                                     }
-                                                                                }
                                                                                     if com_initialized {
                                                                                         unsafe {
                                                                                             windows::Win32::System::Com::CoUninitialize();
@@ -12463,6 +12481,11 @@ mod tests {
     fn clipboard_ocr_empty_message_mentions_text_not_missing_image() {
         assert!(clipboard_ocr_empty_message().contains("readable text"));
         assert!(!clipboard_ocr_empty_message().contains("copy a picture"));
+    }
+
+    #[test]
+    fn run_clipboard_ocr_returns_job_result() {
+        assert_eq!(run_clipboard_ocr(|| 42), 42);
     }
 
     #[test]
