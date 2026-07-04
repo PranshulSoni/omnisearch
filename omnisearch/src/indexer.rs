@@ -87,7 +87,7 @@ fn app_db_path() -> PathBuf {
     std::env::var("APPDATA")
         .map(|appdata| {
             PathBuf::from(appdata)
-                .join("omnisearch")
+                .join("protonsearch")
                 .join("file_index.db")
         })
         .unwrap_or_else(|_| PathBuf::from("file_index.db"))
@@ -362,7 +362,7 @@ fn log_indexer(msg: &str) {
     use std::fs::OpenOptions;
     use std::io::Write;
     let log_dir = match std::env::var("APPDATA") {
-        Ok(d) => PathBuf::from(d).join("omnisearch"),
+        Ok(d) => PathBuf::from(d).join("protonsearch"),
         Err(_) => PathBuf::from("."),
     };
     let _ = std::fs::create_dir_all(&log_dir);

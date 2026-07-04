@@ -50,8 +50,8 @@ struct SlintSnippet {
 }
 
 export component SettingsWindow inherits Window {
-    title: "OmniSearch Settings";
-    icon: @image-url("../../icons/OmniSearchTrans_16.png");
+    title: "ProtonSearch Settings";
+    icon: @image-url("../../icons/ProtonSearchTrans_16.png");
     min-width: 860px;
     min-height: 560px;
     preferred-width: 900px;
@@ -150,7 +150,7 @@ export component SettingsWindow inherits Window {
     in-out property <string> update-status: "idle"; // "idle", "checking", "available", "downloading", "ready", "uptodate", "error"
     in-out property <string> update-version: "";
     in-out property <int> update-progress: 0;
-    in-out property <string> app-version: "1.0.5";
+    in-out property <string> app-version: "1.1.0";
 
     // Update callbacks
     callback check-for-updates();
@@ -217,7 +217,7 @@ export component SettingsWindow inherits Window {
                         HorizontalLayout {
                             alignment: center;
                             Image {
-                                source: @image-url("../../icons/OmniSearchTrans_small.png");
+                                source: @image-url("../../icons/ProtonSearchTrans_small.png");
                                 width: 64px;
                                 height: 64px;
                                 image-fit: contain;
@@ -227,7 +227,7 @@ export component SettingsWindow inherits Window {
                         HorizontalLayout {
                             alignment: center;
                             Text {
-                                text: "OmniSearch";
+                                text: "ProtonSearch";
                                 font-size: 16px;
                                 font-weight: 700;
                                 color: root.text-primary;
@@ -640,7 +640,7 @@ export component SettingsWindow inherits Window {
                                         alignment: center;
                                         spacing: 2px;
                                         Text { text: "Run on startup"; color: root.text-primary; font-size: 14px; font-weight: 600; }
-                                        Text { text: "Launch OmniSearch when Windows starts"; color: root.text-muted; font-size: 12px; }
+                                        Text { text: "Launch ProtonSearch when Windows starts"; color: root.text-muted; font-size: 12px; }
                                     }
                                     Rectangle { horizontal-stretch: 1; }
                                     VerticalBox {
@@ -690,7 +690,7 @@ export component SettingsWindow inherits Window {
 
                             Rectangle { height: 6px; }
 
-                            // Show taskbar when Omnisearch is opened row
+                            // Show taskbar when ProtonSearch is opened row
                             Rectangle {
                                 background: root.card-bg;
                                 border-radius: 8px;
@@ -705,8 +705,8 @@ export component SettingsWindow inherits Window {
                                     VerticalBox {
                                         alignment: center;
                                         spacing: 2px;
-                                        Text { text: "Show taskbar when Omnisearch is opened"; color: root.text-primary; font-size: 14px; font-weight: 600; }
-                                        Text { text: "Temporarily show taskbar when omnisearch is opened, useful for auto-hidden taskbars"; color: root.text-muted; font-size: 12px; }
+                                        Text { text: "Show taskbar when ProtonSearch is opened"; color: root.text-primary; font-size: 14px; font-weight: 600; }
+                                        Text { text: "Temporarily show taskbar when ProtonSearch is opened, useful for auto-hidden taskbars"; color: root.text-muted; font-size: 12px; }
                                     }
                                     Rectangle { horizontal-stretch: 1; }
                                     VerticalBox {
@@ -1839,7 +1839,7 @@ export component SettingsWindow inherits Window {
                                     VerticalBox {
                                         spacing: 4px;
                                         Text { text: "Add expansion"; color: root.text-primary; font-size: 16px; font-weight: 700; }
-                                        Text { text: "Type the trigger in OmniSearch, press Enter, and the saved text is pasted into the previous app."; color: root.text-muted; font-size: 12px; }
+                                        Text { text: "Type the trigger in ProtonSearch, press Enter, and the saved text is pasted into the previous app."; color: root.text-muted; font-size: 12px; }
                                     }
                                     VerticalBox {
                                         padding: 0; spacing: 12px;

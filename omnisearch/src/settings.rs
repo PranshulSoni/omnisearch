@@ -194,7 +194,7 @@ fn appdata_settings_path() -> Option<PathBuf> {
     let appdata = std::env::var("APPDATA").ok()?;
     Some(
         PathBuf::from(appdata)
-            .join("omnisearch")
+            .join("protonsearch")
             .join("settings.json"),
     )
 }

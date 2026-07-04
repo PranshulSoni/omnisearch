@@ -51,7 +51,7 @@ fn find_repos_recursive(dir: &Path, found: &mut Vec<PathBuf>, depth: usize) {
 fn log_git(msg: &str) {
     if let Ok(appdata) = std::env::var("APPDATA") {
         let log_path = std::path::PathBuf::from(appdata)
-            .join("omnisearch")
+            .join("protonsearch")
             .join("git_indexer.log");
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)

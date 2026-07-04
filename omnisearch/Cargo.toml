@@ -1,10 +1,10 @@
 [package]
-name = "omnisearch"
-version = "1.0.5"
+name = "protonsearch"
+version = "1.1.0"
 edition = "2021"
 
 [[bin]]
-name = "omnisearch"
+name = "protonsearch"
 path = "src/main.rs"
 
 [[bin]]

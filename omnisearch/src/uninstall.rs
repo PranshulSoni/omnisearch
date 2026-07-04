@@ -36,11 +36,14 @@ fn show_message(text: &str, title: &str, is_question: bool) -> bool {
 }
 
 fn kill_processes() {
-    // Terminate omnisearch.exe
-    let _ = Command::new("taskkill")
-        .args(["/F", "/IM", "omnisearch.exe"])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .output();
+    // Terminate protonsearch.exe, plus the legacy omnisearch.exe name in case an old
+    // install is still running under the previous branding.
+    for exe in ["protonsearch.exe", "omnisearch.exe"] {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/IM", exe])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output();
+    }
 
     // Terminate hermes.exe
     let _ = Command::new("taskkill")
@@ -62,7 +65,7 @@ fn cleanup_startup_entries() {
         "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
     let approved_startup_folder_key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\StartupFolder";
 
-    for value in ["omnisearch", "OpenSearchOS"] {
+    for value in ["protonsearch", "omnisearch", "OpenSearchOS"] {
         delete_registry_value(run_key, value);
         delete_registry_value(approved_run_key, value);
     }
@@ -89,8 +92,8 @@ fn main() {
     // Only prompt for confirmation on the initial run
     if !is_cleanup {
         let confirm = show_message(
-            "Are you sure you want to completely uninstall OpenSearch OS?\n\nThis will terminate all running processes and permanently delete all application files, databases, and logs.",
-            "Uninstall OpenSearch OS",
+            "Are you sure you want to completely uninstall ProtonSearch?\n\nThis will terminate all running processes and permanently delete all application files, databases, and logs.",
+            "Uninstall ProtonSearch",
             true
         );
         if !confirm {
@@ -117,15 +120,20 @@ fn main() {
         return;
     }
 
-    // installer.iss installs to {localappdata}\Programs\omnisearch; the old branding
-    // used "OpenSearch OS". Clean both so upgrades from either layout uninstall fully.
+    // installer.iss installs to {localappdata}\Programs\protonsearch; older branding
+    // generations used "omnisearch" and "OpenSearch OS". Clean all so upgrades from any
+    // prior layout uninstall fully.
     let install_dir = PathBuf::from(&local_appdata)
         .join("Programs")
-        .join("omnisearch");
-    let legacy_install_dir = PathBuf::from(&local_appdata)
-        .join("Programs")
-        .join("OpenSearch OS");
-    let data_dir = PathBuf::from(&appdata).join("omnisearch");
+        .join("protonsearch");
+    let legacy_install_dirs: Vec<PathBuf> = ["omnisearch", "OpenSearch OS"]
+        .iter()
+        .map(|name| PathBuf::from(&local_appdata).join("Programs").join(name))
+        .collect();
+    let data_dir = PathBuf::from(&appdata).join("protonsearch");
+    // If the app was never launched after updating, main.rs's startup migration never ran,
+    // so the old data dir may still hold the user's actual index/settings/history.
+    let legacy_data_dir = PathBuf::from(&appdata).join("omnisearch");
 
     let current_exe = std::env::current_exe().unwrap_or_default();
     let current_exe_lower = current_exe.to_string_lossy().to_lowercase();
@@ -134,7 +142,7 @@ fn main() {
     // Self-copy/redirection trick if uninstaller is running inside the install folder
     if !is_cleanup && current_exe_lower.starts_with(&install_dir_lower) {
         let temp_dir = std::env::temp_dir();
-        let temp_exe = temp_dir.join("omnisearch-uninstaller.exe");
+        let temp_exe = temp_dir.join("protonsearch-uninstaller.exe");
 
         if fs::copy(&current_exe, &temp_exe).is_ok() {
             let spawn_res = Command::new(&temp_exe).arg("--run-cleanup").spawn();
@@ -159,21 +167,25 @@ fn main() {
             .status();
     }
 
-    // 2. Clear application data directory (SQLite DB, logs)
+    // 2. Clear application data directory (SQLite DB, logs), including the legacy-branded
+    //    one in case the migration in main.rs never ran (app updated but never launched)
     let _ = delete_dir_with_retry(&data_dir);
+    let _ = delete_dir_with_retry(&legacy_data_dir);
 
-    // 3. Clear installation folder (any leftovers), including the legacy-branded one
+    // 3. Clear installation folder (any leftovers), including every legacy-branded one
     let _ = delete_dir_with_retry(&install_dir);
-    let _ = delete_dir_with_retry(&legacy_install_dir);
+    for dir in &legacy_install_dirs {
+        let _ = delete_dir_with_retry(dir);
+    }
 
-    // 4. Manually purge any lingering shortcuts (current "omnisearch" names and
-    //    the legacy "OpenSearch OS" ones)
+    // 4. Manually purge any lingering shortcuts (current "protonsearch" names and
+    //    every legacy-branded one)
     let start_menu_programs = PathBuf::from(&appdata)
         .join("Microsoft")
         .join("Windows")
         .join("Start Menu")
         .join("Programs");
-    for name in ["omnisearch.lnk", "OpenSearch OS.lnk"] {
+    for name in ["protonsearch.lnk", "omnisearch.lnk", "OpenSearch OS.lnk"] {
         let desktop_lnk = PathBuf::from(&user_profile).join("Desktop").join(name);
         if desktop_lnk.exists() {
             let _ = fs::remove_file(&desktop_lnk);
@@ -183,7 +195,7 @@ fn main() {
             let _ = fs::remove_file(&startup_lnk);
         }
     }
-    for folder in ["omnisearch", "OpenSearch OS"] {
+    for folder in ["protonsearch", "omnisearch", "OpenSearch OS"] {
         let startmenu_folder = start_menu_programs.join(folder);
         if startmenu_folder.exists() {
             let _ = fs::remove_dir_all(&startmenu_folder);
@@ -192,14 +204,14 @@ fn main() {
 
     // Success notification
     show_message(
-        "OpenSearch OS has been successfully uninstalled from your computer.",
+        "ProtonSearch has been successfully uninstalled from your computer.",
         "Uninstall Complete",
         false,
     );
 
     // Self-delete the temp uninstaller executable if running from Temp
     if is_cleanup {
-        let temp_exe = std::env::temp_dir().join("omnisearch-uninstaller.exe");
+        let temp_exe = std::env::temp_dir().join("protonsearch-uninstaller.exe");
         let _ = Command::new("cmd")
             .args([
                 "/c",

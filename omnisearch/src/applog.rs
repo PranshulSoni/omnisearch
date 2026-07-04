@@ -1,13 +1,13 @@
 pub fn log(msg: &str) {
     // Basic diagnostic logging to app_log.txt beside the exe; falls back to
-    // %APPDATA%\omnisearch when the exe dir isn't writable (Program Files),
+    // %APPDATA%\protonsearch when the exe dir isn't writable (Program Files),
     // so diagnostics aren't silently lost on installed copies.
     let exe_path = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("app_log.txt")));
     let appdata_path = std::env::var("APPDATA").ok().map(|a| {
         std::path::PathBuf::from(a)
-            .join("omnisearch")
+            .join("protonsearch")
             .join("app_log.txt")
     });
 

@@ -1,4 +1,4 @@
-//! Minimal AI client for OpenSearch OS — talks to any OpenAI-compatible
+//! Minimal AI client for ProtonSearch — talks to any OpenAI-compatible
 //! chat-completions endpoint (DeepSeek by default). Blocking (ureq), runs on a
 //! worker thread so the UI never stalls.
 
@@ -14,7 +14,7 @@ const DEFAULT_ENDPOINT: &str = "https://api.deepseek.com/chat/completions";
 const DEFAULT_MODEL: &str = "deepseek-chat";
 
 // ── API key resolution ────────────────────────────────────────────────────────
-// Order: env var → %APPDATA%/omnisearch/ai_key.txt → embedded rotated keys → hardcoded constant below.
+// Order: env var → %APPDATA%/protonsearch/ai_key.txt → embedded rotated keys → hardcoded constant below.
 const HARDCODED_KEY: &str = "";
 
 const EMBEDDED_KEYS_RAW: Option<&str> = option_env!("OMNISEARCH_KEYS");
@@ -86,7 +86,7 @@ pub struct AiConfig {
 fn appdata_db_path() -> Option<std::path::PathBuf> {
     std::env::var("APPDATA").ok().map(|a| {
         std::path::PathBuf::from(a)
-            .join("omnisearch")
+            .join("protonsearch")
             .join("file_index.db")
     })
 }
@@ -207,7 +207,7 @@ pub fn get_config() -> Result<AiConfig> {
     if api_key.is_none() {
         if let Ok(appdata) = std::env::var("APPDATA") {
             let p = std::path::Path::new(&appdata)
-                .join("omnisearch")
+                .join("protonsearch")
                 .join("opencode_key.txt");
             if let Ok(s) = std::fs::read_to_string(&p) {
                 let k = s.trim().to_string();
@@ -221,7 +221,7 @@ pub fn get_config() -> Result<AiConfig> {
     if api_key.is_none() {
         if let Ok(appdata) = std::env::var("APPDATA") {
             let p = std::path::Path::new(&appdata)
-                .join("omnisearch")
+                .join("protonsearch")
                 .join("ai_key.txt");
             if let Ok(s) = std::fs::read_to_string(&p) {
                 let k = s.trim().to_string();
@@ -278,7 +278,7 @@ pub fn get_config() -> Result<AiConfig> {
     if endpoint.is_none() {
         if let Ok(appdata) = std::env::var("APPDATA") {
             let p = std::path::Path::new(&appdata)
-                .join("omnisearch")
+                .join("protonsearch")
                 .join("ai_endpoint.txt");
             if let Ok(s) = std::fs::read_to_string(&p) {
                 let ep = s.trim().to_string();
@@ -314,7 +314,7 @@ pub fn get_config() -> Result<AiConfig> {
     if model.is_none() {
         if let Ok(appdata) = std::env::var("APPDATA") {
             let p = std::path::Path::new(&appdata)
-                .join("omnisearch")
+                .join("protonsearch")
                 .join("ai_model.txt");
             if let Ok(s) = std::fs::read_to_string(&p) {
                 let m = s.trim().to_string();
@@ -593,7 +593,7 @@ pub fn start_hermes_gateway_daemon() {
     }
 
     if let Ok(appdata) = std::env::var("APPDATA") {
-        let log_dir = std::path::Path::new(&appdata).join("omnisearch");
+        let log_dir = std::path::Path::new(&appdata).join("protonsearch");
         let _ = std::fs::create_dir_all(&log_dir);
         let log_file = log_dir.join("hermes_gateway.log");
         if let Ok(meta) = std::fs::metadata(&log_file) {
@@ -1314,7 +1314,7 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         // Isolate APPDATA to a temporary path to avoid reading host DB/configs
         let old_appdata = std::env::var("APPDATA").ok();
-        let temp_dir = std::env::temp_dir().join("omnisearch-test-appdata");
+        let temp_dir = std::env::temp_dir().join("protonsearch-test-appdata");
         let _ = std::fs::remove_dir_all(&temp_dir); // Clean any stale database/directory
         let _ = std::fs::create_dir_all(&temp_dir);
         std::env::set_var("APPDATA", &temp_dir);
@@ -1359,9 +1359,9 @@ mod tests {
     fn hermes_falls_back_to_opencode_key_when_gateway_is_down() {
         let _guard = TEST_LOCK.lock().unwrap();
         let old_appdata = std::env::var("APPDATA").ok();
-        let temp_dir = std::env::temp_dir().join("omnisearch-test-hermes-fallback");
+        let temp_dir = std::env::temp_dir().join("protonsearch-test-hermes-fallback");
         let _ = std::fs::remove_dir_all(&temp_dir); // Clean any stale database/directory
-        let app_dir = temp_dir.join("omnisearch");
+        let app_dir = temp_dir.join("protonsearch");
         let _ = std::fs::create_dir_all(&app_dir);
         std::env::set_var("APPDATA", &temp_dir);
         std::env::remove_var("OPENCODE_API_KEY");

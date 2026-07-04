@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="icons/OmniSearchLogo.png" alt="OmniSearch logo" width="150" />
+  <img src="icons/ProtonSearchLogo.png" alt="ProtonSearch logo" width="150" />
 </p>
 
-<h1 align="center">OmniSearch</h1>
+<h1 align="center">ProtonSearch</h1>
 
 <p align="center">
   <em>Find everything on your PC. From one shortcut.</em>
@@ -16,21 +16,21 @@
   <a href="https://github.com/PranshulSoni/omnisearch/releases"><img alt="downloads" src="https://img.shields.io/github/downloads/PranshulSoni/omnisearch/total?style=flat-square&label=downloads&color=brightgreen" /></a>
 </p>
 
-OmniSearch is a fast, local-first Windows launcher that helps users find and open anything already on their PC from one keyboard shortcut.
+ProtonSearch is a fast, local-first Windows launcher that helps users find and open anything already on their PC from one keyboard shortcut.
 
 A fast, local-first Windows launcher to search apps, files, browser history, clipboard, OCR text, Git activity, settings, commands, and AI chats from one shortcut.
 
 <p align="center">
-  <img src="icons/Banner.png" alt="OmniSearch banner" />
+  <img src="icons/Banner.png" alt="ProtonSearch banner" />
 </p>
 
-## Why OmniSearch?
+## Why ProtonSearch?
 
 Your work is already on your PC, but Windows spreads it across too many places.
 
 Apps are in Start Menu. Files are in Explorer. Browser pages are hidden in history. Clipboard items disappear. Screenshots need OCR. Git activity lives somewhere else. AI chats become another place to manually search.
 
-OmniSearch brings all of it into one fast, keyboard-first command center. Press `Alt + Space`, type what you remember, and open the right thing instantly.
+ProtonSearch brings all of it into one fast, keyboard-first command center. Press `Alt + Space`, type what you remember, and open the right thing instantly.
 
 ## What Makes It Different?
 
@@ -52,9 +52,9 @@ OmniSearch brings all of it into one fast, keyboard-first command center. Press 
 
 ## Star On GitHub
 
-If OmniSearch looks useful, star the repo so more Windows users can find it:
+If ProtonSearch looks useful, star the repo so more Windows users can find it:
 
-[Star OmniSearch on GitHub](https://github.com/PranshulSoni/omnisearch)
+[Star ProtonSearch on GitHub](https://github.com/PranshulSoni/omnisearch)
 
 ## Installation
 
@@ -66,13 +66,13 @@ If OmniSearch looks useful, star the repo so more Windows users can find it:
 > curl.exe -fsSL https://raw.githubusercontent.com/PranshulSoni/omnisearch/lean-build/scripts/install.ps1 | powershell -NoProfile -ExecutionPolicy Bypass -
 > ```
 >
-> This downloads the latest OmniSearch release from GitHub and opens the Windows installer.
+> This downloads the latest ProtonSearch release from GitHub and opens the Windows installer.
 
-Manual download: get the latest Windows build from the [OmniSearch releases page](https://github.com/PranshulSoni/omnisearch/releases), then run the installer.
+Manual download: get the latest Windows build from the [ProtonSearch releases page](https://github.com/PranshulSoni/omnisearch/releases), then run the installer.
 
 After installation:
 
-1. Launch OmniSearch.
+1. Launch ProtonSearch.
 2. Press `Alt + Space`.
 3. Add or confirm indexed folders in Settings > Database.
 4. Let the first index finish.
@@ -82,7 +82,7 @@ If `Alt + Space` is already used by another app, change the launcher hotkey in S
 
 ## What You Can Search
 
-| Source | What OmniSearch finds |
+| Source | What ProtonSearch finds |
 |---|---|
 | Apps | Installed desktop apps, Microsoft Store apps, and Windows utilities |
 | Files and folders | Indexed local files, folders, recent files, documents, downloads, and projects |
@@ -92,12 +92,12 @@ If `Alt + Space` is already used by another app, change the launcher hotkey in S
 | Clipboard | Text and image clipboard history, pinned clips, multiselect actions, image copy, editing, and bulk cleanup |
 | Git | Repositories, commits, branches, and TODO/FIXME comments |
 | Windows Settings | Modern Windows Settings pages and classic Control Panel pages |
-| Commands | Local OmniSearch actions like clipboard, agents, windows, settings, and system actions |
+| Commands | Local ProtonSearch actions like clipboard, agents, windows, settings, and system actions |
 | Agents | Saved AI agents, agent chats, and AI chat history |
 
 ## Useful Details
 
-OmniSearch also includes smaller workflow features that make it useful every day:
+ProtonSearch also includes smaller workflow features that make it useful every day:
 
 - **Clipboard pinning** — keep important snippets, links, IDs, commands, and copied text at the top of clipboard search.
 - **Clipboard multiselect** — select multiple clipboard items, paste them together, or clean them up in bulk.
@@ -110,9 +110,9 @@ OmniSearch also includes smaller workflow features that make it useful every day
 
 ## Hermes Agents
 
-OmniSearch includes Hermes agent integration for users who want more than search.
+ProtonSearch includes Hermes agent integration for users who want more than search.
 
-Hermes can help with autonomous workflows such as running local tasks, executing approved commands, managing agent chats, and assisting with PC control from inside the launcher. It gives OmniSearch an agent layer without turning the search bar into a chatbot first.
+Hermes can help with autonomous workflows such as running local tasks, executing approved commands, managing agent chats, and assisting with PC control from inside the launcher. It gives ProtonSearch an agent layer without turning the search bar into a chatbot first.
 
 ## Search Prefixes
 
@@ -132,7 +132,7 @@ Prefixes are optional, but useful when you want to search one source directly.
 
 ## Settings App
 
-OmniSearch also includes a settings app for controlling the launcher.
+ProtonSearch also includes a settings app for controlling the launcher.
 
 From settings you can manage:
 
@@ -146,19 +146,19 @@ The app runs from the Windows system tray, so the launcher can stay available in
 
 ## Privacy
 
-OmniSearch is local-first.
+ProtonSearch is local-first.
 
 Runtime data is stored on your PC under:
 
 ```text
-%APPDATA%\omnisearch
+%APPDATA%\protonsearch
 ```
 
 The local database stores indexed metadata, searchable text, browser items, clipboard history, chats, agents, and settings. Expensive or large data is capped where needed so the app stays responsive instead of trying to keep everything in memory.
 
 ## Performance
 
-OmniSearch is a native Rust/Win32 app, not an Electron app.
+ProtonSearch is a native Rust/Win32 app, not an Electron app.
 
 Current implementation details:
 

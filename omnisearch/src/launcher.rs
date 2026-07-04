@@ -344,7 +344,7 @@ fn handle_action(action: &str) {
                     .spawn();
                 if let Ok(appdata) = std::env::var("APPDATA") {
                     let db_path = std::path::PathBuf::from(appdata)
-                        .join("omnisearch")
+                        .join("protonsearch")
                         .join("file_index.db");
                     if let Ok(conn) = rusqlite::Connection::open(db_path) {
                         if let Ok(blocked) = conn.query_row(
@@ -388,7 +388,7 @@ fn handle_action(action: &str) {
         "reveal_logs" => {
             if let Ok(appdata) = std::env::var("APPDATA") {
                 let _ = Command::new("explorer.exe")
-                    .arg(std::path::PathBuf::from(appdata).join("omnisearch"))
+                    .arg(std::path::PathBuf::from(appdata).join("protonsearch"))
                     .spawn();
             }
         }
@@ -407,8 +407,8 @@ fn handle_action(action: &str) {
         "copy_logs" => {
             if let Ok(appdata) = std::env::var("APPDATA") {
                 let log_path = std::path::PathBuf::from(appdata)
-                    .join("omnisearch")
-                    .join("omnisearch.log");
+                    .join("protonsearch")
+                    .join("protonsearch.log");
                 // Escape single quotes for the PS literal ('' inside '...') so an
                 // apostrophe in the user profile path can't break the command.
                 let escaped = log_path.display().to_string().replace('\'', "''");
@@ -444,7 +444,7 @@ fn handle_action(action: &str) {
                 // clipboard_history lives in file_index.db (the app's main DB) — this
                 // previously opened a non-existent "index.db" and silently did nothing.
                 let db_path = std::path::PathBuf::from(appdata)
-                    .join("omnisearch")
+                    .join("protonsearch")
                     .join("file_index.db");
                 if let Ok(conn) = rusqlite::Connection::open(&db_path) {
                     if let Ok(mut stmt) = conn.prepare("SELECT content FROM clipboard_history WHERE is_image = 0 ORDER BY timestamp DESC LIMIT 3") {
@@ -713,7 +713,7 @@ fn get_target_window() -> Option<HWND> {
     };
 
     unsafe {
-        let class: Vec<u16> = "omnisearch\0".encode_utf16().collect();
+        let class: Vec<u16> = "protonsearch\0".encode_utf16().collect();
         let launcher_hwnd = FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()).unwrap_or_default();
         let fg = GetForegroundWindow();
 
@@ -731,7 +731,7 @@ fn get_target_window() -> Option<HWND> {
                     let class_name = String::from_utf16_lossy(&class_buf[..class_len]);
                     if class_name != "Shell_TrayWnd"
                         && class_name != "Progman"
-                        && class_name != "omnisearch"
+                        && class_name != "protonsearch"
                     {
                         let mut title_buf = [0u16; 256];
                         let title_len = GetWindowTextW(c, &mut title_buf) as usize;

@@ -125,9 +125,9 @@ unsafe fn setup_tray_icon(
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     let hicon =
-        unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans_16.png"), 16) };
+        unsafe { load_png_to_hicon(include_bytes!("../../icons/ProtonSearchTrans_16.png"), 16) };
     nid.hIcon = hicon;
-    let tip = "OmniSearch".encode_utf16().collect::<Vec<u16>>();
+    let tip = "ProtonSearch".encode_utf16().collect::<Vec<u16>>();
     for (i, &c) in tip.iter().enumerate().take(127) {
         nid.szTip[i] = c;
     }
@@ -596,13 +596,13 @@ fn enforce_single_instance() -> Option<MutexHandle> {
     use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, WM_COMMAND};
 
     unsafe {
-        let name: Vec<u16> = "Local\\OpenSearchOSInstanceMutex\0"
+        let name: Vec<u16> = "Local\\ProtonSearchInstanceMutex\0"
             .encode_utf16()
             .collect();
         let handle = CreateMutexW(None, true, PCWSTR(name.as_ptr()));
         if let Ok(h) = handle {
             if GetLastError() == ERROR_ALREADY_EXISTS {
-                let class_name: Vec<u16> = "omnisearch\0".encode_utf16().collect();
+                let class_name: Vec<u16> = "protonsearch\0".encode_utf16().collect();
                 if let Ok(hwnd) = FindWindowW(PCWSTR(class_name.as_ptr()), None) {
                     if !hwnd.0.is_null() {
                         let _ = PostMessageW(hwnd, WM_COMMAND, WPARAM(1), LPARAM(0));
@@ -619,6 +619,7 @@ fn enforce_single_instance() -> Option<MutexHandle> {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 fn main() {
+    migrate_legacy_appdata();
     install_panic_logger();
 
     // Clean up .bak files from previous updates on startup
@@ -675,9 +676,24 @@ fn main() {
 }
 
 /// Install a global panic hook that appends the panic message, source location and a
-/// backtrace to %APPDATA%/omnisearch/panic.log. This binary is a windowed app with no
+/// backtrace to %APPDATA%/protonsearch/panic.log. This binary is a windowed app with no
 /// console, so a panic otherwise produces only an opaque 0xC000041D exit with no message.
 /// The hook itself never panics (every fallible call is ignored), so it can't recurse.
+/// One-time migration for the OmniSearch -> ProtonSearch rebrand: if the old
+/// %APPDATA%\omnisearch folder exists and the new one doesn't yet, move it so the search
+/// index, settings, clipboard history, snippets, and AI config carry over instead of every
+/// upgrading user starting fresh. Runs first, before anything else touches the data dir.
+fn migrate_legacy_appdata() {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let base = std::path::Path::new(&appdata);
+        let old_dir = base.join("omnisearch");
+        let new_dir = base.join("protonsearch");
+        if !new_dir.exists() && old_dir.exists() {
+            let _ = std::fs::rename(&old_dir, &new_dir);
+        }
+    }
+}
+
 fn install_panic_logger() {
     std::panic::set_hook(Box::new(|info| {
         use std::io::Write;
@@ -704,7 +720,7 @@ fn install_panic_logger() {
             "\n==== PANIC (epoch {secs}) ====\nthread: {thread}\nlocation: {loc}\nmessage: {msg}\nbacktrace:\n{bt}\n"
         );
         if let Ok(appdata) = std::env::var("APPDATA") {
-            let dir = std::path::Path::new(&appdata).join("omnisearch");
+            let dir = std::path::Path::new(&appdata).join("protonsearch");
             let _ = std::fs::create_dir_all(&dir);
             if let Ok(mut f) = std::fs::OpenOptions::new()
                 .create(true)
@@ -794,7 +810,7 @@ unsafe fn run(first_settings_run: bool) {
 
     let db_path = match std::env::var("APPDATA") {
         Ok(d) => {
-            let path = std::path::PathBuf::from(d).join("omnisearch");
+            let path = std::path::PathBuf::from(d).join("protonsearch");
             let _ = std::fs::create_dir_all(&path);
             path.join("file_index.db")
         }
@@ -1088,11 +1104,11 @@ unsafe fn run(first_settings_run: bool) {
     }
 
     let icon_main =
-        unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans_32.png"), 32) };
+        unsafe { load_png_to_hicon(include_bytes!("../../icons/ProtonSearchTrans_32.png"), 32) };
     let icon_main_sm =
-        unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans_16.png"), 16) };
+        unsafe { load_png_to_hicon(include_bytes!("../../icons/ProtonSearchTrans_16.png"), 16) };
 
-    let class: Vec<u16> = "omnisearch\0".encode_utf16().collect();
+    let class: Vec<u16> = "protonsearch\0".encode_utf16().collect();
     let wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
@@ -1107,7 +1123,7 @@ unsafe fn run(first_settings_run: bool) {
     };
     RegisterClassExW(&wc);
 
-    let preview_class: Vec<u16> = "omnisearch-preview\0".encode_utf16().collect();
+    let preview_class: Vec<u16> = "protonsearch-preview\0".encode_utf16().collect();
     let wc_preview = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
@@ -1585,7 +1601,7 @@ unsafe fn show_preview_window(hwnd_parent: HWND, s: *mut State) {
     }
 
     if (&*s).hwnd_preview.is_none() {
-        let preview_class: Vec<u16> = "omnisearch-preview\0".encode_utf16().collect();
+        let preview_class: Vec<u16> = "protonsearch-preview\0".encode_utf16().collect();
         let hinst = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap();
 
         let hwnd_preview = CreateWindowExW(
@@ -1940,7 +1956,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
             } else {
                 let err = *Box::from_raw(lp.0 as *mut String);
                 let mut msg: Vec<u16> = format!("Engine error:\n{err}\0").encode_utf16().collect();
-                let mut title: Vec<u16> = "OpenSearch OS\0".encode_utf16().collect();
+                let mut title: Vec<u16> = "ProtonSearch\0".encode_utf16().collect();
                 MessageBoxW(
                     HWND(null_mut()),
                     PCWSTR(msg.as_ptr()),
@@ -3741,7 +3757,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
 
                 // Reload filesystem watcher with new folders list
                 let db_path_watcher = match std::env::var("APPDATA") {
-                    Ok(d) => std::path::PathBuf::from(d).join("omnisearch").join("file_index.db"),
+                    Ok(d) => std::path::PathBuf::from(d).join("protonsearch").join("file_index.db"),
                     Err(_) => std::path::PathBuf::from("file_index.db"),
                 };
                 indexer::start_watcher(db_path_watcher);
@@ -4750,7 +4766,7 @@ fn ensure_default_agents(db_path: &std::path::Path) {
 }
 
 fn default_hermes_system_prompt() -> &'static str {
-    "You are Hermes, the user's personal Windows PC assistant inside OmniSearch.\n\
+    "You are Hermes, the user's personal Windows PC assistant inside ProtonSearch.\n\
 You can use the Hermes tools available to you to operate the PC: open apps and files, open browser pages, search the web, run PowerShell or command-line commands, inspect command output, and continue multi-step tasks until the user's request is actually handled.\n\
 Operating rules:\n\
 - Prefer direct Windows actions and built-in commands before asking the user to do manual steps.\n\
@@ -11311,7 +11327,7 @@ unsafe fn ocr_clipboard_image_with_win32_fallback(hwnd: HWND) -> Option<String> 
 
     let bmp_bytes = capture_clipboard_bmp_bytes(hwnd)?;
     let path = std::env::temp_dir().join(format!(
-        "omnisearch_clipboard_ocr_{}.bmp",
+        "protonsearch_clipboard_ocr_{}.bmp",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -12454,9 +12470,9 @@ mod tests {
 
     #[test]
     fn clipboard_image_path_uses_clipboard_images_dir() {
-        let db_path = std::path::PathBuf::from(r"C:\Users\Test\AppData\Roaming\omnisearch\app.db");
+        let db_path = std::path::PathBuf::from(r"C:\Users\Test\AppData\Roaming\protonsearch\app.db");
         let (_, path_str) = clipboard_image_path(&db_path, 123).unwrap();
-        assert!(path_str.ends_with(r"omnisearch\clipboard_images\image_123.bmp"));
+        assert!(path_str.ends_with(r"protonsearch\clipboard_images\image_123.bmp"));
     }
 
     #[test]
@@ -12788,7 +12804,7 @@ unsafe fn handle_form_enter(hwnd: HWND, s: &mut State) {
             if !input.is_empty() {
                 if let Ok(appdata) = std::env::var("APPDATA") {
                     let notes_dir = std::path::PathBuf::from(appdata)
-                        .join("omnisearch")
+                        .join("protonsearch")
                         .join("notes");
                     let _ = std::fs::create_dir_all(&notes_dir);
                     let safe_name = input.replace(|c: char| !c.is_alphanumeric() && c != ' ', "_");

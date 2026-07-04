@@ -71,7 +71,7 @@ unsafe fn create_overlay_window(
     screen_w: i32,
     screen_h: i32,
 ) -> Option<HWND> {
-    let class: Vec<u16> = "omnisearch-circle-search\0".encode_utf16().collect();
+    let class: Vec<u16> = "protonsearch-circle-search\0".encode_utf16().collect();
     let wc = WNDCLASSW {
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(overlay_wndproc),
@@ -404,7 +404,7 @@ unsafe fn bitmap_to_rgba(hbmp: HBITMAP) -> Option<(Vec<u8>, u32, u32)> {
 
 fn upload_to_lens(png: Vec<u8>) {
     let html_path =
-        std::env::temp_dir().join(format!("omnisearch_lens_{}.html", std::process::id()));
+        std::env::temp_dir().join(format!("protonsearch_lens_{}.html", std::process::id()));
     let html = lens_upload_html(&base64_encode(&png));
     if std::fs::write(&html_path, html).is_err() {
         return;

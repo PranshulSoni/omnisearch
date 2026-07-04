@@ -11,7 +11,7 @@ use std::sync::Mutex;
 static UPDATE_URL: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 static DOWNLOADED_PATH: Lazy<Mutex<Option<std::path::PathBuf>>> = Lazy::new(|| Mutex::new(None));
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const DISPLAY_VERSION: &str = "1.0.5";
+const DISPLAY_VERSION: &str = "1.1.0";
 
 fn is_newer_version(current: &str, latest: &str) -> bool {
     let parse = |v: &str| -> Vec<u32> {
@@ -40,7 +40,7 @@ thread_local! {
 fn find_launcher_hwnd() -> Option<HWND> {
     use windows::core::PCWSTR;
     use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
-    let class_name: Vec<u16> = "omnisearch\0".encode_utf16().collect();
+    let class_name: Vec<u16> = "protonsearch\0".encode_utf16().collect();
     if let Ok(hwnd) = unsafe { FindWindowW(PCWSTR(class_name.as_ptr()), None) } {
         if !hwnd.0.is_null() {
             return Some(hwnd);
@@ -124,7 +124,7 @@ pub fn run_settings_window() {
     use windows::Win32::System::Threading::CreateMutexW;
 
     unsafe {
-        let name: Vec<u16> = "Local\\OpenSearchOSSettingsMutex\0"
+        let name: Vec<u16> = "Local\\ProtonSearchSettingsMutex\0"
             .encode_utf16()
             .collect();
         let handle = CreateMutexW(None, true, PCWSTR(name.as_ptr()));
@@ -547,7 +547,7 @@ pub fn run_settings_window() {
                         .is_ok();
                         let appdata = std::env::var("APPDATA").unwrap_or_default();
                         let db_path = std::path::PathBuf::from(appdata)
-                            .join("omnisearch")
+                            .join("protonsearch")
                             .join("file_index.db");
                         let _ = crate::indexer::run_indexer_folders_force(
                             &db_path,
@@ -646,7 +646,7 @@ pub fn run_settings_window() {
     ui.on_rebuild_index(move || {
         let appdata = std::env::var("APPDATA").unwrap_or_default();
         let db_path = std::path::PathBuf::from(appdata)
-            .join("omnisearch")
+            .join("protonsearch")
             .join("file_index.db");
         std::thread::spawn(move || {
             let com_ok = unsafe {
@@ -773,7 +773,7 @@ pub fn run_settings_window() {
                 .unwrap_or(0);
 
             let temp_dir = std::env::temp_dir();
-            let temp_path = temp_dir.join("omnisearch_update.exe");
+            let temp_path = temp_dir.join("protonsearch_update.exe");
 
             let mut file = match std::fs::File::create(&temp_path) {
                 Ok(f) => f,
@@ -845,7 +845,7 @@ pub fn run_settings_window() {
         };
 
         // 1. Ask the main launcher to close gracefully via WM_CLOSE
-        let class_name: Vec<u16> = "omnisearch\0".encode_utf16().collect();
+        let class_name: Vec<u16> = "protonsearch\0".encode_utf16().collect();
         if let Ok(hwnd) = unsafe {
             windows::Win32::UI::WindowsAndMessaging::FindWindowW(
                 windows::core::PCWSTR(class_name.as_ptr()),
@@ -905,7 +905,7 @@ pub fn run_settings_window() {
         // never block the Slint event loop even while the indexer is writing.
         let appdata = std::env::var("APPDATA").unwrap_or_default();
         let db_path = std::path::PathBuf::from(&appdata)
-            .join("omnisearch")
+            .join("protonsearch")
             .join("file_index.db");
 
         let conn = match rusqlite::Connection::open(&db_path) {
@@ -1003,7 +1003,7 @@ fn log_settings_ui(msg: &str) {
     use std::io::Write;
     use std::path::PathBuf;
     let log_dir = match std::env::var("APPDATA") {
-        Ok(d) => PathBuf::from(d).join("omnisearch"),
+        Ok(d) => PathBuf::from(d).join("protonsearch"),
         Err(_) => PathBuf::from("."),
     };
     let _ = std::fs::create_dir_all(&log_dir);
@@ -1029,7 +1029,7 @@ fn get_db_conn() -> Option<rusqlite::Connection> {
         }
     };
     let path = std::path::PathBuf::from(appdata)
-        .join("omnisearch")
+        .join("protonsearch")
         .join("file_index.db");
     match rusqlite::Connection::open(&path) {
         Ok(conn) => {

@@ -5743,8 +5743,8 @@ mod tests {
                 breadcrumb_path: "Clipboard > SnippingTool.exe".to_string(),
                 launch_command: "copy_image:C:\\clip.bmp".to_string(),
                 source: "CLIPBOARD".to_string(),
-                description: "🔤 OmniSearch.exe".to_string(),
-                synonyms: "omnisearch.exe".to_string(),
+                description: "🔤 ProtonSearch.exe".to_string(),
+                synonyms: "protonsearch.exe".to_string(),
             },
             score: 1.0,
         });
@@ -5940,7 +5940,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        std::env::temp_dir().join(format!("omnisearch_{name}_{stamp}.db"))
+        std::env::temp_dir().join(format!("protonsearch_{name}_{stamp}.db"))
     }
 
     #[test]
@@ -5974,7 +5974,7 @@ mod tests {
                  (content, timestamp, source_app, is_image, pinned, ocr_text)
                  VALUES (?1, ?2, ?3, 1, 0, ?4)",
                 rusqlite::params![
-                    "C:\\Users\\tester\\AppData\\Roaming\\omnisearch\\clipboard_images\\clip.bmp",
+                    "C:\\Users\\tester\\AppData\\Roaming\\protonsearch\\clipboard_images\\clip.bmp",
                     1_i64,
                     "SnippingTool.exe",
                     "quarterly revenue target"
@@ -6013,15 +6013,15 @@ mod tests {
                  (content, timestamp, source_app, is_image, pinned, ocr_text)
                  VALUES (?1, ?2, ?3, 1, 0, ?4)",
                 rusqlite::params![
-                    "C:\\Users\\tester\\AppData\\Roaming\\omnisearch\\clipboard_images\\compact.bmp",
+                    "C:\\Users\\tester\\AppData\\Roaming\\protonsearch\\clipboard_images\\compact.bmp",
                     2_i64,
                     "SnippingTool.exe",
-                    "Omni Search.exe"
+                    "Proton Search.exe"
                 ],
             )
             .expect("insert clipboard image");
 
-        let results = engine.search_with_fts("omnisearch", 20, true);
+        let results = engine.search_with_fts("protonsearch", 20, true);
         let _ = std::fs::remove_file(&db_path);
 
         assert!(
@@ -6046,7 +6046,7 @@ mod tests {
         let db_path = unique_test_db("dedupe_clipboard_ocr_file_twin");
         let mut engine = SearchEngine::new(db_path.clone(), false).expect("engine");
         let image_path =
-            "C:\\Users\\tester\\AppData\\Roaming\\omnisearch\\clipboard_images\\clip.bmp";
+            "C:\\Users\\tester\\AppData\\Roaming\\protonsearch\\clipboard_images\\clip.bmp";
         engine
             .conn
             .execute(
@@ -6080,7 +6080,7 @@ mod tests {
             .conn
             .execute(
                 "INSERT INTO files_fts (path, content) VALUES (?1, ?2)",
-                rusqlite::params![image_path, "OmniSearch.exe"],
+                rusqlite::params![image_path, "ProtonSearch.exe"],
             )
             .expect("insert fts");
         engine
@@ -6089,11 +6089,11 @@ mod tests {
                 "INSERT INTO clipboard_history
                  (content, timestamp, source_app, is_image, pinned, ocr_text)
                  VALUES (?1, ?2, ?3, 1, 0, ?4)",
-                rusqlite::params![image_path, 3_i64, "SnippingTool.exe", "OmniSearch.exe"],
+                rusqlite::params![image_path, 3_i64, "SnippingTool.exe", "ProtonSearch.exe"],
             )
             .expect("insert clipboard image");
 
-        let results = engine.search_with_fts("omnisearch", 20, true);
+        let results = engine.search_with_fts("protonsearch", 20, true);
         let _ = std::fs::remove_file(&db_path);
 
         let image_hits = results
@@ -6143,8 +6143,8 @@ mod tests {
                     "INSERT INTO files (path, name, extension, modified, size, is_dir)
                      VALUES (?1, ?2, 'exe', ?3, 1, 0)",
                     rusqlite::params![
-                        format!("C:\\Users\\tester\\Documents\\omnisearch-{idx}.exe"),
-                        format!("omnisearch-{idx}.exe"),
+                        format!("C:\\Users\\tester\\Documents\\protonsearch-{idx}.exe"),
+                        format!("protonsearch-{idx}.exe"),
                         idx as i64
                     ],
                 )
@@ -6157,15 +6157,15 @@ mod tests {
                  (content, timestamp, source_app, is_image, pinned, ocr_text)
                  VALUES (?1, ?2, ?3, 1, 0, ?4)",
                 rusqlite::params![
-                    "C:\\Users\\tester\\AppData\\Roaming\\omnisearch\\clipboard_images\\late.bmp",
+                    "C:\\Users\\tester\\AppData\\Roaming\\protonsearch\\clipboard_images\\late.bmp",
                     4_i64,
                     "SnippingTool.exe",
-                    "OmniSearch.exe"
+                    "ProtonSearch.exe"
                 ],
             )
             .expect("insert clipboard image");
 
-        let results = engine.search_with_fts("omnisearch", 5, true);
+        let results = engine.search_with_fts("protonsearch", 5, true);
         let _ = std::fs::remove_file(&db_path);
 
         assert!(
@@ -6492,7 +6492,7 @@ mod tests {
     fn test_search_file() {
         let db_path = match std::env::var("APPDATA") {
             Ok(d) => {
-                let path = std::path::PathBuf::from(d).join("omnisearch");
+                let path = std::path::PathBuf::from(d).join("protonsearch");
                 path.join("file_index.db")
             }
             Err(_) => std::path::PathBuf::from("file_index.db"),
@@ -10640,7 +10640,7 @@ impl SearchEngine {
         let q = query.trim().to_lowercase();
         if let Ok(appdata) = std::env::var("APPDATA") {
             let notes_dir = std::path::PathBuf::from(appdata)
-                .join("omnisearch")
+                .join("protonsearch")
                 .join("notes");
             let _ = std::fs::create_dir_all(&notes_dir); // fix #1: ensure dir exists before reading
             if let Ok(entries) = std::fs::read_dir(&notes_dir) {
