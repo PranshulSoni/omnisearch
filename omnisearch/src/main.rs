@@ -45,6 +45,10 @@ const PAD_L: i32 = 24;
 const BADGE_W: i32 = 54;
 const BADGE_H: i32 = 18;
 const SEARCH_ICON_SIZE: i32 = 44;
+const SEARCH_LENS_BUTTON_SIZE: i32 = 32;
+const SEARCH_LENS_ICON_SIZE: i32 = 24;
+const SEARCH_WEB_BUTTON_W: i32 = 138;
+const SEARCH_ACTION_GAP: i32 = 8;
 const RESULT_ICON_SIZE: i32 = 32;
 // Agent icons (homepage Agents/Agent History + the agents:/agentchats: scoped views) draw
 // larger than other result icons so the logo reads clearly instead of looking tiny.
@@ -102,7 +106,8 @@ unsafe fn setup_tray_icon(
     nid.uID = 1;
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
-    let hicon = unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans_16.png"), 16) };
+    let hicon =
+        unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans_16.png"), 16) };
     nid.hIcon = hicon;
     let tip = "OmniSearch".encode_utf16().collect::<Vec<u16>>();
     for (i, &c) in tip.iter().enumerate().take(127) {
@@ -330,6 +335,7 @@ struct State {
 
     active_filter: FilterType,
     hovered_filter: Option<FilterType>,
+    hovered_search_action: Option<SearchActionHover>,
     filter_counts: [usize; 9],
     filter_scroll_x: i32,
     sort_asc: bool,
@@ -390,6 +396,12 @@ struct State {
     placeholder_override: Option<String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchActionHover {
+    Web,
+    Lens,
+}
+
 #[derive(PartialEq)]
 enum Anim {
     Hidden,
@@ -441,6 +453,15 @@ impl State {
     fn shows_web_search_action(&self) -> bool {
         !self.query.trim().is_empty()
             && !self.has_prefix()
+            && self.form_state == FormState::None
+            && !self.ai_pending
+            && self.ai_answer.is_none()
+            && !self.chat_input_active
+    }
+
+    fn shows_lens_action(&self) -> bool {
+        self.app_settings.plugin_circle_search
+            && self.query.trim().is_empty()
             && self.form_state == FormState::None
             && !self.ai_pending
             && self.ai_answer.is_none()
@@ -969,6 +990,7 @@ unsafe fn run(first_settings_run: bool) {
         icon_new_search,
         active_filter: FilterType::All,
         hovered_filter: None,
+        hovered_search_action: None,
         filter_counts: [0; 9],
         filter_scroll_x: 0,
         sort_asc: false,
@@ -1047,7 +1069,8 @@ unsafe fn run(first_settings_run: bool) {
         configure_hermes_llm(&cfg.endpoint, &cfg.model, &cfg.api_key);
     }
 
-    let icon_main = unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans_32.png"), 32) };
+    let icon_main =
+        unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans_32.png"), 32) };
     let icon_main_sm =
         unsafe { load_png_to_hicon(include_bytes!("../../icons/OmniSearchTrans_16.png"), 16) };
 
@@ -2124,6 +2147,11 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
             if let Some(c) = wm_char_decode(&mut s.pending_surrogate, wp.0 as u32) {
                 if !c.is_control() {
                     if s.chat_input_active {
+                        if s.text_selected {
+                            s.chat_input.clear();
+                            s.chat_cursor_pos = 0;
+                            s.text_selected = false;
+                        }
                         s.chat_input.insert(s.chat_cursor_pos, c);
                         s.chat_cursor_pos += c.len_utf8();
                         reset_cursor_blink(hwnd, s);
@@ -2259,8 +2287,17 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 if s.chat_input_active {
                     if ctrl_down {
                         match vk.0 as u32 {
-                            0x43 => {
+                            0x41 => {
                                 if !s.chat_input.is_empty() {
+                                    s.text_selected = true;
+                                    s.chat_cursor_pos = s.chat_input.len();
+                                    reset_cursor_blink(hwnd, s);
+                                    let _ = InvalidateRect(hwnd, None, FALSE);
+                                }
+                                return LRESULT(0);
+                            }
+                            0x43 => {
+                                if s.text_selected && !s.chat_input.is_empty() {
                                     copy_to_clipboard(hwnd, &s.chat_input);
                                 }
                                 return LRESULT(0);
@@ -2277,8 +2314,14 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                             close_ai_panel_to_agent_history(hwnd, s);
                             return LRESULT(0);
                         }
-                        VK_BACK => {
-                            if s.chat_cursor_pos > 0 {
+                        VK_BACK | VK_DELETE => {
+                            if s.text_selected {
+                                s.chat_input.clear();
+                                s.chat_cursor_pos = 0;
+                                s.text_selected = false;
+                                reset_cursor_blink(hwnd, s);
+                                let _ = InvalidateRect(hwnd, None, FALSE);
+                            } else if vk == VK_BACK && s.chat_cursor_pos > 0 {
                                 let mut p = s.chat_cursor_pos - 1;
                                 while p > 0 && !s.chat_input.is_char_boundary(p) {
                                     p -= 1;
@@ -2287,10 +2330,19 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                                 s.chat_cursor_pos = p;
                                 reset_cursor_blink(hwnd, s);
                                 let _ = InvalidateRect(hwnd, None, FALSE);
+                            } else if vk == VK_DELETE && s.chat_cursor_pos < s.chat_input.len() {
+                                let mut p = s.chat_cursor_pos + 1;
+                                while p < s.chat_input.len() && !s.chat_input.is_char_boundary(p) {
+                                    p += 1;
+                                }
+                                s.chat_input.replace_range(s.chat_cursor_pos..p, "");
+                                reset_cursor_blink(hwnd, s);
+                                let _ = InvalidateRect(hwnd, None, FALSE);
                             }
                             return LRESULT(0);
                         }
                         VK_LEFT => {
+                            s.text_selected = false;
                             if ctrl_down {
                                 s.chat_cursor_pos = word_left(&s.chat_input, s.chat_cursor_pos);
                             } else if s.chat_cursor_pos > 0 {
@@ -2305,6 +2357,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                             return LRESULT(0);
                         }
                         VK_RIGHT => {
+                            s.text_selected = false;
                             if ctrl_down {
                                 s.chat_cursor_pos = word_right(&s.chat_input, s.chat_cursor_pos);
                             } else if s.chat_cursor_pos < s.chat_input.len() {
@@ -3195,13 +3248,17 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
             let by = s.launcher_top_y();
 
             if my >= by && my < by + SEARCH_H {
+                if s.shows_lens_action() {
+                    let lens_rect = search_lens_action_rect(x_start, by, WIN_W, s.search_h());
+                    if point_in_rect(mx, my, lens_rect) {
+                        start_circle_to_search_from_launcher(hwnd, s);
+                        return LRESULT(0);
+                    }
+                }
                 if s.shows_web_search_action() {
-                    let web_rect = search_web_action_rect(0, by, win_w, s.search_h());
-                    if mx >= web_rect.left
-                        && mx < web_rect.right
-                        && my >= web_rect.top
-                        && my < web_rect.bottom
-                    {
+                    let web_rect =
+                        search_web_action_rect(x_start, by, WIN_W, s.search_h(), s.shows_lens_action());
+                    if point_in_rect(mx, my, web_rect) {
                         open_query_on_web(hwnd, s);
                         return LRESULT(0);
                     }
@@ -3334,6 +3391,32 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 let x_start = (win_w - WIN_W) / 2;
                 let by = s.launcher_top_y();
 
+                let mut new_search_action_hover = None;
+                if my >= by && my < by + SEARCH_H {
+                    if s.shows_lens_action() {
+                        let r = search_lens_action_rect(x_start, by, WIN_W, s.search_h());
+                        if point_in_rect(_mx, my, r) {
+                            new_search_action_hover = Some(SearchActionHover::Lens);
+                        }
+                    }
+                    if new_search_action_hover.is_none() && s.shows_web_search_action() {
+                        let r = search_web_action_rect(
+                            x_start,
+                            by,
+                            WIN_W,
+                            s.search_h(),
+                            s.shows_lens_action(),
+                        );
+                        if point_in_rect(_mx, my, r) {
+                            new_search_action_hover = Some(SearchActionHover::Web);
+                        }
+                    }
+                }
+                if s.hovered_search_action != new_search_action_hover {
+                    s.hovered_search_action = new_search_action_hover;
+                    let _ = InvalidateRect(hwnd, None, FALSE);
+                }
+
                 if !s.query.is_empty() && !s.has_prefix() {
                     let list_y = by + SEARCH_H + 1;
                     let mut new_hover = None;
@@ -3375,6 +3458,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
             s.mouse_tracking = false;
             s.hovered_item = None;
             s.hovered_filter = None;
+            s.hovered_search_action = None;
             let _ = InvalidateRect(hwnd, None, FALSE);
             LRESULT(0)
         }
@@ -4176,6 +4260,204 @@ fn format_conversation(prompt: &str, response: &str) -> String {
     conversation
 }
 
+#[derive(Clone, Debug)]
+enum LocalAgentAction {
+    OpenUrl { url: String, label: String },
+    RunPowerShell { command: String },
+}
+
+fn local_agent_action(user: &str) -> Option<LocalAgentAction> {
+    let text = user.trim();
+    let lower = text.to_lowercase();
+
+    for prefix in [
+        "run command ",
+        "execute command ",
+        "run powershell ",
+        "powershell ",
+        "powershell: ",
+        "cmd: ",
+    ] {
+        if lower.starts_with(prefix) {
+            let command = text[prefix.len()..].trim();
+            if !command.is_empty() {
+                return Some(LocalAgentAction::RunPowerShell {
+                    command: command.to_string(),
+                });
+            }
+        }
+    }
+
+    // NOTE: the "youtube" / "google" / "search for" fast-paths were removed on purpose.
+    // They short-circuited the reasoning agent with a dumb keyword match — e.g. ANY message
+    // containing "youtube" opened the generic homepage in the default browser and never reached
+    // Hermes. Real requests like "open MrWhosTheBoss on Brave" now fall through to the agent,
+    // which reasons about the intent and executes the actual action via its tools.
+    None
+}
+
+fn run_local_agent_action(action: LocalAgentAction) -> (bool, String) {
+    match action {
+        LocalAgentAction::OpenUrl { url, label } => {
+            launcher::launch(&url);
+            (true, format!("{label}\n\nURL: {url}"))
+        }
+        LocalAgentAction::RunPowerShell { command } => {
+            let output = Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    &command,
+                ])
+                .creation_flags(0x08000000)
+                .output();
+            match output {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                    let mut text = format!("Executed command:\n`{command}`");
+                    if !stdout.is_empty() {
+                        text.push_str("\n\nOutput:\n");
+                        text.push_str(&stdout);
+                    }
+                    if !stderr.is_empty() {
+                        text.push_str("\n\nError output:\n");
+                        text.push_str(&stderr);
+                    }
+                    if stdout.is_empty() && stderr.is_empty() {
+                        text.push_str("\n\nNo output.");
+                    }
+                    (out.status.success(), text)
+                }
+                Err(e) => (false, format!("Failed to execute command `{command}`: {e}")),
+            }
+        }
+    }
+}
+
+fn ensure_agent_memory_table(conn: &rusqlite::Connection) {
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS agent_memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_name TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source TEXT,
+            ts INTEGER NOT NULL,
+            UNIQUE(agent_name, content)
+        );",
+        [],
+    );
+}
+
+fn extract_agent_memory_items(input: &str) -> Vec<String> {
+    let text = input.trim();
+    let lower = text.to_lowercase();
+    let mut out = Vec::new();
+
+    for marker in ["remember that ", "remember "] {
+        if let Some(rest) = lower
+            .find(marker)
+            .map(|idx| text[idx + marker.len()..].trim())
+        {
+            if !rest.is_empty() {
+                out.push(rest.trim_matches(['.', '!', '?']).to_string());
+                return out;
+            }
+        }
+    }
+
+    for marker in [
+        "my name is ",
+        "i am ",
+        "i'm ",
+        "i like ",
+        "i love ",
+        "i prefer ",
+        "i use ",
+    ] {
+        if let Some(rest) = lower.find(marker).map(|idx| text[idx..].trim()) {
+            if rest.len() <= 160 {
+                out.push(format!("User said: {}", rest.trim_matches(['.', '!', '?'])));
+                return out;
+            }
+        }
+    }
+
+    out
+}
+
+fn remember_agent_user_facts(db_path: &std::path::Path, agent_name: &str, input: &str) {
+    if agent_name.trim().is_empty() {
+        return;
+    }
+    let items = extract_agent_memory_items(input);
+    if items.is_empty() {
+        return;
+    }
+    if let Ok(conn) = rusqlite::Connection::open(db_path) {
+        ensure_agent_memory_table(&conn);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        for item in items {
+            let _ = conn.execute(
+                "INSERT INTO agent_memory (agent_name, content, source, ts)
+                 VALUES (?, ?, 'chat', ?)
+                 ON CONFLICT(agent_name, content) DO UPDATE SET ts = excluded.ts;",
+                rusqlite::params![agent_name, item, now],
+            );
+        }
+    }
+}
+
+fn agent_memory_context(db_path: &std::path::Path, agent_name: &str) -> String {
+    if agent_name.trim().is_empty() {
+        return String::new();
+    }
+    let Ok(conn) = rusqlite::Connection::open(db_path) else {
+        return String::new();
+    };
+    ensure_agent_memory_table(&conn);
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT content FROM agent_memory
+         WHERE lower(agent_name) = lower(?)
+         ORDER BY ts DESC
+         LIMIT 24;",
+    ) else {
+        return String::new();
+    };
+    let memories: Vec<String> = stmt
+        .query_map([agent_name], |row| row.get::<_, String>(0))
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+    if memories.is_empty() {
+        return String::new();
+    }
+    let mut text = String::from("\n\nKnown user memory for this agent. Use only when relevant:\n");
+    for memory in memories.iter().rev() {
+        text.push_str("- ");
+        text.push_str(memory);
+        text.push('\n');
+    }
+    text
+}
+
+fn system_prompt_with_agent_memory(
+    db_path: &std::path::Path,
+    agent_name: &str,
+    system_prompt: &str,
+) -> String {
+    let memory = agent_memory_context(db_path, agent_name);
+    if memory.is_empty() {
+        system_prompt.to_string()
+    } else {
+        format!("{system_prompt}{memory}")
+    }
+}
+
 /// Bucketed relative-age tag ("just now", "2h ago", "yesterday", "3w ago").
 /// ponytail: buckets, no calendar lib — recency is the signal, exact dates aren't needed.
 fn relative_age(age_secs: i64) -> String {
@@ -4338,7 +4620,7 @@ fn ensure_default_agents(db_path: &std::path::Path) {
         if count == 0 {
             let name = "Hermes";
             let goal = "Execute commands and run autonomous tasks on this Windows PC";
-            let system_prompt = "You are Hermes, a helpful AI assistant. Be concise and proactive.";
+            let system_prompt = default_hermes_system_prompt();
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -4347,8 +4629,31 @@ fn ensure_default_agents(db_path: &std::path::Path) {
                 "INSERT INTO agents (name, goal, system_prompt, ts) VALUES (?,?,?,?);",
                 rusqlite::params![name, goal, system_prompt, now],
             );
+        } else {
+            let old_prompt = "You are Hermes, a helpful AI assistant. Be concise and proactive.";
+            let _ = conn.execute(
+                "UPDATE agents SET goal = ?, system_prompt = ? \
+                 WHERE lower(name) = 'hermes' AND system_prompt = ?;",
+                rusqlite::params![
+                    "Execute commands, control Windows, open browser pages, and run autonomous tasks on this PC",
+                    default_hermes_system_prompt(),
+                    old_prompt
+                ],
+            );
         }
     }
+}
+
+fn default_hermes_system_prompt() -> &'static str {
+    "You are Hermes, the user's personal Windows PC assistant inside OmniSearch.\n\
+You can use the Hermes tools available to you to operate the PC: open apps and files, open browser pages, search the web, run PowerShell or command-line commands, inspect command output, and continue multi-step tasks until the user's request is actually handled.\n\
+Operating rules:\n\
+- Prefer direct Windows actions and built-in commands before asking the user to do manual steps.\n\
+- For browser requests, open the requested site or search query in the default browser unless the user asks for a specific browser.\n\
+- For shell work, use PowerShell on Windows, keep commands scoped to the request, and read the output before claiming success.\n\
+- For destructive or sensitive actions such as deleting files, changing system settings, installing software, killing processes, shutdown/restart, credential access, or network/security changes, ask for approval unless the UI has already approved the tool call.\n\
+- After running any command or PC-control tool, tell the user exactly what was executed or opened and whether it succeeded. If it failed, include the short error and the next practical step.\n\
+- Be concise, but do the work rather than only explaining how to do it."
 }
 
 fn create_agent(db_path: &std::path::Path, name: &str, goal: &str) {
@@ -4496,12 +4801,14 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
         }
 
         let mut system_prompt = "You are a concise, helpful assistant. Answer directly in at most a few short paragraphs.".to_string();
+        let mut agent_name = String::new();
         if command == "agent" {
             if let Some(name) = title
                 .strip_prefix('@')
                 .and_then(|t| t.split_once(':'))
                 .map(|(n, _)| n.trim())
             {
+                agent_name = name.to_string();
                 if let Ok(conn) = rusqlite::Connection::open(&db_path) {
                     let _ = conn.query_row(
                         "SELECT system_prompt FROM agents WHERE lower(name) = lower(?)",
@@ -4513,6 +4820,58 @@ fn start_follow_up_chat(hwnd: HWND, s: &mut State, follow_up: String) {
                         },
                     );
                 }
+            }
+            remember_agent_user_facts(&db_path, &agent_name, &new_prompt);
+            system_prompt = system_prompt_with_agent_memory(&db_path, &agent_name, &system_prompt);
+            if let Some(action) = local_agent_action(&new_prompt) {
+                let (ok, text) = run_local_agent_action(action);
+                if let Some(id) = chat_id {
+                    if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                        let updated_prompt = if original_prompt.is_empty() {
+                            new_prompt.clone()
+                        } else {
+                            format!("{}\n---\nUser: {}", original_prompt, new_prompt)
+                        };
+                        let updated_response = if original_response.is_empty() {
+                            text.clone()
+                        } else {
+                            format!("{}\n\n---\n\n{}", original_response, text)
+                        };
+                        let _ = conn.execute(
+                            "UPDATE ai_chats SET prompt = ?, response = ?, pending_approval = NULL WHERE id = ?",
+                            rusqlite::params![updated_prompt, updated_response, id],
+                        );
+                    }
+                }
+                let prev_history = format_conversation(&original_prompt, &original_response);
+                let formatted = if prev_history.trim().is_empty() {
+                    if ok {
+                        format!("User: {}\n\n{}", new_prompt, text)
+                    } else {
+                        format!("User: {}\n\n⚠ {}", new_prompt, text)
+                    }
+                } else if ok {
+                    format!(
+                        "{}\n\n---\n\nUser: {}\n\n{}",
+                        prev_history, new_prompt, text
+                    )
+                } else {
+                    format!(
+                        "{}\n\n---\n\nUser: {}\n\n⚠ {}",
+                        prev_history, new_prompt, text
+                    )
+                };
+                let ptr = Box::into_raw(Box::new((ok, formatted))) as isize;
+                unsafe {
+                    let wp_chat_id = chat_id.unwrap_or(0) as usize;
+                    let _ = PostMessageW(
+                        HWND(hwnd_raw as *mut _),
+                        WM_AI_RESULT,
+                        WPARAM(wp_chat_id),
+                        LPARAM(ptr),
+                    );
+                }
+                return;
             }
         } else {
             system_prompt = match command.as_str() {
@@ -4699,6 +5058,19 @@ impl ai::RunCallbacks for UiRunCallbacks {
         }
 
         if ai::ALWAYS_APPROVE.load(std::sync::atomic::Ordering::Acquire) {
+            let action = "Approved tool automatically. Waiting for the result...";
+            let detail = if approval.summary.is_empty() {
+                approval.tool.clone()
+            } else if approval.tool.is_empty() {
+                approval.summary.clone()
+            } else {
+                format!("{}: {}", approval.tool, approval.summary)
+            };
+            if detail.is_empty() {
+                self.on_progress(action);
+            } else {
+                self.on_progress(&format!("{action}\n\n{detail}"));
+            }
             std::thread::spawn(move || {
                 let _ = ai::resolve_run_approval(&approval, true);
             });
@@ -4866,6 +5238,17 @@ unsafe fn resolve_current_approval(hwnd: HWND, s: &mut State, approved: bool) {
         });
         // While awaiting the outcome, show a transient status so the user sees
         // their decision registered.
+        let current = s.ai_answer.clone().unwrap_or_default();
+        let status = if approved {
+            "Approved tool execution. Waiting for the result..."
+        } else {
+            "Denied tool execution."
+        };
+        s.ai_answer = Some(if current.trim().is_empty() {
+            status.to_string()
+        } else {
+            format!("{}\n\n{}", current.trim_end(), status)
+        });
         s.ai_follow_bottom = true;
         let _ = InvalidateRect(hwnd, None, FALSE);
     }
@@ -5226,6 +5609,8 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             if sys.is_empty() || msg.is_empty() {
                 return;
             }
+            remember_agent_user_facts(&s.db_path, &aname, &msg);
+            sys = system_prompt_with_agent_memory(&s.db_path, &aname, &sys);
             start_ai_activity(hwnd, s);
             s.ai_answer = Some(format!("User: {}\n\nExecuting...", msg));
             s.ai_scroll = 0;
@@ -5246,6 +5631,42 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
             s.chat_input.clear();
             s.chat_cursor_pos = 0;
             s.chat_input_active = true;
+
+            if let Some(action) = local_agent_action(&msg_clone) {
+                let hwnd_raw = hwnd.0 as isize;
+                let db_path_local = db_path.clone();
+                let msg_local = msg_clone.clone();
+                std::thread::spawn(move || {
+                    let (ok, text) = run_local_agent_action(action);
+                    if let Some(id) = chat_id {
+                        if let Ok(conn) = rusqlite::Connection::open(&db_path_local) {
+                            let _ = conn.execute(
+                                "UPDATE ai_chats SET response = ?, pending_approval = NULL WHERE id = ?",
+                                rusqlite::params![text, id],
+                            );
+                        }
+                    }
+                    let payload = if ok {
+                        (true, format_conversation(&msg_local, &text))
+                    } else {
+                        (
+                            false,
+                            format_conversation(&msg_local, &format!("⚠ {}", text)),
+                        )
+                    };
+                    let ptr = Box::into_raw(Box::new(payload)) as isize;
+                    unsafe {
+                        let wp_chat_id = chat_id.unwrap_or(0) as usize;
+                        let _ = PostMessageW(
+                            HWND(hwnd_raw as *mut _),
+                            WM_AI_RESULT,
+                            WPARAM(wp_chat_id),
+                            LPARAM(ptr),
+                        );
+                    }
+                });
+                return;
+            }
 
             // Prefer the streaming Runs API so a real Approve/Deny button can be
             // shown when Hermes needs tool approval. Fall back to the blocking
@@ -5519,8 +5940,7 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 start_color_picker(hwnd, s);
                 return;
             } else if cmd == "action:circle_to_search" {
-                do_hide(hwnd, s);
-                circle_to_search::start_lens_search_async();
+                start_circle_to_search_from_launcher(hwnd, s);
                 return;
             } else if cmd == "action:reset_window_position" {
                 reset_launcher_window_position(hwnd, s);
@@ -5774,16 +6194,33 @@ fn ease_out(t: f32) -> f32 {
 }
 // fn ease_in(t: f32) -> f32 { t.clamp(0.0, 1.0).powi(4) }
 
-fn search_web_action_rect(x: i32, y: i32, w: i32, search_h: i32) -> RECT {
-    let action_w = 148;
-    let action_h = 32;
+fn search_lens_action_rect(x: i32, y: i32, w: i32, search_h: i32) -> RECT {
     let right = x + w - PAD_L;
     RECT {
-        left: right - action_w,
+        left: right - SEARCH_LENS_BUTTON_SIZE,
+        top: y + (search_h - SEARCH_LENS_BUTTON_SIZE) / 2,
+        right,
+        bottom: y + (search_h + SEARCH_LENS_BUTTON_SIZE) / 2,
+    }
+}
+
+fn search_web_action_rect(x: i32, y: i32, w: i32, search_h: i32, lens_visible: bool) -> RECT {
+    let action_h = 32;
+    let right = if lens_visible {
+        search_lens_action_rect(x, y, w, search_h).left - SEARCH_ACTION_GAP
+    } else {
+        x + w - PAD_L
+    };
+    RECT {
+        left: right - SEARCH_WEB_BUTTON_W,
         top: y + (search_h - action_h) / 2,
         right,
         bottom: y + (search_h + action_h) / 2,
     }
+}
+
+fn point_in_rect(x: i32, y: i32, r: RECT) -> bool {
+    x >= r.left && x < r.right && y >= r.top && y < r.bottom
 }
 
 unsafe fn open_query_on_web(hwnd: HWND, s: &mut State) {
@@ -5795,6 +6232,20 @@ unsafe fn open_query_on_web(hwnd: HWND, s: &mut State) {
     let url = format!("https://www.google.com/search?q={encoded}");
     launcher::launch(&url);
     do_hide(hwnd, s);
+}
+
+unsafe fn start_circle_to_search_from_launcher(hwnd: HWND, s: &mut State) {
+    let _ = KillTimer(hwnd, TIMER_SEARCH_ANIM);
+    let _ = KillTimer(hwnd, TIMER_DEBOUNCE);
+    let _ = KillTimer(hwnd, TIMER_CURSOR_BLINK);
+    s.anim = Anim::Hidden;
+    s.shown_h = 0;
+    s.target_h = 0;
+    s.search_input_active = false;
+    s.cursor_visible = false;
+    let _ = ShowWindow(hwnd, SW_HIDE);
+    let _ = DwmFlush();
+    circle_to_search::start_lens_search_async();
 }
 
 unsafe fn fill_rounded(hdc: HDC, x: i32, y: i32, w: i32, h: i32, r: i32, c: COLORREF) {
@@ -6449,9 +6900,7 @@ fn search_input_caret_active(s: &State) -> bool {
         s.search_input_active,
         s.note_editing,
         s.chat_input_active,
-        !s.query.is_empty()
-            || !s.app_settings.show_placeholder
-            || !matches!(s.form_state, FormState::None),
+        true,
     )
 }
 
@@ -7176,9 +7625,19 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     // Text / placeholder
     let tx = x + PAD_L + SEARCH_ICON_SIZE + 12;
     let show_web_action = s.shows_web_search_action();
-    let web_reserve = if show_web_action { 172 } else { 0 };
+    let show_lens_action = s.shows_lens_action();
+    let web_reserve = if show_web_action {
+        SEARCH_WEB_BUTTON_W + SEARCH_ACTION_GAP
+    } else {
+        0
+    };
+    let lens_reserve = if show_lens_action {
+        SEARCH_LENS_BUTTON_SIZE + 12
+    } else {
+        0
+    };
     let loading_reserve = if s.search_loading { 166 } else { 0 };
-    let right_reserve = PAD_L + web_reserve + loading_reserve;
+    let right_reserve = PAD_L + lens_reserve + web_reserve + loading_reserve;
     let tw = w - (PAD_L + SEARCH_ICON_SIZE + 12) - right_reserve;
     let mut tr = RECT {
         left: tx,
@@ -7188,14 +7647,28 @@ unsafe fn paint(hwnd: HWND, s: &State) {
     };
 
     let web_rect = if show_web_action {
-        Some(search_web_action_rect(x, y, w, s.search_h()))
+        Some(search_web_action_rect(
+            x,
+            y,
+            w,
+            s.search_h(),
+            show_lens_action,
+        ))
+    } else {
+        None
+    };
+    let lens_rect = if show_lens_action {
+        Some(search_lens_action_rect(x, y, w, s.search_h()))
     } else {
         None
     };
 
     if s.search_loading {
         let spinner_size = 16;
-        let spinner_right = web_rect.map(|r| r.left - 14).unwrap_or(x + w - PAD_L - 4);
+        let spinner_right = web_rect
+            .map(|r| r.left - 14)
+            .or_else(|| lens_rect.map(|r| r.left - 14))
+            .unwrap_or(x + w - PAD_L - 4);
         let spinner_x = spinner_right - spinner_size;
         let spinner_y = y + (SEARCH_H - spinner_size) / 2;
         draw_spinner(
@@ -7234,11 +7707,15 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             btn_w,
             btn_h,
             10,
-            palette.clr_bdgbg,
+            if s.hovered_search_action == Some(SearchActionHover::Web) {
+                palette.bg_hover
+            } else {
+                palette.clr_bdgbg
+            },
         );
         if !s.icon_web_action.0.is_null() {
-            let icon_size = 20;
-            let icon_x = web_rect.left + 14;
+            let icon_size = 18;
+            let icon_x = web_rect.left + 12;
             let icon_y = web_rect.top + (btn_h - icon_size) / 2;
             let _ = DrawIconEx(
                 mdc,
@@ -7254,12 +7731,19 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         }
 
         SelectObject(mdc, s.font_c);
-        SetTextColor(mdc, palette.clr_bdgtx);
+        SetTextColor(
+            mdc,
+            if s.hovered_search_action == Some(SearchActionHover::Web) {
+                palette.clr_white
+            } else {
+                palette.clr_bdgtx
+            },
+        );
         let mut web_label: Vec<u16> = "Search web".encode_utf16().collect();
         let mut web_label_rect = RECT {
-            left: web_rect.left + 44,
+            left: web_rect.left + 38,
             top: web_rect.top,
-            right: web_rect.right - 16,
+            right: web_rect.right - 10,
             bottom: web_rect.bottom,
         };
         let _ = DrawTextW(
@@ -7270,8 +7754,44 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         );
     }
 
+    if let Some(lens_rect) = lens_rect {
+        let btn_w = lens_rect.right - lens_rect.left;
+        let btn_h = lens_rect.bottom - lens_rect.top;
+        fill_rounded(
+            mdc,
+            lens_rect.left,
+            lens_rect.top,
+            btn_w,
+            btn_h,
+            10,
+            if s.hovered_search_action == Some(SearchActionHover::Lens) {
+                palette.bg_hover
+            } else {
+                palette.clr_bdgbg
+            },
+        );
+        if !s.icon_lens.0.is_null() {
+            let icon_x = lens_rect.left + (btn_w - SEARCH_LENS_ICON_SIZE) / 2;
+            let icon_y = lens_rect.top + (btn_h - SEARCH_LENS_ICON_SIZE) / 2;
+            let _ = DrawIconEx(
+                mdc,
+                icon_x,
+                icon_y,
+                s.icon_lens,
+                SEARCH_LENS_ICON_SIZE,
+                SEARCH_LENS_ICON_SIZE,
+                0,
+                HBRUSH(null_mut()),
+                DI_NORMAL,
+            );
+        }
+    }
+
     if let Some(ref override_msg) = s.placeholder_override {
-        let right_limit = web_rect.map(|r| r.left - 16).unwrap_or(x + w - PAD_L - 20);
+        let right_limit = web_rect
+            .map(|r| r.left - 16)
+            .or_else(|| lens_rect.map(|r| r.left - 16))
+            .unwrap_or(x + w - PAD_L - 20);
         let mut msg_text: Vec<u16> = override_msg.encode_utf16().collect();
         let mut msg_rect = RECT {
             left: right_limit - 220,
@@ -7337,6 +7857,18 @@ unsafe fn paint(hwnd: HWND, s: &State) {
             let mut text_rect = tr;
             text_rect.left -= scroll_x;
             text_rect.right += 2000; // prevent clipping the remaining text
+            if s.text_selected && search_input_caret_active(s) {
+                let mut all_size = SIZE::default();
+                let _ = GetTextExtentPoint32W(mdc, &dw_query, &mut all_size);
+                fill(
+                    mdc,
+                    tr.left - scroll_x,
+                    tr.top + 12,
+                    all_size.cx.min(tw),
+                    (tr.bottom - tr.top - 24).max(20),
+                    palette.clr_accent,
+                );
+            }
             let _ = DrawTextW(
                 mdc,
                 &mut dw_query,
@@ -8007,6 +8539,19 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                 right: x + w - pad - 118,
                 bottom: input_y + 34,
             };
+            if s.text_selected && s.chat_input_active && !s.chat_input.is_empty() {
+                let mut selected_w = SIZE::default();
+                let selected_text: Vec<u16> = s.chat_input.encode_utf16().collect();
+                let _ = GetTextExtentPoint32W(mdc, &selected_text, &mut selected_w);
+                fill(
+                    mdc,
+                    input_rc.left,
+                    input_rc.top + 7,
+                    selected_w.cx.min(input_rc.right - input_rc.left),
+                    20,
+                    s.theme.palette().clr_accent,
+                );
+            }
             let _ = DrawTextW(
                 mdc,
                 &mut input_w,
@@ -10409,10 +10954,20 @@ fn image_to_dib_bytes(image: image::DynamicImage) -> Option<Vec<u8>> {
 unsafe fn paste_clipboard_into_chat(hwnd: HWND, s: &mut State) {
     if let Some(text) = paste_from_clipboard(hwnd) {
         let clean_text: String = text.chars().filter(|c| !c.is_control()).collect();
+        if s.text_selected {
+            s.chat_input.clear();
+            s.chat_cursor_pos = 0;
+            s.text_selected = false;
+        }
         s.chat_input.insert_str(s.chat_cursor_pos, &clean_text);
         s.chat_cursor_pos += clean_text.len();
     } else if save_clipboard_image(hwnd, &s.db_path, "Pasted Image").is_some() {
         let marker = "[Pasted image saved to Clipboard History]";
+        if s.text_selected {
+            s.chat_input.clear();
+            s.chat_cursor_pos = 0;
+            s.text_selected = false;
+        }
         s.chat_input.insert_str(s.chat_cursor_pos, marker);
         s.chat_cursor_pos += marker.len();
     }
@@ -11227,6 +11782,35 @@ mod tests {
             .iter()
             .any(|r| { r.entry.control_name == "Agents" && r.entry.launch_command == "agents:" }));
         assert_eq!(clean_query_prefix("agents: Hermes"), "Hermes");
+    }
+
+    #[test]
+    fn default_hermes_prompt_includes_pc_control_skills() {
+        let prompt = default_hermes_system_prompt();
+        assert!(prompt.contains("open browser pages"));
+        assert!(prompt.contains("PowerShell"));
+        assert!(prompt.contains("After running any command"));
+    }
+
+    #[test]
+    fn local_agent_action_routes_reasoning_requests_to_agent() {
+        // "youtube"/"search" requests must NOT be intercepted anymore — they fall through to
+        // Hermes so it can reason (e.g. open a specific channel in a specific browser).
+        assert!(local_agent_action("open mrwhostheboss youtube channel on brave").is_none());
+        assert!(local_agent_action("open youtube and search for rust ownership").is_none());
+        // Explicit shell commands still take the deterministic fast path.
+        match local_agent_action("run powershell Get-Date") {
+            Some(LocalAgentAction::RunPowerShell { command }) => assert_eq!(command, "Get-Date"),
+            _ => panic!("expected RunPowerShell fast path"),
+        }
+    }
+
+    #[test]
+    fn agent_memory_extracts_explicit_remember_fact() {
+        assert_eq!(
+            extract_agent_memory_items("remember that I prefer concise answers."),
+            vec!["I prefer concise answers".to_string()]
+        );
     }
 
     #[test]

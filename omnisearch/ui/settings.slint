@@ -136,10 +136,14 @@ export component SettingsWindow inherits Window {
     in-out property <string> db-status;
     in-out property <bool> db-is-indexing;
     in-out property <[string]> db-folders;
+    in-out property <[string]> db-ignored-folders;
+    in-out property <string> db-ignore-input;
 
     // Database callbacks
     callback add-folder();
     callback remove-folder(int);
+    callback add-ignored-folder();
+    callback remove-ignored-folder(int);
     callback rebuild-index();
 
     // Update settings properties
@@ -1537,12 +1541,21 @@ export component SettingsWindow inherits Window {
                                             height: 36px;
                                             border-radius: 9px;
                                             background: #3b2a22;
-                                            Text {
-                                                text: "⚠️";
-                                                color: #f97316;
-                                                font-size: 16px;
-                                                horizontal-alignment: center;
-                                                vertical-alignment: center;
+                                            Rectangle {
+                                                width: 22px;
+                                                height: 22px;
+                                                x: 7px;
+                                                y: 7px;
+                                                border-radius: 11px;
+                                                background: #f97316;
+                                                Text {
+                                                    text: "!";
+                                                    color: #1f130d;
+                                                    font-size: 15px;
+                                                    font-weight: 800;
+                                                    horizontal-alignment: center;
+                                                    vertical-alignment: center;
+                                                }
                                             }
                                         }
                                     }
@@ -1565,6 +1578,7 @@ export component SettingsWindow inherits Window {
                                 }
                             }
                         }
+
                     }
                     
                     // Plugins Page
@@ -1614,7 +1628,7 @@ export component SettingsWindow inherits Window {
                                     if root.show-circle-info : HorizontalBox {
                                         padding-left: 16px; padding-right: 16px; padding-bottom: 10px; spacing: 12px;
                                         Text {
-                                            text: "💡 Trigger: Press Alt + C (Global Hotkey) or search 'lens' / 'circle to search' in the launcher. This freezes the screen so you can drag a selection box to search visually.";
+                                            text: "Trigger: click the Lens button in the launcher search bar or press Alt + C. This freezes the screen so you can drag a selection box to search visually.";
                                             color: root.text-muted;
                                             font-size: 11px;
                                             wrap: word-wrap;
@@ -1996,6 +2010,82 @@ export component SettingsWindow inherits Window {
                                                 width: 70px;
                                                 clicked => {
                                                     root.remove-folder(idx);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Section: Ignored folders
+                        VerticalBox {
+                            spacing: 12px;
+                            Text {
+                                text: "IGNORED FOLDER NAMES";
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: root.text-muted;
+                                letter-spacing: 1px;
+                            }
+
+                            Rectangle {
+                                background: root.card-bg;
+                                border-radius: 8px;
+                                border-color: root.border-color;
+                                border-width: 1px;
+
+                                VerticalBox {
+                                    padding: 12px;
+                                    spacing: 8px;
+
+                                    HorizontalBox {
+                                        spacing: 8px;
+                                        LineEdit {
+                                            text <=> root.db-ignore-input;
+                                            placeholder-text: "node_modules or .angular";
+                                            height: 34px;
+                                        }
+                                        Button {
+                                            text: "Add";
+                                            width: 72px;
+                                            clicked => { root.add-ignored-folder(); }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: "Names match folders anywhere under indexed directories.";
+                                        color: root.text-muted;
+                                        font-size: 12px;
+                                    }
+
+                                    if root.db-ignored-folders.length == 0: Text {
+                                        text: "No ignored folder names configured";
+                                        color: root.text-muted;
+                                        font-size: 13px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        height: 32px;
+                                    }
+                                    for folder[idx] in root.db-ignored-folders: Rectangle {
+                                        background: root.hover-bg;
+                                        border-radius: 6px;
+                                        height: 38px;
+                                        HorizontalBox {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            Text {
+                                                text: folder;
+                                                color: root.text-primary;
+                                                font-size: 13px;
+                                                vertical-alignment: center;
+                                            }
+                                            Rectangle { horizontal-stretch: 1; }
+                                            Button {
+                                                text: "Remove";
+                                                width: 70px;
+                                                clicked => {
+                                                    root.remove-ignored-folder(idx);
                                                 }
                                             }
                                         }

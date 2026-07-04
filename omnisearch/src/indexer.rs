@@ -19,6 +19,7 @@ const TEXT_EXTENSIONS: &[&str] = &[
     "conf", "env",
 ];
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "bmp", "gif", "webp"];
+const DEFAULT_CONFIGURED_IGNORED_DIRS: &[&str] = &["node_modules", ".angular"];
 
 fn is_indexable_content(ext: &str) -> bool {
     TEXT_EXTENSIONS.contains(&ext)
@@ -57,9 +58,140 @@ fn wait_for_file_lock(path: &Path) -> bool {
     false
 }
 
-fn path_in_ignored_dir(path: &Path) -> bool {
-    path.components()
-        .any(|c| c.as_os_str().to_str().map(is_ignored_dir).unwrap_or(false))
+fn normalize_ignored_dir_name(name: &str) -> Option<String> {
+    let trimmed = name.trim().trim_matches('"').trim_matches('\'');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let trimmed = trimmed.trim_end_matches(['/', '\\']);
+    let leaf = trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed).trim();
+    if leaf.is_empty() {
+        None
+    } else {
+        Some(leaf.to_ascii_lowercase())
+    }
+}
+
+fn app_db_path() -> PathBuf {
+    std::env::var("APPDATA")
+        .map(|appdata| {
+            PathBuf::from(appdata)
+                .join("omnisearch")
+                .join("file_index.db")
+        })
+        .unwrap_or_else(|_| PathBuf::from("file_index.db"))
+}
+
+fn ensure_ignored_folders_table(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ignored_folders (
+            name TEXT PRIMARY KEY COLLATE NOCASE
+        );",
+        [],
+    )?;
+    let count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM ignored_folders", [], |row| row.get(0))?;
+    if count == 0 {
+        for name in DEFAULT_CONFIGURED_IGNORED_DIRS {
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO ignored_folders (name) VALUES (?1)",
+                [name],
+            );
+        }
+    }
+    Ok(())
+}
+
+pub fn get_ignored_folder_names() -> Vec<String> {
+    let db_path = app_db_path();
+    let Some(parent) = db_path.parent() else {
+        return DEFAULT_CONFIGURED_IGNORED_DIRS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+    };
+    let _ = std::fs::create_dir_all(parent);
+    let Ok(conn) = Connection::open(db_path) else {
+        return DEFAULT_CONFIGURED_IGNORED_DIRS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+    };
+    if ensure_ignored_folders_table(&conn).is_err() {
+        return DEFAULT_CONFIGURED_IGNORED_DIRS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+    }
+    let Ok(mut stmt) = conn.prepare("SELECT name FROM ignored_folders ORDER BY lower(name)") else {
+        return Vec::new();
+    };
+    stmt.query_map([], |row| row.get::<_, String>(0))
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+}
+
+pub fn add_ignored_folder_name(name: &str) -> bool {
+    let Some(name) = normalize_ignored_dir_name(name) else {
+        return false;
+    };
+    let db_path = app_db_path();
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(conn) = Connection::open(db_path) else {
+        return false;
+    };
+    if ensure_ignored_folders_table(&conn).is_err() {
+        return false;
+    }
+    conn.execute(
+        "INSERT OR IGNORE INTO ignored_folders (name) VALUES (?1)",
+        [name],
+    )
+    .map(|rows| rows > 0)
+    .unwrap_or(false)
+}
+
+pub fn remove_ignored_folder_name(name: &str) -> bool {
+    let Some(name) = normalize_ignored_dir_name(name) else {
+        return false;
+    };
+    let Ok(conn) = Connection::open(app_db_path()) else {
+        return false;
+    };
+    if ensure_ignored_folders_table(&conn).is_err() {
+        return false;
+    }
+    conn.execute("DELETE FROM ignored_folders WHERE name = ?1", [name])
+        .map(|rows| rows > 0)
+        .unwrap_or(false)
+}
+
+fn configured_ignored_dirs() -> std::collections::HashSet<String> {
+    get_ignored_folder_names()
+        .iter()
+        .filter_map(|name| normalize_ignored_dir_name(name))
+        .collect()
+}
+
+fn is_ignored_dir_with_config(name: &str, configured: &std::collections::HashSet<String>) -> bool {
+    is_builtin_ignored_dir(name)
+        || normalize_ignored_dir_name(name)
+            .map(|name| configured.contains(&name))
+            .unwrap_or(false)
+}
+
+fn path_in_ignored_dir_with_config(
+    path: &Path,
+    configured: &std::collections::HashSet<String>,
+) -> bool {
+    path.components().any(|c| {
+        c.as_os_str()
+            .to_str()
+            .map(|name| is_ignored_dir_with_config(name, &configured))
+            .unwrap_or(false)
+    })
 }
 
 /// Index a single file immediately: upsert name/meta, plus content/OCR for indexable types.
@@ -166,6 +298,7 @@ pub fn start_watcher(db_path: PathBuf) {
         let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
         log_indexer("Watcher started");
+        let ignored_dirs = configured_ignored_dirs();
 
         let collect = |set: &mut std::collections::HashSet<PathBuf>,
                        res: notify::Result<notify::Event>| {
@@ -198,7 +331,7 @@ pub fn start_watcher(db_path: PathBuf) {
                 }
             }
             for p in paths {
-                if !path_in_ignored_dir(&p) {
+                if !path_in_ignored_dir_with_config(&p, &ignored_dirs) {
                     index_one_file(&conn, &p);
                 }
             }
@@ -320,7 +453,7 @@ fn get_priority_folders() -> Vec<PathBuf> {
     folders
 }
 
-fn is_ignored_dir(name: &str) -> bool {
+fn is_builtin_ignored_dir(name: &str) -> bool {
     let name_lower = name.to_lowercase();
     if name_lower.starts_with('$') {
         return true;
@@ -562,7 +695,6 @@ pub fn run_indexer_folders(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Res
     res
 }
 
-
 fn run_indexer_folders_inner(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::Result<()> {
     log_indexer(&format!(
         "run_indexer_folders started with folders: {:?}",
@@ -623,9 +755,10 @@ fn run_indexer_folders_inner(db_path: &Path, folders: Vec<PathBuf>) -> anyhow::R
             save_indexer_state_to_db(db_path, "progress", &g);
         }
         log_indexer(&format!("Folder exists, starting WalkDir: {:?}", folder));
+        let ignored_dirs = configured_ignored_dirs();
         let walker = WalkDir::new(&folder).into_iter().filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            !e.file_type().is_dir() || !is_ignored_dir(&name)
+            !e.file_type().is_dir() || !is_ignored_dir_with_config(&name, &ignored_dirs)
         });
 
         let mut folder_file_count = 0;
@@ -1050,5 +1183,32 @@ fn extract_ocr_text(path: &Path) -> Option<String> {
             path_str
         ));
         Some(trimmed.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn normalize_ignored_folder_name_uses_leaf_name() {
+        assert_eq!(
+            normalize_ignored_dir_name(r"C:\work\project\node_modules\"),
+            Some("node_modules".to_string())
+        );
+        assert_eq!(
+            normalize_ignored_dir_name("  .angular  "),
+            Some(".angular".to_string())
+        );
+        assert_eq!(normalize_ignored_dir_name("  "), None);
+    }
+
+    #[test]
+    fn configured_ignored_folder_matches_any_folder_name() {
+        let configured = HashSet::from([".angular".to_string()]);
+        assert!(is_ignored_dir_with_config(".angular", &configured));
+        assert!(is_ignored_dir_with_config("node_modules", &configured));
+        assert!(!is_ignored_dir_with_config("src", &configured));
     }
 }

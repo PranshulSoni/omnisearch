@@ -49,6 +49,41 @@ fn find_launcher_hwnd() -> Option<HWND> {
     None
 }
 
+fn notify_launcher_settings_changed() {
+    if let Some(hwnd) = find_launcher_hwnd() {
+        unsafe {
+            let _ = PostMessageW(
+                hwnd,
+                windows::Win32::UI::WindowsAndMessaging::WM_USER + 10,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
+    }
+}
+
+fn normalize_ignored_folder_name(name: &str) -> Option<String> {
+    let trimmed = name.trim().trim_matches('"').trim_matches('\'');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let trimmed = trimmed.trim_end_matches(['/', '\\']);
+    let leaf = trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed).trim();
+    if leaf.is_empty() {
+        None
+    } else {
+        Some(leaf.to_string())
+    }
+}
+
+fn ignored_folders_model() -> slint::ModelRc<slint::SharedString> {
+    let folders: Vec<slint::SharedString> = crate::indexer::get_ignored_folder_names()
+        .iter()
+        .map(|f| slint::SharedString::from(f.clone()))
+        .collect();
+    slint::ModelRc::new(slint::VecModel::from(folders))
+}
+
 fn get_desktop_wallpaper_path() -> Option<String> {
     // 1. Try Roaming AppData themes transcoded wallpaper (most reliable on Win10/11 for active slideshows/custom wallpapers)
     if let Ok(app_data) = std::env::var("APPDATA") {
@@ -199,6 +234,7 @@ pub fn run_settings_window() {
         .collect();
     let folders_model = slint::ModelRc::new(slint::VecModel::from(folders_vec));
     ui.set_db_folders(folders_model);
+    ui.set_db_ignored_folders(ignored_folders_model());
 
     // Load Available Agents from DB
     let mut slint_agents = Vec::new();
@@ -537,6 +573,31 @@ pub fn run_settings_window() {
                         );
                     }
                 }
+            }
+        }
+    });
+
+    let ui_weak_add_ignore = ui.as_weak();
+    ui.on_add_ignored_folder(move || {
+        if let Some(ui) = ui_weak_add_ignore.upgrade() {
+            let input = ui.get_db_ignore_input().to_string();
+            if let Some(name) = normalize_ignored_folder_name(&input) {
+                let _ = crate::indexer::add_ignored_folder_name(&name);
+                ui.set_db_ignored_folders(ignored_folders_model());
+                notify_launcher_settings_changed();
+                ui.set_db_ignore_input(SharedString::from(""));
+            }
+        }
+    });
+
+    let ui_weak_remove_ignore = ui.as_weak();
+    ui.on_remove_ignored_folder(move |idx| {
+        if let Some(ui) = ui_weak_remove_ignore.upgrade() {
+            let folders = crate::indexer::get_ignored_folder_names();
+            if idx >= 0 && (idx as usize) < folders.len() {
+                let _ = crate::indexer::remove_ignored_folder_name(&folders[idx as usize]);
+                ui.set_db_ignored_folders(ignored_folders_model());
+                notify_launcher_settings_changed();
             }
         }
     });

@@ -3883,26 +3883,6 @@ impl SearchEngine {
             let sub_query = q_lower_trimmed.strip_prefix("snip:").unwrap().trim();
             return self.search_snippets_only(sub_query);
         }
-        if matches!(
-            q_lower_trimmed.as_str(),
-            "lens" | "google lens" | "visual search" | "circle to search" | "circle search"
-        ) || q_lower_trimmed.starts_with("lens:")
-        {
-            return vec![SearchResult {
-                entry: CatalogEntry {
-                    id: "action.circle_to_search".to_string(),
-                    control_name: "Circle to Search".to_string(),
-                    breadcrumb_path: "Plugins > Google Lens".to_string(),
-                    launch_command: "action:circle_to_search".to_string(),
-                    source: "ACTION".to_string(),
-                    description: "Select an area of the screen and search it with Google Lens."
-                        .to_string(),
-                    synonyms: "lens google visual image circle search".to_string(),
-                },
-                score: 12.5,
-            }];
-        }
-
         // Quicklink keyword detection in general search
         let query_trimmed = q.trim();
         if !query_trimmed.is_empty() {
@@ -8510,20 +8490,6 @@ static QUICK_ACTIONS: &[QuickAction] = &[
         breadcrumb: "System > GDI > Capture screen pixel color",
         launch_command: "action:color_picker",
         description: "Launch full-screen pixel color picker to copy Hex colors to clipboard.",
-    },
-    QuickAction {
-        triggers: &[
-            "circle to search",
-            "circle search",
-            "lens",
-            "google lens",
-            "visual search",
-            "search screen",
-        ],
-        name: "Circle to Search",
-        breadcrumb: "Plugins > Circle to Search > Select part of the screen",
-        launch_command: "action:circle_to_search",
-        description: "Select part of the screen and search it with Google Lens.",
     },
 ];
 

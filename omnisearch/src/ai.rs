@@ -571,6 +571,25 @@ pub fn start_hermes_gateway_daemon() {
             .args(["config", "set", "platforms.api_server.extra.key", "hermes"])
             .creation_flags(0x08000000)
             .status();
+
+        // Expose the execution toolsets + skills to the API-server (gateway) agent so it can
+        // actually operate the PC — run PowerShell, open apps, control the desktop, use skills —
+        // instead of only having a browser tool and faking desktop actions ("Done" with nothing
+        // opened). These default to disabled on the api_server platform for server safety, so we
+        // opt in explicitly. Idempotent: safe to run on every launch / fresh install.
+        let _ = std::process::Command::new(&hermes_cmd)
+            .args([
+                "tools",
+                "enable",
+                "terminal",
+                "computer_use",
+                "code_execution",
+                "skills",
+                "--platform",
+                "api_server",
+            ])
+            .creation_flags(0x08000000)
+            .status();
     }
 
     if let Ok(appdata) = std::env::var("APPDATA") {
@@ -850,9 +869,18 @@ pub fn supports_runs_api() -> bool {
                 || cur.as_array().map_or(false, |_| true)
         })
     };
-    // If we can't find explicit flags but the endpoint exists, treat it as supported
-    // only when the approval-specific flag is present.
-    has("approval") || has("run_approval")
+    // The live gateway advertises the Runs API via `run_submission` (plus SSE + approval
+    // events). Earlier this only checked `approval` / `run_approval`, which the gateway
+    // NEVER emits — it uses `run_submission`, `run_approval_response` and `approval_events`.
+    // That mismatch made this probe always return false, so every agent request silently
+    // fell back to the tool-less chat-completions path and the agent could only *describe*
+    // actions ("Done") instead of executing them. Accept the real flags.
+    has("run_submission")
+        || has("run_approval_response")
+        || has("approval_events")
+        || has("run_events_sse")
+        || has("approval")
+        || has("run_approval")
 }
 
 /// Resolve a pending approval for a run: `approved=true` continues, `false` denies.

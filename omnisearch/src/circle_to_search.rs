@@ -20,9 +20,8 @@ pub fn start_lens_search_async() {
         let Ok(hinst) = GetModuleHandleW(None) else {
             return;
         };
-        if let Some((bmp, w, h)) = capture_screen() {
-            if let Some(overlay) = create_overlay_window(hinst, bmp, w, h) {
-                let _ = ShowWindow(overlay, SW_SHOW);
+        if let Some((bmp, x, y, w, h)) = capture_screen() {
+            if let Some(overlay) = create_overlay_window(hinst, bmp, x, y, w, h) {
                 let _ = UpdateWindow(overlay);
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -36,13 +35,15 @@ pub fn start_lens_search_async() {
     });
 }
 
-unsafe fn capture_screen() -> Option<(HBITMAP, i32, i32)> {
+unsafe fn capture_screen() -> Option<(HBITMAP, i32, i32, i32, i32)> {
     let screen_dc = GetDC(HWND::default());
     if screen_dc.is_invalid() {
         return None;
     }
-    let w = GetSystemMetrics(SM_CXSCREEN);
-    let h = GetSystemMetrics(SM_CYSCREEN);
+    let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
     let bmp = CreateCompatibleBitmap(screen_dc, w, h);
     if bmp.is_invalid() {
         let _ = ReleaseDC(HWND::default(), screen_dc);
@@ -55,16 +56,18 @@ unsafe fn capture_screen() -> Option<(HBITMAP, i32, i32)> {
         return None;
     }
     let old = SelectObject(mem_dc, bmp);
-    let _ = BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY);
+    let _ = BitBlt(mem_dc, 0, 0, w, h, screen_dc, x, y, SRCCOPY);
     let _ = SelectObject(mem_dc, old);
     let _ = DeleteDC(mem_dc);
     let _ = ReleaseDC(HWND::default(), screen_dc);
-    Some((bmp, w, h))
+    Some((bmp, x, y, w, h))
 }
 
 unsafe fn create_overlay_window(
     hinst: HMODULE,
     bmp: HBITMAP,
+    screen_x: i32,
+    screen_y: i32,
     screen_w: i32,
     screen_h: i32,
 ) -> Option<HWND> {
@@ -92,9 +95,9 @@ unsafe fn create_overlay_window(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         PCWSTR(class.as_ptr()),
         PCWSTR::null(),
-        WS_POPUP | WS_VISIBLE,
-        0,
-        0,
+        WS_POPUP,
+        screen_x,
+        screen_y,
         screen_w,
         screen_h,
         None,
@@ -104,7 +107,15 @@ unsafe fn create_overlay_window(
     );
     match hwnd {
         Ok(h) => {
-            let _ = SetWindowPos(h, HWND_TOPMOST, 0, 0, screen_w, screen_h, SWP_SHOWWINDOW);
+            let _ = SetWindowPos(
+                h,
+                HWND_TOPMOST,
+                screen_x,
+                screen_y,
+                screen_w,
+                screen_h,
+                SWP_SHOWWINDOW,
+            );
             let _ = SetForegroundWindow(h);
             Some(h)
         }
@@ -146,9 +157,9 @@ extern "system" fn overlay_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 LRESULT(0)
             }
             WM_MOUSEMOVE => {
+                let x = loword(lp.0 as u32);
+                let y = hiword(lp.0 as u32);
                 if data.active {
-                    let x = loword(lp.0 as u32);
-                    let y = hiword(lp.0 as u32);
                     let last = data.points.last().cloned();
                     if let Some(l) = last {
                         let dx = (l.x - x).abs();
@@ -156,10 +167,10 @@ extern "system" fn overlay_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         // Only add point if mouse moved at least 2 pixels to keep polygon size sane
                         if dx > 2 || dy > 2 {
                             data.points.push(POINT { x, y });
-                            let _ = InvalidateRect(hwnd, None, FALSE);
                         }
                     }
                 }
+                let _ = InvalidateRect(hwnd, None, FALSE);
                 LRESULT(0)
             }
             WM_LBUTTONUP => {
@@ -187,7 +198,7 @@ extern "system" fn overlay_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
 
                     if sw >= 8 && sh >= 8 && data.points.len() >= 3 {
                         if let Some(cropped) = crop_bitmap(data.bmp, sx, sy, sw, sh) {
-                            process_image_masked(cropped, &data.points, sx, sy);
+                            process_image(cropped);
                         }
                         let _ = DestroyWindow(hwnd);
                         PostQuitMessage(0);
@@ -218,40 +229,37 @@ extern "system" fn overlay_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
 unsafe fn paint_overlay(hwnd: HWND, data: &OverlayData) {
     let mut ps = PAINTSTRUCT::default();
     let hdc = BeginPaint(hwnd, &mut ps);
-    let mem_dc = CreateCompatibleDC(hdc);
-    let old = SelectObject(mem_dc, data.bmp);
-    
-    // Draw the bright screenshot base
+
+    let back_dc = CreateCompatibleDC(hdc);
+    let back_bmp = CreateCompatibleBitmap(hdc, data.screen_w, data.screen_h);
+    let old_back = SelectObject(back_dc, back_bmp);
+    let src_dc = CreateCompatibleDC(hdc);
+    let old_src = SelectObject(src_dc, data.bmp);
+
     let _ = BitBlt(
-        hdc,
+        back_dc,
         0,
         0,
         data.screen_w,
         data.screen_h,
-        mem_dc,
+        src_dc,
         0,
         0,
         SRCCOPY,
     );
 
-    // Create a darken shade overlay
     let shade_dc = CreateCompatibleDC(hdc);
     let shade_bmp = CreateCompatibleBitmap(hdc, data.screen_w, data.screen_h);
     let old_shade = SelectObject(shade_dc, shade_bmp);
-    let shade = CreateSolidBrush(rgb(0, 0, 0));
-    let old_brush = SelectObject(shade_dc, shade);
     let _ = PatBlt(shade_dc, 0, 0, data.screen_w, data.screen_h, BLACKNESS);
-    let _ = SelectObject(shade_dc, old_brush);
-    
     let blend = BLENDFUNCTION {
         BlendOp: AC_SRC_OVER as u8,
         BlendFlags: 0,
-        SourceConstantAlpha: 118,
+        SourceConstantAlpha: 96,
         AlphaFormat: 0,
     };
-    
     let _ = AlphaBlend(
-        hdc,
+        back_dc,
         0,
         0,
         data.screen_w,
@@ -264,73 +272,40 @@ unsafe fn paint_overlay(hwnd: HWND, data: &OverlayData) {
         blend,
     );
     let _ = SelectObject(shade_dc, old_shade);
-    let _ = DeleteObject(shade);
     let _ = DeleteObject(shade_bmp);
     let _ = DeleteDC(shade_dc);
 
-    // If the user has drawn a path, highlight the interior and draw the outline
     if data.points.len() > 1 {
-        // Create region for polygon
-        let hrgn = CreatePolygonRgn(&data.points, WINDING);
-        if !hrgn.is_invalid() {
-            // Clip hdc drawing to only the interior of the polygon
-            let _ = SelectClipRgn(hdc, hrgn);
-            // Redraw the bright screenshot inside the polygon
-            let _ = BitBlt(hdc, 0, 0, data.screen_w, data.screen_h, mem_dc, 0, 0, SRCCOPY);
-            // Restore clipping region
-            let _ = SelectClipRgn(hdc, HRGN::default());
-            let _ = DeleteObject(hrgn);
-        }
+        let glow = CreatePen(PS_SOLID, 8, rgb(30, 34, 42));
+        let old_pen = SelectObject(back_dc, glow);
+        let _ = Polyline(back_dc, &data.points);
+        let _ = SelectObject(back_dc, old_pen);
+        let _ = DeleteObject(glow);
 
-        // Draw the glowing lasso pen outline
-        let pen = CreatePen(PS_SOLID, 4, rgb(83, 189, 255));
-        let old_pen = SelectObject(hdc, pen);
-        let _ = Polyline(hdc, &data.points);
-        let _ = SelectObject(hdc, old_pen);
+        let pen = CreatePen(PS_SOLID, 4, rgb(245, 248, 255));
+        let old_pen = SelectObject(back_dc, pen);
+        let _ = Polyline(back_dc, &data.points);
+        let _ = SelectObject(back_dc, old_pen);
         let _ = DeleteObject(pen);
     }
 
-    // Draw the instructions top pill
-    let pill_w = 480.min(data.screen_w - 32);
-    let pill_h = 42;
-    let pill_x = (data.screen_w - pill_w) / 2;
-    let pill_y = 24;
-    let pill_bg = CreateSolidBrush(rgb(22, 24, 28));
-    let old_pill_brush = SelectObject(hdc, pill_bg);
-    let old_pill_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
-    let _ = RoundRect(
+    let _ = BitBlt(
         hdc,
-        pill_x,
-        pill_y,
-        pill_x + pill_w,
-        pill_y + pill_h,
-        18,
-        18,
-    );
-    let _ = SelectObject(hdc, old_pill_pen);
-    let _ = SelectObject(hdc, old_pill_brush);
-    let _ = DeleteObject(pill_bg);
-
-    let mut text: Vec<u16> = "Draw a circle or lasso around anything to search. Esc cancels."
-        .encode_utf16()
-        .collect();
-    let mut rect = RECT {
-        left: pill_x + 18,
-        top: pill_y,
-        right: pill_x + pill_w - 18,
-        bottom: pill_y + pill_h,
-    };
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, rgb(238, 238, 238));
-    let _ = DrawTextW(
-        hdc,
-        &mut text,
-        &mut rect,
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+        0,
+        0,
+        data.screen_w,
+        data.screen_h,
+        back_dc,
+        0,
+        0,
+        SRCCOPY,
     );
 
-    let _ = SelectObject(mem_dc, old);
-    let _ = DeleteDC(mem_dc);
+    let _ = SelectObject(src_dc, old_src);
+    let _ = DeleteDC(src_dc);
+    let _ = SelectObject(back_dc, old_back);
+    let _ = DeleteObject(back_bmp);
+    let _ = DeleteDC(back_dc);
     let _ = EndPaint(hwnd, &ps);
 }
 
@@ -356,8 +331,8 @@ unsafe fn crop_bitmap(src: HBITMAP, x: i32, y: i32, w: i32, h: i32) -> Option<HB
     Some(dst)
 }
 
-unsafe fn process_image_masked(hbmp: HBITMAP, points: &[POINT], min_x: i32, min_y: i32) {
-    let Some((rgba, w, h)) = bitmap_to_rgba_masked(hbmp, points, min_x, min_y) else {
+unsafe fn process_image(hbmp: HBITMAP) {
+    let Some((rgba, w, h)) = bitmap_to_rgba(hbmp) else {
         let _ = DeleteObject(hbmp);
         return;
     };
@@ -372,12 +347,7 @@ unsafe fn process_image_masked(hbmp: HBITMAP, points: &[POINT], min_x: i32, min_
     upload_to_lens(png);
 }
 
-unsafe fn bitmap_to_rgba_masked(
-    hbmp: HBITMAP,
-    points: &[POINT],
-    min_x: i32,
-    min_y: i32,
-) -> Option<(Vec<u8>, u32, u32)> {
+unsafe fn bitmap_to_rgba(hbmp: HBITMAP) -> Option<(Vec<u8>, u32, u32)> {
     let screen_dc = GetDC(HWND::default());
     let mem_dc = CreateCompatibleDC(screen_dc);
     let old = SelectObject(mem_dc, hbmp);
@@ -403,7 +373,7 @@ unsafe fn bitmap_to_rgba_masked(
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB.0;
-    
+
     let mut bgra = vec![0u8; (w * h * 4) as usize];
     let ok = GetDIBits(
         mem_dc,
@@ -421,60 +391,12 @@ unsafe fn bitmap_to_rgba_masked(
         return None;
     }
 
-    // 2. Create GDI polygon mask
-    let mask_dc = CreateCompatibleDC(screen_dc);
-    let mask_bmp = CreateCompatibleBitmap(screen_dc, w as i32, h as i32);
-    let old_mask = SelectObject(mask_dc, mask_bmp);
-    let _ = PatBlt(mask_dc, 0, 0, w as i32, h as i32, BLACKNESS);
-
-    let white_brush = CreateSolidBrush(rgb(255, 255, 255));
-    let old_brush = SelectObject(mask_dc, white_brush);
-    let old_pen = SelectObject(mask_dc, GetStockObject(NULL_PEN));
-
-    let local_points: Vec<POINT> = points
-        .iter()
-        .map(|p| POINT {
-            x: p.x - min_x,
-            y: p.y - min_y,
-        })
-        .collect();
-
-    let _ = SetPolyFillMode(mask_dc, WINDING);
-    let _ = Polygon(mask_dc, &local_points);
-
-    // 3. Read mask bits
-    let mut mask_bgra = vec![0u8; (w * h * 4) as usize];
-    let _ = GetDIBits(
-        mask_dc,
-        mask_bmp,
-        0,
-        h,
-        Some(mask_bgra.as_mut_ptr() as *mut _),
-        &mut bmi,
-        DIB_RGB_COLORS,
-    );
-
-    let _ = SelectObject(mask_dc, old_pen);
-    let _ = SelectObject(mask_dc, old_brush);
-    let _ = DeleteObject(white_brush);
-    let _ = SelectObject(mask_dc, old_mask);
-    let _ = DeleteObject(mask_bmp);
-    let _ = DeleteDC(mask_dc);
-
     let _ = SelectObject(mem_dc, old);
     let _ = DeleteDC(mem_dc);
     let _ = ReleaseDC(HWND::default(), screen_dc);
 
-    // 4. Apply mask: make pixels outside lasso transparent
-    for i in 0..(w * h) as usize {
-        let offset = i * 4;
-        let mask_val = mask_bgra[offset]; // Blue channel of mask
-        if mask_val < 128 {
-            bgra[offset + 3] = 0; // Transparent
-        } else {
-            bgra[offset + 3] = 255; // Opaque
-        }
-        bgra.swap(offset, offset + 2); // BGRA -> RGBA
+    for px in bgra.chunks_exact_mut(4) {
+        px.swap(0, 2);
     }
 
     Some((bgra, w, h))
