@@ -38,7 +38,9 @@ extern "system" {
 }
 
 // ── Layout ────────────────────────────────────────────────────────────────────
-const WIN_W: i32 = 840;
+const DEFAULT_WIN_W: i32 = 840;
+const MIN_WIN_W: i32 = 560;
+const SCREEN_EDGE_GAP: i32 = 32;
 const MAX_RESULTS: usize = 300;
 const VISIBLE_RESULTS: usize = 8;
 const PAD_L: i32 = 24;
@@ -65,6 +67,14 @@ const CONTENT_HEADER_H: i32 = 80;
 const LABEL_HEADER_H: i32 = 38;
 const HEIGHT_ANIM_MS: u128 = 90;
 const WM_MOUSELEAVE: u32 = 0x02A3;
+
+fn launcher_width_for_work_area(work_w: i32, desired_w: i32) -> i32 {
+    // ponytail: one clamp keeps the existing Appearance width setting useful without adding
+    // per-monitor profiles. Upgrade path: store widths per monitor ID if users need that.
+    let desired_w = desired_w.clamp(MIN_WIN_W, DEFAULT_WIN_W);
+    let available_w = (work_w - SCREEN_EDGE_GAP).max(1);
+    desired_w.min(available_w).max(240).min(work_w.max(1))
+}
 
 fn centered_in_result_row(row_y: i32, height: i32, item_h: i32) -> i32 {
     row_y + (item_h - height) / 2
@@ -327,6 +337,7 @@ struct State {
     results_stale: bool,
     selected: usize,
     anim: Anim,
+    launcher_w: i32,
     cx: i32,
     cy: i32,
     font_q: HFONT,
@@ -460,6 +471,9 @@ impl State {
     fn item_h(&self) -> i32 {
         self.app_settings.item_height as i32
     }
+    fn launcher_x(&self, client_w: i32) -> i32 {
+        (client_w - self.launcher_w) / 2
+    }
     fn has_prefix(&self) -> bool {
         let q = self.query.to_lowercase();
         q.starts_with("bookmarks:")
@@ -562,7 +576,7 @@ impl State {
         RECT {
             left: 0,
             top: y,
-            right: WIN_W,
+            right: self.launcher_w,
             bottom: y + self.item_h(),
         }
     }
@@ -651,7 +665,7 @@ fn main() {
     }
     if args.iter().any(|arg| arg == "--settings") {
         unsafe {
-            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             let _ = windows::Win32::System::Com::CoInitializeEx(
                 None,
                 windows::Win32::System::Com::COINIT_APARTMENTTHREADED
@@ -671,7 +685,7 @@ fn main() {
     let startup_settings = crate::settings::AppSettings::load();
     crate::settings_startup::sync_run_on_startup(startup_settings.run_on_startup);
     unsafe {
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let _ = windows::Win32::System::Com::CoInitializeEx(
             None,
             windows::Win32::System::Com::COINIT_APARTMENTTHREADED
@@ -980,6 +994,7 @@ unsafe fn run(first_settings_run: bool) {
         &app_settings.result_subtitle_font_weight,
     );
 
+    let initial_launcher_w = launcher_width_for_work_area(sw, app_settings.window_width as i32);
     let state = Box::new(State {
         app_settings,
         theme,
@@ -1001,6 +1016,7 @@ unsafe fn run(first_settings_run: bool) {
         results_stale: false,
         selected: 2,
         anim: Anim::Hidden,
+        launcher_w: initial_launcher_w,
         cx: sw / 2,
         cy: sh / 3,
         font_q,
@@ -1149,7 +1165,7 @@ unsafe fn run(first_settings_run: bool) {
     RegisterClassExW(&wc_preview);
 
     let sw = GetSystemMetrics(SM_CXSCREEN);
-    let win_x = (sw - WIN_W) / 2;
+    let win_x = (sw - initial_launcher_w) / 2;
     let hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         PCWSTR(class.as_ptr()),
@@ -1157,7 +1173,7 @@ unsafe fn run(first_settings_run: bool) {
         WS_POPUP,
         win_x,
         0,
-        WIN_W,
+        initial_launcher_w,
         800,
         HWND(null_mut()),
         HMENU(null_mut()),
@@ -3274,7 +3290,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 // same band the painter uses (the box is centered in the window).
                 let mut rc = RECT::default();
                 let _ = GetClientRect(hwnd, &mut rc);
-                let band_w = (rc.right - rc.left).min(WIN_W);
+                let band_w = (rc.right - rc.left).min(s.launcher_w);
                 let bx = (rc.right - rc.left - band_w) / 2;
                 let pad = 24;
                 let approve_x = bx + pad;
@@ -3308,7 +3324,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 let mut rc_client = RECT::default();
                 let _ = GetClientRect(hwnd, &mut rc_client);
                 let win_w = rc_client.right - rc_client.left;
-                let x_start = (win_w - WIN_W) / 2;
+                let x_start = s.launcher_x(win_w);
 
                 let body_top = y_start + SEARCH_H + 1;
                 let footer_h = 62;
@@ -3316,7 +3332,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 let content_bottom = y_start + SEARCH_H + 1 + actual_panel_h - footer_h;
                 let input_y = content_bottom + 8;
                 let input_x = x_start + 24;
-                let input_w = WIN_W - 48;
+                let input_w = s.launcher_w - 48;
 
                 if mx >= input_x && mx < input_x + input_w && my >= input_y && my < input_y + 34 {
                     s.chat_input_active = true;
@@ -3363,12 +3379,12 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
             let mut rc_client = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc_client);
             let win_w = rc_client.right - rc_client.left;
-            let x_start = (win_w - WIN_W) / 2;
+            let x_start = s.launcher_x(win_w);
             let by = s.launcher_top_y();
 
             if my >= by && my < by + SEARCH_H {
                 if s.shows_lens_action() {
-                    let lens_rect = search_lens_action_rect(x_start, by, WIN_W, s.search_h());
+                    let lens_rect = search_lens_action_rect(x_start, by, s.launcher_w, s.search_h());
                     if point_in_rect(mx, my, lens_rect) {
                         start_circle_to_search_from_launcher(hwnd, s);
                         return LRESULT(0);
@@ -3376,7 +3392,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 }
                 if s.shows_web_search_action() {
                     let web_rect =
-                        search_web_action_rect(x_start, by, WIN_W, s.search_h(), s.shows_lens_action());
+                        search_web_action_rect(x_start, by, s.launcher_w, s.search_h(), s.shows_lens_action());
                     if point_in_rect(mx, my, web_rect) {
                         open_query_on_web(hwnd, s);
                         return LRESULT(0);
@@ -3418,13 +3434,12 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                     }
                 }
 
-                // Click on "Best matches first" / "A–Z" chevron sort toggle
-                // The chevron sits at roughly (x_start + WIN_W - PAD_L - 120 .. x_start + WIN_W - PAD_L)
+                // Click on "Best matches first" / "A-Z" chevron sort toggle.
                 // on the row list_y + 48 .. list_y + 80.
                 let sort_row_top = list_y + 48;
                 let sort_row_bot = list_y + 80;
-                let sort_x_left = x_start + WIN_W / 2;
-                let sort_x_right = x_start + WIN_W - 12;
+                let sort_x_left = x_start + s.launcher_w / 2;
+                let sort_x_right = x_start + s.launcher_w - 12;
                 if my >= sort_row_top && my < sort_row_bot && mx >= sort_x_left && mx < sort_x_right {
                     s.sort_asc = !s.sort_asc;
                     apply_sort(&mut s.results, s.sort_asc, &s.query);
@@ -3437,7 +3452,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
             }
 
 
-            if s.submenu_active && mx >= x_start + (WIN_W - 240) {
+            if s.submenu_active && mx >= x_start + (s.launcher_w - 240) {
                 let start_y = s.launcher_top_y() + SEARCH_H + 16;
                 let action_h = 44;
                 for idx in 0..3 {
@@ -3507,13 +3522,13 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 let mut rc_client = RECT::default();
                 let _ = GetClientRect(hwnd, &mut rc_client);
                 let win_w = rc_client.right - rc_client.left;
-                let x_start = (win_w - WIN_W) / 2;
+                let x_start = s.launcher_x(win_w);
                 let by = s.launcher_top_y();
 
                 let mut new_search_action_hover = None;
                 if my >= by && my < by + SEARCH_H {
                     if s.shows_lens_action() {
-                        let r = search_lens_action_rect(x_start, by, WIN_W, s.search_h());
+                        let r = search_lens_action_rect(x_start, by, s.launcher_w, s.search_h());
                         if point_in_rect(_mx, my, r) {
                             new_search_action_hover = Some(SearchActionHover::Lens);
                         }
@@ -3522,7 +3537,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                         let r = search_web_action_rect(
                             x_start,
                             by,
-                            WIN_W,
+                            s.launcher_w,
                             s.search_h(),
                             s.shows_lens_action(),
                         );
@@ -4069,7 +4084,8 @@ unsafe fn animate_window(hwnd: HWND, s: &mut State, appearing: bool) {
             )
         };
 
-        let win_x = work_left + (work_w - WIN_W) / 2;
+        let launcher_w = launcher_width_for_work_area(work_w, s.app_settings.window_width as i32);
+        let win_x = work_left + (work_w - launcher_w) / 2;
         let win_y = work_top;
 
         applog::log(&format!(
@@ -4084,17 +4100,19 @@ unsafe fn animate_window(hwnd: HWND, s: &mut State, appearing: bool) {
         ));
 
         // Position and size the physical window to cover the entire work area vertically
+        // while keeping the launcher horizontally consistent on every monitor that can fit it.
+        s.launcher_w = launcher_w;
         let _ = SetWindowPos(
             hwnd,
             HWND(null_mut()),
             win_x,
             win_y,
-            WIN_W,
+            launcher_w,
             work_h,
             SWP_NOACTIVATE | SWP_NOZORDER,
         );
 
-        s.cx = WIN_W / 2;
+        s.cx = launcher_w / 2;
         s.cy = work_h / 2;
         s.last_mouse_x = pt.x;
         s.last_mouse_y = pt.y;
@@ -4197,14 +4215,16 @@ unsafe fn reset_launcher_window_position(hwnd: HWND, s: &mut State) {
     // Written before SetWindowPos: it can synchronously dispatch WM_WINDOWPOSCHANGED etc.
     // back into this wndproc, which would derive its own &mut State from the same
     // GWLP_USERDATA pointer as this function's `s` — writing after would alias it.
-    s.cx = WIN_W / 2;
+    let launcher_w = launcher_width_for_work_area(work_w, s.app_settings.window_width as i32);
+    s.launcher_w = launcher_w;
+    s.cx = launcher_w / 2;
     s.cy = work_h / 2;
     let _ = SetWindowPos(
         hwnd,
         HWND(null_mut()),
-        work_left + (work_w - WIN_W) / 2,
+        work_left + (work_w - launcher_w) / 2,
         work_top,
-        WIN_W,
+        launcher_w,
         work_h,
         SWP_NOACTIVATE | SWP_NOZORDER,
     );
@@ -4318,11 +4338,13 @@ unsafe fn stop_color_picker(hwnd: HWND, s: &mut State) {
         )
     };
 
-    let win_x = work_left + (work_w - WIN_W) / 2;
+    let launcher_w = launcher_width_for_work_area(work_w, s.app_settings.window_width as i32);
+    let win_x = work_left + (work_w - launcher_w) / 2;
     let win_y = work_top;
 
     // Written before SetWindowPos for the same reason as start_color_picker above.
-    s.cx = WIN_W / 2;
+    s.launcher_w = launcher_w;
+    s.cx = launcher_w / 2;
     s.cy = work_h / 2;
 
     let _ = SetWindowPos(
@@ -4330,7 +4352,7 @@ unsafe fn stop_color_picker(hwnd: HWND, s: &mut State) {
         HWND(null_mut()),
         win_x,
         win_y,
-        WIN_W,
+        launcher_w,
         work_h,
         SWP_NOACTIVATE | SWP_NOZORDER,
     );
@@ -6301,24 +6323,36 @@ unsafe fn tick_window_animation(hwnd: HWND, s: &mut State) -> bool {
     }
 }
 
-fn search_row_invalidation_rect(client_w: i32, cy: i32, current_h: i32, search_h: i32) -> RECT {
-    let x = (client_w - WIN_W) / 2;
+fn search_row_invalidation_rect(
+    client_w: i32,
+    launcher_w: i32,
+    cy: i32,
+    current_h: i32,
+    search_h: i32,
+) -> RECT {
+    let x = (client_w - launcher_w) / 2;
     let y = launcher_top_y(cy, current_h);
     RECT {
         left: x,
         top: y,
-        right: x + WIN_W,
+        right: x + launcher_w,
         bottom: y + search_h + 2,
     }
 }
 
-fn results_invalidation_rect(client_w: i32, cy: i32, current_h: i32, search_h: i32) -> RECT {
-    let x = (client_w - WIN_W) / 2;
+fn results_invalidation_rect(
+    client_w: i32,
+    launcher_w: i32,
+    cy: i32,
+    current_h: i32,
+    search_h: i32,
+) -> RECT {
+    let x = (client_w - launcher_w) / 2;
     let y = launcher_top_y(cy, current_h);
     RECT {
         left: x,
         top: y + search_h + 1,
-        right: x + WIN_W,
+        right: x + launcher_w,
         bottom: y + current_h,
     }
 }
@@ -6352,6 +6386,7 @@ unsafe fn invalidate_search_row(hwnd: HWND, s: &State) {
     if GetClientRect(hwnd, &mut client).is_ok() {
         let rect = search_row_invalidation_rect(
             client.right - client.left,
+            s.launcher_w,
             s.cy,
             s.paint_win_h(),
             s.search_h(),
@@ -6371,6 +6406,7 @@ unsafe fn invalidate_results_area(hwnd: HWND, s: &State) {
     if GetClientRect(hwnd, &mut client).is_ok() {
         let rect = results_invalidation_rect(
             client.right - client.left,
+            s.launcher_w,
             s.cy,
             s.paint_win_h(),
             s.search_h(),
@@ -12049,6 +12085,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn launcher_width_honors_setting_and_small_screens() {
+        assert_eq!(launcher_width_for_work_area(1920, 720), 720);
+        assert_eq!(launcher_width_for_work_area(1920, 1000), DEFAULT_WIN_W);
+        assert_eq!(launcher_width_for_work_area(640, 720), 608);
+        assert_eq!(launcher_width_for_work_area(300, 720), 268);
+    }
+
+    #[test]
     fn test_registered_app_paths() {
         let chrome = get_registered_app_path("chrome.exe");
         let firefox = get_registered_app_path("firefox.exe");
@@ -12195,7 +12239,7 @@ mod tests {
 
     #[test]
     fn search_row_invalidation_only_covers_search_header() {
-        let rect = search_row_invalidation_rect(900, 300, 581, 60);
+        let rect = search_row_invalidation_rect(900, DEFAULT_WIN_W, 300, 581, 60);
         assert_eq!(
             (rect.left, rect.top, rect.right, rect.bottom),
             (30, 10, 870, 72)
@@ -12204,7 +12248,7 @@ mod tests {
 
     #[test]
     fn results_invalidation_starts_below_search_header() {
-        let rect = results_invalidation_rect(900, 300, 581, 60);
+        let rect = results_invalidation_rect(900, DEFAULT_WIN_W, 300, 581, 60);
         assert_eq!(
             (rect.left, rect.top, rect.right, rect.bottom),
             (30, 71, 870, 591)
