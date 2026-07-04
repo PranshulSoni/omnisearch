@@ -14,7 +14,7 @@ fn main() {
         res.set_language(0x0409); // U.S. English
         res.set("FileDescription", "ProtonSearch Launcher");
         res.set("ProductName", "ProtonSearch");
-        res.set("OriginalFilename", "protonsearch.exe");
+        res.set("OriginalFilename", "ProtonSearch.exe");
         res.set("CompanyName", "Pranshul Soni");
         res.set("LegalCopyright", "Copyright (c) 2026 Pranshul Soni");
         res.compile().unwrap();

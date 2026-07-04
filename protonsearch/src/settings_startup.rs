@@ -83,12 +83,12 @@ mod tests {
     #[test]
     fn startup_command_quotes_paths_with_spaces() {
         assert_eq!(
-            format_startup_command(r"C:\Program Files\ProtonSearch\protonsearch.exe"),
-            r#""C:\Program Files\ProtonSearch\protonsearch.exe""#
+            format_startup_command(r"C:\Program Files\ProtonSearch\ProtonSearch.exe"),
+            r#""C:\Program Files\ProtonSearch\ProtonSearch.exe""#
         );
         assert_eq!(
-            format_startup_command(r#""C:\Program Files\ProtonSearch\protonsearch.exe""#),
-            r#""C:\Program Files\ProtonSearch\protonsearch.exe""#
+            format_startup_command(r#""C:\Program Files\ProtonSearch\ProtonSearch.exe""#),
+            r#""C:\Program Files\ProtonSearch\ProtonSearch.exe""#
         );
     }
 }

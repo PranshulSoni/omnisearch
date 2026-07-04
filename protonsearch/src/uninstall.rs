@@ -36,9 +36,9 @@ fn show_message(text: &str, title: &str, is_question: bool) -> bool {
 }
 
 fn kill_processes() {
-    // Terminate protonsearch.exe, plus the legacy omnisearch.exe name in case an old
+    // Terminate ProtonSearch.exe, plus the legacy omnisearch.exe name in case an old
     // install is still running under the previous branding.
-    for exe in ["protonsearch.exe", "omnisearch.exe"] {
+    for exe in ["ProtonSearch.exe", "protonsearch.exe", "omnisearch.exe"] {
         let _ = Command::new("taskkill")
             .args(["/F", "/IM", exe])
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
@@ -120,13 +120,13 @@ fn main() {
         return;
     }
 
-    // installer.iss installs to {localappdata}\Programs\protonsearch; older branding
+    // installer.iss installs to {localappdata}\Programs\ProtonSearch; older branding
     // generations used "omnisearch" and "OpenSearch OS". Clean all so upgrades from any
     // prior layout uninstall fully.
     let install_dir = PathBuf::from(&local_appdata)
         .join("Programs")
-        .join("protonsearch");
-    let legacy_install_dirs: Vec<PathBuf> = ["omnisearch", "OpenSearch OS"]
+        .join("ProtonSearch");
+    let legacy_install_dirs: Vec<PathBuf> = ["protonsearch", "omnisearch", "OpenSearch OS"]
         .iter()
         .map(|name| PathBuf::from(&local_appdata).join("Programs").join(name))
         .collect();

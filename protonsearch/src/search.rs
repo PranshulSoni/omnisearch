@@ -5744,7 +5744,7 @@ mod tests {
                 launch_command: "copy_image:C:\\clip.bmp".to_string(),
                 source: "CLIPBOARD".to_string(),
                 description: "🔤 ProtonSearch.exe".to_string(),
-                synonyms: "protonsearch.exe".to_string(),
+                synonyms: "ProtonSearch.exe".to_string(),
             },
             score: 1.0,
         });
