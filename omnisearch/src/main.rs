@@ -11542,6 +11542,13 @@ unsafe fn import_windows_clipboard_history(db_path: &std::path::Path) {
                                                                                 .to_path_buf();
                                                                             std::thread::spawn(
                                                                                 move || {
+                                                                                    let com_initialized = unsafe {
+                                                                                        windows::Win32::System::Com::CoInitializeEx(
+                                                                                            None,
+                                                                                            windows::Win32::System::Com::COINIT_MULTITHREADED,
+                                                                                        )
+                                                                                    }
+                                                                                    .is_ok();
                                                                                     if let Some(text) = indexer::ocr_image_file(std::path::Path::new(&ocr_path)) {
                                                                                     if let Ok(c) = rusqlite::Connection::open(&ocr_db) {
                                                                                         let _ = c.busy_timeout(std::time::Duration::from_secs(5));
@@ -11551,6 +11558,11 @@ unsafe fn import_windows_clipboard_history(db_path: &std::path::Path) {
                                                                                         );
                                                                                     }
                                                                                 }
+                                                                                    if com_initialized {
+                                                                                        unsafe {
+                                                                                            windows::Win32::System::Com::CoUninitialize();
+                                                                                        }
+                                                                                    }
                                                                                 },
                                                                             );
                                                                         }
