@@ -2690,19 +2690,38 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                             reset_cursor_blink(hwnd, s);
                             let _ = InvalidateRect(hwnd, None, FALSE);
                             let hwnd_ocr = hwnd.0 as usize;
+                            let db_path_ocr = s.db_path.clone();
                             std::thread::spawn(move || {
-                                let _ = unsafe {
+                                let com_initialized = unsafe {
                                     windows::Win32::System::Com::CoInitializeEx(
                                         None,
                                         windows::Win32::System::Com::COINIT_MULTITHREADED,
                                     )
-                                };
-                                let result = indexer::ocr_image_file(std::path::Path::new(&path_owned));
-                                unsafe { windows::Win32::System::Com::CoUninitialize(); }
+                                }
+                                .is_ok();
+                                let result =
+                                    indexer::ocr_image_file(std::path::Path::new(&path_owned));
+                                if let Some(text) = &result {
+                                    if let Ok(conn) = rusqlite::Connection::open(&db_path_ocr) {
+                                        let _ =
+                                            conn.busy_timeout(std::time::Duration::from_secs(5));
+                                        let _ = conn.execute(
+                                            "UPDATE clipboard_history SET ocr_text = ? WHERE content = ?;",
+                                            rusqlite::params![text, path_owned],
+                                        );
+                                    }
+                                }
+                                if com_initialized {
+                                    unsafe {
+                                        windows::Win32::System::Com::CoUninitialize();
+                                    }
+                                }
                                 let ptr = Box::into_raw(Box::new(result));
                                 let _ = unsafe {
                                     windows::Win32::UI::WindowsAndMessaging::PostMessageW(
-                                        windows::Win32::Foundation::HWND(hwnd_ocr as *mut std::ffi::c_void),
+                                        windows::Win32::Foundation::HWND(
+                                            hwnd_ocr as *mut std::ffi::c_void,
+                                        ),
                                         WM_OCR_RESULT,
                                         WPARAM(0),
                                         LPARAM(ptr as isize),
@@ -5911,16 +5930,29 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 // Runs on a background MTA thread to avoid deadlocking the STA window thread.
                 let path_owned = path.to_string();
                 let hwnd_ocr = hwnd.0 as usize;
+                let db_path_ocr = s.db_path.clone();
                 std::thread::spawn(move || {
-                    let _ = unsafe {
+                    let com_initialized = unsafe {
                         windows::Win32::System::Com::CoInitializeEx(
                             None,
                             windows::Win32::System::Com::COINIT_MULTITHREADED,
                         )
-                    };
+                    }
+                    .is_ok();
                     let result = indexer::ocr_image_file(std::path::Path::new(&path_owned));
-                    unsafe {
-                        windows::Win32::System::Com::CoUninitialize();
+                    if let Some(text) = &result {
+                        if let Ok(conn) = rusqlite::Connection::open(&db_path_ocr) {
+                            let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+                            let _ = conn.execute(
+                                "UPDATE clipboard_history SET ocr_text = ? WHERE content = ?;",
+                                rusqlite::params![text, path_owned],
+                            );
+                        }
+                    }
+                    if com_initialized {
+                        unsafe {
+                            windows::Win32::System::Com::CoUninitialize();
+                        }
                     }
                     let ptr = Box::into_raw(Box::new(result));
                     let _ = unsafe {
@@ -5943,15 +5975,22 @@ unsafe fn execute_selected(hwnd: HWND, s: &mut State) {
                 // deadlocking the STA main window thread.
                 let hwnd_ocr = hwnd.0 as usize;
                 std::thread::spawn(move || {
-                    let _ = unsafe {
+                    let com_initialized = unsafe {
                         windows::Win32::System::Com::CoInitializeEx(
                             None,
                             windows::Win32::System::Com::COINIT_MULTITHREADED,
                         )
+                    }
+                    .is_ok();
+                    let result = unsafe {
+                        ocr_clipboard_image_with_win32_fallback(windows::Win32::Foundation::HWND(
+                            hwnd_ocr as *mut std::ffi::c_void,
+                        ))
                     };
-                    let result = indexer::ocr_clipboard_image();
-                    unsafe {
-                        windows::Win32::System::Com::CoUninitialize();
+                    if com_initialized {
+                        unsafe {
+                            windows::Win32::System::Com::CoUninitialize();
+                        }
                     }
                     // Box the Option<String> and post it back to the window proc.
                     let ptr = Box::into_raw(Box::new(result));
@@ -11229,6 +11268,25 @@ unsafe fn save_clipboard_image(
     });
 
     Some(img_path.to_string_lossy().to_string())
+}
+
+unsafe fn ocr_clipboard_image_with_win32_fallback(hwnd: HWND) -> Option<String> {
+    if let Some(text) = indexer::ocr_clipboard_image() {
+        return Some(text);
+    }
+
+    let bmp_bytes = capture_clipboard_bmp_bytes(hwnd)?;
+    let path = std::env::temp_dir().join(format!(
+        "omnisearch_clipboard_ocr_{}.bmp",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    std::fs::write(&path, bmp_bytes).ok()?;
+    let result = indexer::ocr_image_file(&path);
+    let _ = std::fs::remove_file(path);
+    result
 }
 
 fn latest_clipboard_image_path(db_path: &std::path::Path) -> Option<String> {
