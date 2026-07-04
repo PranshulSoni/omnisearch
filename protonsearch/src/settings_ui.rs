@@ -673,7 +673,7 @@ pub fn run_settings_window() {
 
         std::thread::spawn(move || {
             let res = ureq::get(
-                "https://raw.githubusercontent.com/PranshulSoni/omnisearch/main/update.json",
+                "https://raw.githubusercontent.com/PranshulSoni/protonsearch/main/update.json",
             )
             .timeout(std::time::Duration::from_secs(10))
             .call();

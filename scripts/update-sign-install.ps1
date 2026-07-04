@@ -1,5 +1,5 @@
 param(
-    [string]$Repo = "PranshulSoni/omnisearch",
+    [string]$Repo = "PranshulSoni/protonsearch",
     [string]$AssetPattern = "protonsearchsetup*.exe",
     [string]$OutputDir = "$env:TEMP\ProtonSearchUpdate",
     [string]$TimestampUrl = "http://timestamp.digicert.com",

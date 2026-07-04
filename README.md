@@ -11,9 +11,9 @@
 <p align="center">
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows-0078D4?style=flat-square" />
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green?style=flat-square" /></a>
-  <a href="https://github.com/PranshulSoni/omnisearch/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/PranshulSoni/omnisearch?style=flat-square&label=stars&color=yellow" /></a>
-  <a href="https://github.com/PranshulSoni/omnisearch/releases"><img src="https://badgen.net/github/release/PranshulSoni/omnisearch" alt="Release"/></a>
-  <a href="https://github.com/PranshulSoni/omnisearch/releases"><img alt="downloads" src="https://img.shields.io/github/downloads/PranshulSoni/omnisearch/total?style=flat-square&label=downloads&color=brightgreen" /></a>
+  <a href="https://github.com/PranshulSoni/protonsearch/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/PranshulSoni/protonsearch?style=flat-square&label=stars&color=yellow" /></a>
+  <a href="https://github.com/PranshulSoni/protonsearch/releases"><img src="https://badgen.net/github/release/PranshulSoni/protonsearch" alt="Release"/></a>
+  <a href="https://github.com/PranshulSoni/protonsearch/releases"><img alt="downloads" src="https://img.shields.io/github/downloads/PranshulSoni/protonsearch/total?style=flat-square&label=downloads&color=brightgreen" /></a>
 </p>
 
 ProtonSearch is a fast, local-first Windows launcher that helps users find and open anything already on their PC from one keyboard shortcut.
@@ -54,7 +54,7 @@ ProtonSearch brings all of it into one fast, keyboard-first command center. Pres
 
 If ProtonSearch looks useful, star the repo so more Windows users can find it:
 
-[Star ProtonSearch on GitHub](https://github.com/PranshulSoni/omnisearch)
+[Star ProtonSearch on GitHub](https://github.com/PranshulSoni/protonsearch)
 
 ## Installation
 
@@ -63,12 +63,12 @@ If ProtonSearch looks useful, star the repo so more Windows users can find it:
 > Run this in Windows PowerShell:
 >
 > ```powershell
-> curl.exe -fsSL https://raw.githubusercontent.com/PranshulSoni/omnisearch/lean-build/scripts/install.ps1 | powershell -NoProfile -ExecutionPolicy Bypass -
+> curl.exe -fsSL https://raw.githubusercontent.com/PranshulSoni/protonsearch/lean-build/scripts/install.ps1 | powershell -NoProfile -ExecutionPolicy Bypass -
 > ```
 >
 > This downloads the latest ProtonSearch release from GitHub and opens the Windows installer.
 
-Manual download: get the latest Windows build from the [ProtonSearch releases page](https://github.com/PranshulSoni/omnisearch/releases), then run the installer.
+Manual download: get the latest Windows build from the [ProtonSearch releases page](https://github.com/PranshulSoni/protonsearch/releases), then run the installer.
 
 After installation:
 
