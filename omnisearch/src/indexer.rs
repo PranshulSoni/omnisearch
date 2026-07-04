@@ -1057,11 +1057,11 @@ fn read_text_file(path: &Path) -> std::io::Result<String> {
 /// Uses the same WinRT OcrEngine as the file path, but sources the SoftwareBitmap straight
 /// from the clipboard bitmap stream. Returns None if there's no image or no text found.
 pub fn ocr_clipboard_image() -> Option<String> {
+    use windows::core::Interface;
     use windows::ApplicationModel::DataTransfer::{Clipboard, StandardDataFormats};
     use windows::Graphics::Imaging::{
         BitmapAlphaMode, BitmapDecoder, BitmapPixelFormat, SoftwareBitmap,
     };
-    use windows::core::Interface;
     use windows::Media::Ocr::OcrEngine;
     use windows::Storage::Streams::IRandomAccessStream;
 
@@ -1077,8 +1077,7 @@ pub fn ocr_clipboard_image() -> Option<String> {
 
     let decoder = BitmapDecoder::CreateAsync(&stream).ok()?.get().ok()?;
     // Guard against absurdly large pastes (OOM protection, same spirit as the file path).
-    if decoder.PixelWidth().unwrap_or(9999) > 6000 || decoder.PixelHeight().unwrap_or(9999) > 6000
-    {
+    if decoder.PixelWidth().unwrap_or(9999) > 6000 || decoder.PixelHeight().unwrap_or(9999) > 6000 {
         return None;
     }
     let raw = decoder.GetSoftwareBitmapAsync().ok()?.get().ok()?;

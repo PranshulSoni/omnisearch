@@ -10366,6 +10366,9 @@ fn source_priority(source: &str, command: &str) -> f32 {
 fn result_matches_filter(r: &SearchResult, ftype: FilterType) -> bool {
     let src = r.entry.source.as_str();
     let cmd = r.entry.launch_command.as_str();
+    let is_clipboard_ocr = src == "CLIPBOARD"
+        && cmd.starts_with("copy_image:")
+        && r.entry.description.starts_with("🔤");
     match ftype {
         FilterType::All => true,
         FilterType::Files => src == "FILE" || src == "RECENT",
@@ -10377,9 +10380,10 @@ fn result_matches_filter(r: &SearchResult, ftype: FilterType) -> bool {
                 || src == "PDF"
                 || src == "DOCX"
                 || src == "OCR"
+                || is_clipboard_ocr
         }
         FilterType::Images => src == "IMAGE" || cmd.starts_with("copy_image:"),
-        FilterType::OCR => src == "OCR",
+        FilterType::OCR => src == "OCR" || is_clipboard_ocr,
         FilterType::Code => {
             src == "CODE"
                 || src == "CODE_CONTENT"
@@ -11978,6 +11982,26 @@ mod tests {
         assert_eq!(counts[filter_index(FilterType::Images)], 0);
         assert_eq!(counts[filter_index(FilterType::Content)], 1); // OCR counts as content
         assert_eq!(counts[filter_index(FilterType::OCR)], 1);
+    }
+
+    #[test]
+    fn clipboard_ocr_image_matches_ocr_filter() {
+        let result = SearchResult {
+            score: 1.0,
+            entry: search::CatalogEntry {
+                id: "clip.image.1".to_string(),
+                control_name: "[Image] Copied from Snipping Tool".to_string(),
+                breadcrumb_path: "Clipboard > Snipping Tool".to_string(),
+                launch_command: "copy_image:C:\\clip.bmp".to_string(),
+                source: "CLIPBOARD".to_string(),
+                description: "🔤 invoice total due".to_string(),
+                synonyms: "image clipboard invoice total due".to_string(),
+            },
+        };
+
+        assert!(result_matches_filter(&result, FilterType::Images));
+        assert!(result_matches_filter(&result, FilterType::Content));
+        assert!(result_matches_filter(&result, FilterType::OCR));
     }
 
     #[test]
