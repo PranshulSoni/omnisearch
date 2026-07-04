@@ -115,10 +115,40 @@ begin
   end;
 end;
 
+procedure RemoveLegacyOmniSearchInstall;
+var
+  LegacyInstallDir: String;
+  LegacyProgramsDir: String;
+  ResultCode: Integer;
+begin
+  // Remove the old OmniSearch application install while keeping %APPDATA%\omnisearch intact.
+  // ProtonSearch migrates that data directory on first launch; deleting it here would lose
+  // indexes, settings, clipboard history, snippets, agents, and AI config.
+  LegacyInstallDir := ExpandConstant('{localappdata}\Programs\omnisearch');
+  if DirExists(LegacyInstallDir) then
+  begin
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM omnisearch.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    DelTree(LegacyInstallDir, True, True, True);
+    Log('Removed legacy OmniSearch install directory: ' + LegacyInstallDir);
+  end;
+
+  DeleteFile(ExpandConstant('{userdesktop}\omnisearch.lnk'));
+  LegacyProgramsDir := ExpandConstant('{userprograms}\omnisearch');
+  if DirExists(LegacyProgramsDir) then
+  begin
+    DelTree(LegacyProgramsDir, True, True, True);
+    Log('Removed legacy OmniSearch Start Menu folder: ' + LegacyProgramsDir);
+  end;
+
+  RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\omnisearch_is1');
+  RegDeleteKeyIncludingSubkeys(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\omnisearch_is1');
+end;
+
 // PrepareToInstall runs just before the file copy, so the exe is guaranteed free by then.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   NeedsRestart := False;
   TerminateApp;
+  RemoveLegacyOmniSearchInstall;
   Result := '';
 end;
