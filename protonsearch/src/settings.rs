@@ -90,6 +90,9 @@ pub struct AppSettings {
 
     #[serde(default = "default_true")]
     pub plugin_git_commits: bool,
+
+    #[serde(default = "default_true")]
+    pub show_clipboard_image_text_action: bool,
 }
 
 impl Default for AppSettings {
@@ -122,6 +125,7 @@ impl Default for AppSettings {
             plugin_color_picker: default_true(),
             plugin_calculator: default_true(),
             plugin_git_commits: default_true(),
+            show_clipboard_image_text_action: default_true(),
         }
     }
 }
@@ -280,5 +284,10 @@ mod tests {
     #[test]
     fn git_commits_plugin_defaults_on() {
         assert!(AppSettings::default().plugin_git_commits);
+    }
+
+    #[test]
+    fn clipboard_image_text_action_defaults_on() {
+        assert!(AppSettings::default().show_clipboard_image_text_action);
     }
 }

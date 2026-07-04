@@ -46,10 +46,12 @@ const BADGE_W: i32 = 54;
 const BADGE_H: i32 = 18;
 const SEARCH_ICON_SIZE: i32 = 44;
 const SEARCH_LENS_BUTTON_SIZE: i32 = 32;
-const SEARCH_LENS_ICON_SIZE: i32 = 24;
-const SEARCH_WEB_BUTTON_W: i32 = 138;
+const SEARCH_LENS_ICON_SIZE: i32 = 26;
+const SEARCH_WEB_BUTTON_W: i32 = 124;
 const SEARCH_ACTION_GAP: i32 = 8;
 const RESULT_ICON_SIZE: i32 = 32;
+const MAX_OWNED_ICON_CACHE: usize = 256;
+const MAX_THUMBNAIL_CACHE: usize = 64;
 // Agent icons (homepage Agents/Agent History + the agents:/agentchats: scoped views) draw
 // larger than other result icons so the logo reads clearly instead of looking tiny.
 const AGENT_ICON_SIZE: i32 = 40;
@@ -375,6 +377,7 @@ struct State {
     last_mouse_x: i32,
     last_mouse_y: i32,
     app_icons: std::collections::HashMap<String, HICON>,
+    app_icons_owned: std::collections::HashSet<String>,
     pending_icons: std::collections::HashSet<String>,
     clipboard_thumbnails: std::cell::RefCell<std::collections::HashMap<String, HBITMAP>>,
     selected_clip_ids: std::collections::HashSet<String>,
@@ -1042,6 +1045,7 @@ unsafe fn run(first_settings_run: bool) {
         last_mouse_x: -1,
         last_mouse_y: -1,
         app_icons: std::collections::HashMap::new(),
+        app_icons_owned: std::collections::HashSet::new(),
         pending_icons: std::collections::HashSet::new(),
         clipboard_thumbnails: std::cell::RefCell::new(std::collections::HashMap::new()),
         selected_clip_ids: std::collections::HashSet::new(),
@@ -1204,17 +1208,17 @@ unsafe fn run(first_settings_run: bool) {
                             } else {
                                 get_app_icon(&req.key)
                             };
-                            if !hicon.0.is_null() {
-                                let key_ptr = Box::into_raw(Box::new(req.key));
-                                if PostMessageW(
-                                    hwnd_raw.0,
-                                    WM_ICON_LOADED,
-                                    WPARAM(hicon.0 as usize),
-                                    LPARAM(key_ptr as isize),
-                                )
-                                .is_err()
-                                {
-                                    let _ = Box::from_raw(key_ptr);
+                            let key_ptr = Box::into_raw(Box::new(req.key));
+                            if PostMessageW(
+                                hwnd_raw.0,
+                                WM_ICON_LOADED,
+                                WPARAM(hicon.0 as usize),
+                                LPARAM(key_ptr as isize),
+                            )
+                            .is_err()
+                            {
+                                let _ = Box::from_raw(key_ptr);
+                                if !hicon.0.is_null() {
                                     let _ = DestroyIcon(hicon);
                                 }
                             }
@@ -1570,6 +1574,7 @@ unsafe fn show_preview_window(hwnd_parent: HWND, s: *mut State) {
         let hbitmap = cache.get(path).copied().or_else(|| {
             load_shell_thumbnail(path, 256).inspect(|h| {
                 cache.insert(path.to_string(), *h);
+                prune_thumbnail_cache(&mut cache, path);
             })
         });
 
@@ -1873,14 +1878,15 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
             s.pending_icons.remove(&key);
 
             if !hicon.0.is_null() {
-                // Insert the loaded HICON into the map
-                if let Some(old_hicon) = s.app_icons.insert(key, hicon) {
-                    if !old_hicon.0.is_null() && old_hicon != hicon {
+                if let Some(old_hicon) = s.app_icons.insert(key.clone(), hicon) {
+                    if s.app_icons_owned.remove(&key) && !old_hicon.0.is_null() && old_hicon != hicon {
                         unsafe {
                             let _ = DestroyIcon(old_hicon);
                         }
                     }
                 }
+                s.app_icons_owned.insert(key);
+                prune_owned_icon_cache(s, "");
             }
 
             let _ = KillTimer(hwnd, TIMER_ICON_BATCH);
@@ -2030,6 +2036,7 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                     // Clear stale WINDOW icon cache when new window results arrive
                     if s.results.iter().any(|r| r.entry.source == "WINDOW") {
                         s.app_icons.retain(|k, _| !k.starts_with("window:"));
+                        s.app_icons_owned.retain(|k| !k.starts_with("window:"));
                     }
                     trigger_icon_loading(hwnd, s);
                     sync_height_animation(hwnd, s);
@@ -3680,13 +3687,8 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                     let _ = DestroyIcon(s.icon_brave);
                 }
                 for (key, &hicon) in &s.app_icons {
-                    if !hicon.0.is_null() {
-                        // Window icon handles are owned by other windows (obtained via
-                        // SendMessage(WM_GETICON) or GetClassLongPtrW) and must NOT be
-                        // destroyed — doing so corrupts the system-wide icon cache.
-                        if !key.starts_with("window:") {
-                            let _ = DestroyIcon(hicon);
-                        }
+                    if s.app_icons_owned.contains(key) && !hicon.0.is_null() {
+                        let _ = DestroyIcon(hicon);
                     }
                 }
                 for &hbmp in s.clipboard_thumbnails.borrow().values() {
@@ -3803,6 +3805,15 @@ unsafe extern "system" fn wnd_proc_inner(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
 
                 if let Ok(cfg) = ai::get_config() {
                     configure_hermes_llm(&cfg.endpoint, &cfg.model, &cfg.api_key);
+                }
+
+                if s.query.is_empty() {
+                    s.results = default_homepage_results_for_settings(&s.app_settings);
+                    s.selected = s.selected.min(s.results.len().saturating_sub(1));
+                    s.homepage_sel = s.homepage_sel.min(s.results.len().saturating_sub(1));
+                    s.scroll_offset = 0;
+                    s.result_reasons.clear();
+                    sync_height_animation(hwnd, s);
                 }
 
                 // Parse theme manually if needed, or trigger redraw
@@ -3963,7 +3974,6 @@ unsafe fn get_custom_monitor() -> HMONITOR {
 // would alias it — undefined behavior that the LTO/opt-level=3 build is free to
 // exploit (e.g. caching a stale field value across the call).
 unsafe fn animate_window(hwnd: HWND, s: &mut State, appearing: bool) {
-
     let start_time = std::time::Instant::now();
     let start_p = match (appearing, &s.anim) {
         (true, Anim::Hiding { .. }) | (false, Anim::Appearing { .. }) => s.current_p(),
@@ -7379,6 +7389,27 @@ unsafe fn get_file_icon(path: &str) -> HICON {
     }
 }
 
+fn owned_icon_eviction_key(
+    owned: &std::collections::HashSet<String>,
+    keep: &str,
+) -> Option<String> {
+    owned.iter().find(|key| key.as_str() != keep).cloned()
+}
+
+unsafe fn prune_owned_icon_cache(s: &mut State, keep: &str) {
+    while s.app_icons_owned.len() > MAX_OWNED_ICON_CACHE {
+        let Some(key) = owned_icon_eviction_key(&s.app_icons_owned, keep) else {
+            break;
+        };
+        s.app_icons_owned.remove(&key);
+        if let Some(hicon) = s.app_icons.remove(&key) {
+            if !hicon.0.is_null() {
+                let _ = DestroyIcon(hicon);
+            }
+        }
+    }
+}
+
 unsafe fn trigger_icon_loading(_hwnd: HWND, s: &mut State) {
     if s.icon_tx.is_none() {
         return;
@@ -7950,7 +7981,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         );
         if !s.icon_web_action.0.is_null() {
             let icon_size = 18;
-            let icon_x = web_rect.left + 12;
+            let icon_x = web_rect.left + 10;
             let icon_y = web_rect.top + (btn_h - icon_size) / 2;
             let _ = DrawIconEx(
                 mdc,
@@ -7976,9 +8007,9 @@ unsafe fn paint(hwnd: HWND, s: &State) {
         );
         let mut web_label: Vec<u16> = "Search web".encode_utf16().collect();
         let mut web_label_rect = RECT {
-            left: web_rect.left + 38,
+            left: web_rect.left + 34,
             top: web_rect.top,
-            right: web_rect.right - 10,
+            right: web_rect.right - 6,
             bottom: web_rect.bottom,
         };
         let _ = DrawTextW(
@@ -9324,6 +9355,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                             hbitmap,
                         );
                         cache.insert(path.to_string(), hbitmap);
+                        prune_thumbnail_cache(&mut cache, path);
                         drew_thumbnail = true;
                     }
                 }
@@ -9607,6 +9639,7 @@ unsafe fn paint(hwnd: HWND, s: &State) {
                     let hbitmap = cache.get(path).copied().or_else(|| {
                         load_shell_thumbnail(path, 256).inspect(|h| {
                             cache.insert(path.to_string(), *h);
+                            prune_thumbnail_cache(&mut cache, path);
                         })
                     });
                     if let Some(hbitmap) = hbitmap {
@@ -10133,6 +10166,12 @@ unsafe fn paint(hwnd: HWND, s: &State) {
 
 fn default_homepage_results() -> Vec<crate::search::SearchResult> {
     let settings = crate::settings::AppSettings::load();
+    default_homepage_results_for_settings(&settings)
+}
+
+fn default_homepage_results_for_settings(
+    settings: &crate::settings::AppSettings,
+) -> Vec<crate::search::SearchResult> {
     let items = [
         (
             "Browser Bookmarks",
@@ -10172,7 +10211,8 @@ fn default_homepage_results() -> Vec<crate::search::SearchResult> {
     items
         .into_iter()
         .filter(|(_, _, cmd, src)| {
-            settings.plugin_git_commits || !(*cmd == "commits:" || *src == "HOMEPAGE_GIT")
+            (settings.plugin_git_commits || !(*cmd == "commits:" || *src == "HOMEPAGE_GIT"))
+                && (settings.show_clipboard_image_text_action || *cmd != "action:ocr_clipboard")
         })
         .enumerate()
         .map(|(i, (name, path, cmd, src))| crate::search::SearchResult {
@@ -11945,6 +11985,29 @@ unsafe fn load_shell_thumbnail(path: &str, size: i32) -> Option<HBITMAP> {
         .ok()
 }
 
+fn thumbnail_eviction_key(
+    cache: &std::collections::HashMap<String, HBITMAP>,
+    keep: &str,
+) -> Option<String> {
+    cache.keys().find(|key| key.as_str() != keep).cloned()
+}
+
+unsafe fn prune_thumbnail_cache(
+    cache: &mut std::collections::HashMap<String, HBITMAP>,
+    keep: &str,
+) {
+    while cache.len() > MAX_THUMBNAIL_CACHE {
+        let Some(key) = thumbnail_eviction_key(cache, keep) else {
+            break;
+        };
+        if let Some(hbitmap) = cache.remove(&key) {
+            if !hbitmap.0.is_null() {
+                let _ = DeleteObject(hbitmap);
+            }
+        }
+    }
+}
+
 unsafe fn draw_cached_bmp(hdc: HDC, x: i32, y: i32, w: i32, h: i32, hbitmap: HBITMAP) {
     use windows::Win32::Graphics::Gdi::{
         CreateCompatibleDC, DeleteDC, GetObjectW, SelectObject, SetStretchBltMode, StretchBlt,
@@ -12103,6 +12166,18 @@ mod tests {
     }
 
     #[test]
+    fn homepage_hides_clipboard_image_text_action_when_setting_is_off() {
+        let mut settings = crate::settings::AppSettings::default();
+        settings.show_clipboard_image_text_action = false;
+
+        let results = default_homepage_results_for_settings(&settings);
+
+        assert!(!results
+            .iter()
+            .any(|result| result.entry.launch_command == "action:ocr_clipboard"));
+    }
+
+    #[test]
     fn row_geometry_centers_icons_and_text() {
         assert_eq!(centered_in_result_row(100, RESULT_ICON_SIZE, 68), 118);
         assert_eq!(centered_in_result_row(100, RESULT_TEXT_BLOCK_H, 68), 114);
@@ -12246,6 +12321,30 @@ mod tests {
         image.put_pixel(2, 1, image::Rgba([255, 255, 255, 255]));
         image.put_pixel(5, 6, image::Rgba([255, 255, 255, 255]));
         assert_eq!(alpha_bounds(&image), Some((2, 1, 4, 6)));
+    }
+
+    #[test]
+    fn icon_eviction_keeps_requested_key() {
+        let owned = ["current".to_string(), "older".to_string()]
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            owned_icon_eviction_key(&owned, "current"),
+            Some("older".to_string())
+        );
+    }
+
+    #[test]
+    fn thumbnail_eviction_keeps_requested_path() {
+        let mut cache = std::collections::HashMap::new();
+        cache.insert("current".to_string(), HBITMAP(std::ptr::null_mut()));
+        cache.insert("older".to_string(), HBITMAP(std::ptr::null_mut()));
+
+        assert_eq!(
+            thumbnail_eviction_key(&cache, "current"),
+            Some("older".to_string())
+        );
     }
 
     #[test]
@@ -12497,7 +12596,8 @@ mod tests {
 
     #[test]
     fn clipboard_image_path_uses_clipboard_images_dir() {
-        let db_path = std::path::PathBuf::from(r"C:\Users\Test\AppData\Roaming\protonsearch\app.db");
+        let db_path =
+            std::path::PathBuf::from(r"C:\Users\Test\AppData\Roaming\protonsearch\app.db");
         let (_, path_str) = clipboard_image_path(&db_path, 123).unwrap();
         assert!(path_str.ends_with(r"protonsearch\clipboard_images\image_123.bmp"));
     }

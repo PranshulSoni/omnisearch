@@ -89,6 +89,7 @@ export component SettingsWindow inherits Window {
     in-out property <bool> plugin-color-picker;
     in-out property <bool> plugin-calculator;
     in-out property <bool> plugin-git-commits;
+    in-out property <bool> show-clipboard-image-text-action;
     in-out property <string> snippet-name;
     in-out property <string> snippet-keyword;
     in-out property <string> snippet-content;
@@ -1814,6 +1815,17 @@ export component SettingsWindow inherits Window {
                                             wrap: word-wrap;
                                         }
                                     }
+                                }
+                            }
+                            Rectangle {
+                                background: root.card-bg; border-radius: 8px; border-color: root.border-color; border-width: 1px;
+                                height: 54px;
+                                HorizontalBox {
+                                    padding-left: 16px; padding-right: 16px; padding-top: 10px; padding-bottom: 10px; spacing: 12px;
+                                    Text { text: "\u{e8a5}"; font-family: "Segoe MDL2 Assets"; font-size: 18px; color: root.accent; vertical-alignment: center; width: 24px; }
+                                    VerticalLayout { alignment: center; spacing: 0; Text { text: "Read Clipboard Image Text"; color: root.text-primary; font-size: 13px; font-weight: 600; } Text { text: "Show the manual image text action on the launcher home screen"; color: root.text-muted; font-size: 11px; } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    VerticalLayout { alignment: center; ToggleSwitch { checked <=> root.show-clipboard-image-text-action; toggled => { root.save-settings(); } } }
                                 }
                             }
                         }

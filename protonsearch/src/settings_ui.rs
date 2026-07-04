@@ -212,6 +212,7 @@ pub fn run_settings_window() {
     ui.set_plugin_color_picker(settings.plugin_color_picker);
     ui.set_plugin_calculator(settings.plugin_calculator);
     ui.set_plugin_git_commits(settings.plugin_git_commits);
+    ui.set_show_clipboard_image_text_action(settings.show_clipboard_image_text_action);
     load_snippets_into_ui(&ui);
 
     // Populate initial database status & statistics instantly on startup
@@ -221,7 +222,7 @@ pub fn run_settings_window() {
              CREATE TABLE IF NOT EXISTS files (
                 path TEXT PRIMARY KEY, name TEXT NOT NULL,
                 extension TEXT NOT NULL, modified INTEGER NOT NULL,
-                size INTEGER NOT NULL DEFAULT 0, is_dir INTEGER NOT NULL DEFAULT 0);"
+                size INTEGER NOT NULL DEFAULT 0, is_dir INTEGER NOT NULL DEFAULT 0);",
         );
         let is_indexing = conn
             .query_row(
@@ -418,6 +419,7 @@ pub fn run_settings_window() {
             s.plugin_color_picker = ui.get_plugin_color_picker();
             s.plugin_calculator = ui.get_plugin_calculator();
             s.plugin_git_commits = ui.get_plugin_git_commits();
+            s.show_clipboard_image_text_action = ui.get_show_clipboard_image_text_action();
             s.save();
             ui.set_hotkey_available(true);
             ui.set_hotkey_error(SharedString::from("Hotkey available and saved."));
