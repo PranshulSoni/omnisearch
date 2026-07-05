@@ -4800,12 +4800,15 @@ fn store_ai_chat(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
-        let _ = conn.execute(
-            "INSERT INTO ai_chats (ts, command, title, prompt, response) VALUES (?,?,?,?,?);",
-            rusqlite::params![now, command, title, prompt, response],
-        );
-        let id = conn.last_insert_rowid();
-        return Some(id);
+        if conn
+            .execute(
+                "INSERT INTO ai_chats (ts, command, title, prompt, response) VALUES (?,?,?,?,?);",
+                rusqlite::params![now, command, title, prompt, response],
+            )
+            .is_ok()
+        {
+            return Some(conn.last_insert_rowid());
+        }
     }
     None
 }
