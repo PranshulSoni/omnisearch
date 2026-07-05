@@ -6490,13 +6490,10 @@ mod tests {
 
     #[test]
     fn test_search_file() {
-        let db_path = match std::env::var("APPDATA") {
-            Ok(d) => {
-                let path = std::path::PathBuf::from(d).join("protonsearch");
-                path.join("file_index.db")
-            }
-            Err(_) => std::path::PathBuf::from("file_index.db"),
-        };
+        // Use an isolated temp DB (like every sibling test) rather than the real
+        // %APPDATA%\protonsearch\file_index.db, which is non-hermetic and can be
+        // locked or mid-checkpoint while the app is running.
+        let db_path = unique_test_db("search_file");
         let exe = std::env::current_exe().expect("failed to get current exe");
         let parent = exe.parent().expect("failed to get parent");
         let mut model_path = parent.join("model_int8.onnx");
