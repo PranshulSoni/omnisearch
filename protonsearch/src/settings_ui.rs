@@ -33,6 +33,14 @@ fn is_newer_version(current: &str, latest: &str) -> bool {
     false
 }
 
+/// Installers may only ever be fetched and executed from the official GitHub
+/// releases path. Guards the auto-updater against a tampered `url` field in
+/// update.json pointing it at an attacker-controlled binary. If the release
+/// host/repo ever moves, update this prefix or auto-update will fail closed.
+fn is_trusted_update_url(url: &str) -> bool {
+    url.starts_with("https://github.com/PranshulSoni/protonsearch/releases/download/")
+}
+
 thread_local! {
     static SETTINGS_WINDOW: std::cell::RefCell<Option<std::rc::Rc<SettingsWindow>>> = std::cell::RefCell::new(None);
 }
@@ -687,7 +695,7 @@ pub fn run_settings_window() {
                         let download_url = json["url"].as_str().unwrap_or("");
 
                         if is_newer_version(CURRENT_VERSION, latest_version)
-                            && !download_url.is_empty()
+                            && is_trusted_update_url(download_url)
                         {
                             if let Ok(mut url_lock) = UPDATE_URL.lock() {
                                 *url_lock = Some(download_url.to_string());
@@ -736,8 +744,8 @@ pub fn run_settings_window() {
     ui.on_download_update(move || {
         let ui_weak = ui_weak_download.clone();
         let url = match UPDATE_URL.lock().unwrap().clone() {
-            Some(u) => u,
-            None => return,
+            Some(u) if is_trusted_update_url(&u) => u,
+            _ => return,
         };
 
         std::thread::spawn(move || {
