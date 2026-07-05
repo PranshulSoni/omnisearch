@@ -248,12 +248,16 @@ fn index_one_file(conn: &Connection, path: &Path) {
         params![path_str, name, ext, modified, size],
     );
     if is_indexable_content(&ext) {
-        let content = extract_content(path, &ext).unwrap_or_default();
-        let _ = conn.execute("DELETE FROM files_fts WHERE path = ?", [&path_str]);
-        let _ = conn.execute(
-            "INSERT INTO files_fts (path, content) VALUES (?, ?)",
-            params![path_str, content],
-        );
+        // Only (re)write the content index when extraction actually succeeds. On
+        // failure (locked file, parser/OCR error) keep any existing FTS row rather
+        // than wiping it to empty and silently losing content-searchability.
+        if let Some(content) = extract_content(path, &ext) {
+            let _ = conn.execute("DELETE FROM files_fts WHERE path = ?", [&path_str]);
+            let _ = conn.execute(
+                "INSERT INTO files_fts (path, content) VALUES (?, ?)",
+                params![path_str, content],
+            );
+        }
     }
 }
 
