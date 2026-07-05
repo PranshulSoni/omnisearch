@@ -5760,7 +5760,7 @@ mod tests {
 
     #[test]
     fn ai_prefixes_work_without_space_or_prompt() {
-        let mut engine = SearchEngine::new(std::path::PathBuf::from("test_ai_prefixes.db"), false)
+        let mut engine = SearchEngine::new(unique_test_db("ai_prefixes"), false)
             .expect("engine");
 
         let chatgpt = engine.search("chatgpt:", 5);
@@ -5880,7 +5880,7 @@ mod tests {
 
     #[test]
     fn settings_fts_returns_search_settings_in_fast_path() {
-        let mut engine = SearchEngine::new(std::path::PathBuf::from("test_db.db"), false)
+        let mut engine = SearchEngine::new(unique_test_db("settings_fts"), false)
             .expect("Failed to initialize engine");
 
         let results = engine.search_with_fts("Search", 10, false);
@@ -6244,7 +6244,7 @@ mod tests {
                 .join("model_int8.onnx");
         }
         let _ = &model_path;
-        let mut engine = SearchEngine::new(std::path::PathBuf::from("test_db.db"), true)
+        let mut engine = SearchEngine::new(unique_test_db("hybrid_search"), true)
             .expect("Failed to initialize engine");
 
         let queries = vec![
