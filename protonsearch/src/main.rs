@@ -4,6 +4,7 @@
 mod ai;
 mod applog;
 mod browser_indexer;
+mod calculator;
 mod circle_to_search;
 mod git_indexer;
 mod indexer;
