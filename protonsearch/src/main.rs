@@ -10,6 +10,7 @@ mod indexer;
 mod inspect_db;
 mod launcher;
 mod markdown;
+mod quick_actions;
 mod search;
 mod settings;
 mod settings_startup;
