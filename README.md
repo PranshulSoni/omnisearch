@@ -13,7 +13,6 @@
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green?style=flat-square" /></a>
   <a href="https://github.com/PranshulSoni/protonsearch/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/PranshulSoni/protonsearch?style=flat-square&label=stars&color=yellow" /></a>
   <a href="https://github.com/PranshulSoni/protonsearch/releases"><img src="https://badgen.net/github/release/PranshulSoni/protonsearch" alt="Release"/></a>
-  <a href="https://github.com/PranshulSoni/protonsearch/releases"><img alt="downloads" src="https://img.shields.io/github/downloads/PranshulSoni/protonsearch/total?style=flat-square&label=downloads&color=brightgreen" /></a>
 </p>
 
 ProtonSearch is a fast, local-first Windows launcher that helps users find and open anything already on their PC from one keyboard shortcut.
